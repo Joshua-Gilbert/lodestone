@@ -96,7 +96,7 @@ def t_two():
           no_serial(dst) == no_serial(src) and dst[0x27:0x2B] != src[0x27:0x2B] and 'Volume Serial Number is' in o
           and ('%04X-%04X' % struct.unpack_from('<HH', dst, 0x27)[::-1]) in o, o)
     o = shell(k, 'dir b:')
-    check('... the kernel reads the copy at once (DIR B:)', 'DISKCOPY COM' in o and 'LODE     SYS    50432' in o, o)
+    check('... the kernel reads the copy at once (DIR B:)', 'DISKCOPY COM' in o and ('LODE     SYS    %d' % os.path.getsize(os.path.join(SRC, 'LODE.SYS'))) in o, o)
     o = go(k, 'diskcomp a: b:', [('Press any key', ktest.ENTER), ('Compare another', 'n')])
     check('DISKCOMP A: B: then: "Compare OK" (the serial numbers not compared), exit code 0',
           'Compare OK' in o and 'Compare error' not in o and said(o, 'E0'), o)

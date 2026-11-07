@@ -32,7 +32,7 @@
 ; "SUB." SUB), so no other spelling gets a file onto itself or a tree into
 ; itself.  Into the directory it reads (XCOPY *.* *.BAK), it lists the
 ; names first and copies from the list, so its own copies aren't read
-; again.  A directory whose path would pass 65 characters after "D:\" is
+; again.  A directory whose path would pass 63 characters after "D:\" is
 ; said ("Path too long - ") and left out.  Ctrl-C says how many were
 ; copied: files held in memory then aren't.  As the Executive's Copy: a
 ; hidden or system destination is replaced by a plain copy, and a copy
@@ -45,7 +45,7 @@
 cpu 286
 org 100h
 
-MAXDEPTH equ 34                         ; (PMAX's 65: "X\" 32 times at most)
+MAXDEPTH equ 34                         ; (PMAX's 63: "X\" 31 times at most)
 DTASZ   equ 44
 QMAX    equ 40                          ; files held in memory at once
 QSZ     equ 176                         ; a held file's record:

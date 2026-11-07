@@ -1,103 +1,181 @@
-; NAMES.COM (test_kernel t_names): what INT 21h answers for names with a
-; second dot or a bad character, for device names and for CREATE over
-; hidden and system files.  Each line: fn, the name(s), ok or the error.
-; test_kernel holds the answers GRiD MS-DOS 3.30 gives
-%include "PROBE.INC"
-; X15: a second dot (A.TXT, B.TXT, A.B\X.TXT and E.F empty are there)
-tests   dw 3D00h, a_x, 0, 0
-        dw 3C00h, n_ab, 0, 0
-        dw 3900h, d_ef, 0, 0
-        dw 4E00h, a_x, 0, 0
-        dw 4E00h, w_x, 0, 0
-        dw 4300h, a_x, 0, 0
-        dw 3B00h, ab_c, 0, 0
-        dw 3B00h, root, 0, 0
-        dw 3D00h, abc_x, 0, 0
-        dw 3D00h, a_dot, 0, 0
-        dw 3D00h, a_dd, 0, 0
-        dw 5600h, a_txt, c_de, 0
-        dw 5600h, a_x, z_txt, 0
-        dw 4100h, b_x, 0, 0
-        dw 3A00h, ef_g, 0, 0
-; X16: devices, hidden, system and read-only files
-        dw 3900h, s_con, 0, 0
-        dw 3900h, s_nul, 0, 0
-        dw 3D00h, hid, 0, 0
-        dw 3C00h, hid, 0, 0
-        dw 3C00h, sys, 0, 0
-        dw 3C00h, ro, 0, 0
-        dw 5B00h, hid, 0, 0
-        dw 4100h, sys, 0, 0
-        dw 4100h, hid, 0, 0
-        dw 4100h, s_con, 0, 0
-        dw 5600h, b_txt, s_con, 0
-; more: bad characters, the hidden attribute asked for, devices
-        dw 3D00h, s_bar, 0, 0
-        dw 3C00h, s_bar, 0, 0
-        dw 3900h, s_bar, 0, 0
-        dw 3D00h, s_barx, 0, 0
-        dw 4100h, s_bar, 0, 0
-        dw 3C00h, hid2, 0, 2
-        dw 4100h, ro, 0, 0
-        dw 5B00h, s_con, 0, 0
-        dw 3A00h, s_con, 0, 0
-        dw 3B00h, s_con, 0, 0
-        dw 3D00h, s_conx, 0, 0
-        dw 3C00h, sys2, 0, 2
-        dw 3C00h, hid3, 0, 6
-        dw 3C00h, hs, 0, 2
-        dw 3C00h, hs2, 0, 6
-; devices only where the path is there; MS-DOS looks up RENAME's old name first
-        dw 3900h, nos_con, 0, 0
-        dw 3A00h, nos_con, 0, 0
-        dw 4100h, nos_con, 0, 0
-        dw 4100h, ab_con, 0, 0
-        dw 3900h, ab_con, 0, 0
-        dw 3A00h, ab_con, 0, 0
-        dw 5600h, nos_txt, s_con, 0
-        dw 5600h, ro, nos_con, 0
-        dw 4100h, clk_txt, 0, 0
-        dw 3900h, clk_s, 0, 0
-        dw 3900h, clk, 0, 0
-        dw 3A00h, clk, 0, 0
-; EXEC answers as OPEN; CREATE NEW as CREATE
-        dw 4B00h, ab_c, 0, 0
-        dw 4B00h, a_x, 0, 0
-        dw 4B00h, s_bar, 0, 0
-        dw 5B00h, n_ab, 0, 0
-        dw 5B00h, s_bar, 0, 0
-        dw 0
-a_x     db 'A.TXT.X', 0
-w_x     db '*.TXT.X', 0
-n_ab    db 'N.A.B', 0
-d_ef    db 'D.E.F', 0
-ab_c    db 'A.B.C', 0
-root    db '\', 0
-abc_x   db 'A.B.C\X.TXT', 0
-a_dot   db 'A.TXT.', 0
-a_dd    db 'A..TXT', 0
-a_txt   db 'A.TXT', 0
-c_de    db 'C.D.E', 0
-z_txt   db 'Z.TXT', 0
-b_x     db 'B.TXT.X', 0
-b_txt   db 'B.TXT', 0
-ef_g    db 'E.F.G', 0
-s_con   db 'CON', 0
-s_nul   db 'NUL', 0
-hid     db 'HID.TXT', 0
-sys     db 'SYS.TXT', 0
-ro      db 'RO.TXT', 0
-s_bar   db 'A|B', 0
-s_barx  db 'A|B\X.TXT', 0
-hid2    db 'HID2.TXT', 0
-s_conx  db 'CON.TXT', 0
-sys2    db 'SYS2.TXT', 0
-hid3    db 'HID3.TXT', 0
-hs      db 'HS.TXT', 0
-hs2     db 'HS2.TXT', 0
-nos_con db 'NOSUCH\CON', 0
-ab_con  db 'A.B\CON', 0
-nos_txt db 'NOSUCH.TXT', 0
-clk_txt db 'CLOCK.TXT', 0
-clk_s   db 'CLOCK$', 0
-clk     db 'CLOCK', 0
+; NAMES.COM (test_kernel t_fcbnames): names as MS-DOS 3.30 keeps them, and
+; its FCB search.  NAMES C: names with a first E5h and a space inside made
+; (3Ch), opened again (3Dh) and found (4Eh/4Fh: "F name"); then an extended
+; FCB's search for the label (11h, attribute 08h: "L [11 bytes]") and a
+; plain FCB's for *.TXT (11h/12h: "T [11 bytes]").  NAMES W: INT 21h 47h
+; into a 64-byte buffer, a guard byte after it ("W n G" n its length, G
+; the guard kept, or "W n X").  Each line ends CR LF
+org 100h
+        mov     ah, 1Ah
+        mov     dx, dta
+        int     21h
+        mov     al, [82h]
+        and     al, 0DFh
+        cmp     al, 'W'
+        je      cwd
+        mov     si, nm_e5               ; made, opened again
+        call    make
+        mov     si, nm_sp
+        call    make
+        mov     dx, pat                 ; found
+        mov     cx, 0
+        mov     ah, 4Eh
+        int     21h
+.f:     jc      .lab
+        mov     al, 'F'
+        call    putc
+        mov     al, ' '
+        call    putc
+        mov     si, dta + 30
+        call    puts
+        call    crlf
+        mov     ah, 4Fh
+        int     21h
+        jmp     .f
+.lab:   mov     dx, xfcb                ; the label
+        mov     ah, 11h
+        int     21h
+        or      al, al
+        jnz     .tx
+        mov     al, 'L'
+        mov     si, dta + 8
+        call    raw
+.tx:    mov     dx, fcb                 ; *.TXT, plain FCB
+        mov     ah, 11h
+.tl:    int     21h
+        or      al, al
+        jnz     .end
+        mov     al, 'T'
+        mov     si, dta + 1
+        call    raw
+        mov     dx, fcb
+        mov     ah, 12h
+        jmp     .tl
+.end:   mov     ax, 4C00h
+        int     21h
+
+cwd:    mov     byte [buf + 64], 0A5h
+        mov     si, buf
+        xor     dl, dl
+        mov     ah, 47h
+        int     21h
+        mov     al, 'W'
+        call    putc
+        mov     al, ' '
+        call    putc
+        mov     di, buf
+        mov     cx, 200
+        xor     al, al
+        repne   scasb
+        mov     ax, di
+        sub     ax, buf + 1
+        call    putn
+        mov     al, ' '
+        call    putc
+        mov     al, 'G'
+        cmp     byte [buf + 64], 0A5h
+        je      .g
+        mov     al, 'X'
+.g:     call    putc
+        call    crlf
+        mov     ax, 4C00h
+        int     21h
+
+; make the name at SI (3Ch), write, close, open it again (3Dh): "M name ok"
+; or "M name made-not" / "M name open-not"
+make:   push    si
+        mov     al, 'M'
+        call    putc
+        mov     al, ' '
+        call    putc
+        call    puts
+        pop     dx
+        push    dx
+        xor     cx, cx
+        mov     ah, 3Ch
+        int     21h
+        mov     si, s_mk
+        jc      .s
+        mov     bx, ax
+        mov     ah, 3Eh
+        int     21h
+        pop     dx
+        push    dx
+        mov     ax, 3D00h
+        int     21h
+        mov     si, s_op
+        jc      .s
+        mov     bx, ax
+        mov     ah, 3Eh
+        int     21h
+        mov     si, s_ok
+.s:     call    puts
+        call    crlf
+        pop     si
+        ret
+
+; AL, then " [", 11 bytes at SI, "]"
+raw:    call    putc
+        mov     al, ' '
+        call    putc
+        mov     al, '['
+        call    putc
+        mov     cx, 11
+.l:     lodsb
+        call    putc
+        loop    .l
+        mov     al, ']'
+        call    putc
+        jmp     crlf
+
+putn:   mov     bl, 10                  ; AX (< 256) in decimal
+        div     bl
+        push    ax
+        or      al, al
+        jz      .u
+        xor     ah, ah
+        div     bl
+        push    ax
+        or      al, al
+        jz      .t
+        add     al, '0'
+        call    putc
+.t:     pop     ax
+        mov     al, ah
+        add     al, '0'
+        call    putc
+.u:     pop     ax
+        mov     al, ah
+        add     al, '0'
+        jmp     putc
+
+puts:   lodsb
+        or      al, al
+        jz      .x
+        call    putc
+        jmp     puts
+.x:     ret
+crlf:   mov     al, 13
+        call    putc
+        mov     al, 10
+putc:   push    ax
+        push    dx
+        mov     dl, al
+        mov     ah, 2
+        int     21h
+        pop     dx
+        pop     ax
+        ret
+
+nm_e5   db 0E5h, 'ABC.TXT', 0
+nm_sp   db 'AB CD.TXT', 0
+pat     db '*.TXT', 0
+s_ok    db ' ok', 0
+s_mk    db ' made-not', 0
+s_op    db ' open-not', 0
+xfcb    db 0FFh, 0, 0, 0, 0, 0, 08h, 0, '???????????'
+        times 25 db 0
+fcb     db 0, '????????TXT'
+        times 25 db 0
+dta     times 64 db 0
+buf     times 200 db 0

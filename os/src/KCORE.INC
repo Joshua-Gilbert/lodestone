@@ -54,8 +54,10 @@ section .text
 ; a handler's nested call, C:'s errors, MT's slices; a nested call is on
 ; astack); a screen capture and the PrtSc driver use the bottom 1 KB at
 ; INT 21h's entry, before any call runs; MT switches tasks inside INT 21h
-; only at a key wait (mt_can), where none of these is in use.
-KL_P2       equ kstack_end              ; path2_buf, 130 (rename; CHDIR's new string)
+; at a key wait (mt_can) and a floppy's wait (mt_dcan), and holds other
+; tasks' INT 21h calls (mt_i21) until the owner's is done.  CHDIR uses all
+; of P2, REN and EXN (none of their calls is under way then).
+KL_P2       equ kstack_end              ; path2_buf, 130 (rename; CHDIR's)
 KL_REN      equ kstack_end + 130        ; rename's d_lba, d_off, de and drive, 37
 KL_EXN      equ kstack_end + 168        ; EXEC's ex_name, 132
 KL_REL      equ kstack_end + 300        ; EXEC's ex_rel, 256
@@ -380,7 +382,7 @@ ret_al: mov     [bp+F_AX], al
 
 f_bad:  mov     ax, 1
         jmp     fail
-f_fcb:  mov     al, 0FFh                ; FCB calls: not supported
+f_fcb:  mov     al, 0FFh                ; FCB calls: not supported (but 11h, 12h)
         jmp     ret_al
 f_nul0: xor     al, al
         jmp     ret_al
@@ -388,7 +390,7 @@ f_nul0: xor     al, al
 NFUNC   equ 6Dh
 ftab:   dw f_00, f_01, f_02, f_03, f_04, f_05, f_06, f_07              ; 00
         dw f_08, f_09, f_0A, f_0B, f_0C, f_0D, f_0E, f_fcb             ; 08
-        dw f_fcb, f_fcb, f_fcb, f_fcb, f_fcb, f_fcb, f_fcb, f_fcb      ; 10
+        dw f_fcb, f_11, f_12, f_fcb, f_fcb, f_fcb, f_fcb, f_fcb        ; 10
         dw f_nul0, f_19, f_1A, f_fcb, f_fcb, f_nul0, f_nul0, f_fcb     ; 18
         dw f_nul0, f_fcb, f_fcb, f_fcb, f_fcb, f_25, f_nul0, f_fcb     ; 20
         dw f_fcb, f_29, f_2A, f_2B, f_2C, f_2D, f_2E, f_2F             ; 28

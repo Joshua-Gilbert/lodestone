@@ -18,7 +18,7 @@
 ; 5's, changed only by a command that changes H or S: otherwise "Not
 ; resetting hidden file - A:\X".  Paths are shown whole, from the drive's
 ; root, each part 8.3 as the kernel reads it.  A directory whose path
-; would pass 65 characters after "D:\" is said ("Path too long - ") and
+; would pass 63 characters after "D:\" is said ("Path too long - ") and
 ; left out.
 ;
 ; Exit code: 0 done, 1 something failed (no file found, a bad switch, a
@@ -26,7 +26,7 @@
 cpu 286
 org 100h
 
-MAXDEPTH equ 34                         ; (PMAX's 65: "X\" 32 times at most)
+MAXDEPTH equ 34                         ; (PMAX's 63: "X\" 31 times at most)
 DTASZ   equ 44
 
 start:  mov     sp, stack_top
@@ -211,7 +211,7 @@ walk:   mov     ax, [depth]             ; this level's DTA
 
 ; ASCIIZ at SI after dir's first [dirlen] characters -> [dirend], CF if
 ; too long (it isn't then added: dir's directory and an 8.3 name always
-; fit, PMAX's 65 after "D:\" and 13)
+; fit, PMAX's 63 after "D:\" and 13)
 dir_add:
         mov     di, [dirlen]
         mov     bx, di

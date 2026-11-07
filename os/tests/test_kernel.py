@@ -1689,6 +1689,42 @@ def t_devname():
               got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
         check('... each device opened is the one named, GPIBnn at address nn (%d opens)' % len(wdevs), devs == wdevs, devs)
 
+def t_fcbnames():
+    """Names as MS-DOS keeps them (NAMES.COM): a first E5h made as 05h on the disk and given back as E5h, a space
+    inside a name made, opened and found; FCB FIND FIRST/NEXT (11h, 12h): the label's 11 bytes through an extended
+    FCB (from a subdirectory: the root's), files through a plain one; and 47h's answer in its 64 bytes."""
+    com = os.path.join(OUT, 'NAMES.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NAMES.ASM')], check=True)
+    p = image('names.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NAMES.COM=' + com, 'SUB\\')
+    img = bytearray(open(p, 'rb').read())
+    at = next(19 * 512 + i for i in range(0, 224 * 32, 32) if img[19 * 512 + i + 11] == 8)
+    img[at:at + 11] = b'V1.0  X    '                         # (another system's: a dot, spaces inside)
+    open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    sh = Shell(k)
+    sh.run('cd sub')
+    sh.run('names c > \\n.out')
+    d = bytes(k.pc.drives[0].img)
+    o = fatcheck.read_files(d).get('A:\\N.OUT', b'').decode('latin-1').replace('\r', '')
+    check('a first E5h (CREATE, then OPEN): made and opened again', 'M \xe5ABC.TXT ok\n' in o, o)
+    check('a space inside a name ("AB CD.TXT"): made and opened again, as MS-DOS', 'M AB CD.TXT ok\n' in o, o)
+    check('FIND FIRST/NEXT gives both back as made ("\\xe5ABC.TXT", "AB CD.TXT")', 'F \xe5ABC.TXT\n' in o and 'F AB CD.TXT\n' in o, o)
+    check('extended FCB FIND FIRST (attribute 08h), from A:\\SUB: the root\'s label, its 11 bytes as on the disk',
+          'L [V1.0  X    ]\n' in o, o)
+    check('plain FCB FIND FIRST/NEXT of ????????TXT: both, unpacked, the E5h as E5h', 'T [\xe5ABC    TXT]\n' in o
+          and 'T [AB CD   TXT]\n' in o and o.count('\nT [') == 2, o)
+    ents = [d[i:i + 11] for i in range(0, len(d) - 32, 32) if d[i + 11:i + 12] == b'\x20' and d[i + 8:i + 11] == b'TXT']
+    check('... on the disk the first E5h is 05h (E5h there is a free entry)', b'\x05ABC    TXT' in ents, ents)
+    o = sh.run('dir').replace('\r', '') + sh.run('copy *.txt \\').replace('\r', '')
+    check('DIR lists them, COPY *.TXT copies both (the names FIND FIRST gives open)', ' ABC     TXT' in o
+          and 'AB CD    TXT' in o and '2 File(s) copied' in o and {'A:\\AB CD.TXT', 'A:\\\x05ABC.TXT'} <= set(fatcheck.read_files(bytes(k.pc.drives[0].img))), o)
+    sh.run('cd \\')
+    for c in ('AAAAAAAA', 'BBBBBBBB', 'CCCCCCCC', 'DDDDDDDD', 'EEEEEEEE', 'FFFFFFFF', 'GGGGGG', 'HH'):
+        sh.run('md ' + c); sh.run('cd ' + c)
+    o = sh.run('names w')
+    check('47h in the deepest directory: 63 characters and the NUL, its 64-byte buffer\'s next byte untouched',
+          'W 63 G' in o, o)
+
 def t_newname():
     """new_name: CREATE, CREATE NEW, MKDIR and RENAME onto a name with no last part (A:\\, \\, A:, ., A.B\\.: 5;
     A.B\\ and the empty name: 3) make nothing, and the disk stays consistent."""
@@ -2377,9 +2413,9 @@ def t_cmdshare():
     sh.run('cd ..')
     o = sh.run('cd q:')
     check('CD of a drive that isn\'t there', 'Invalid drive specification' in o, o)
-    o = sh.run('dir c:') + sh.run('vol c:') + sh.run('dir q:\\x') + sh.run('vol q:')
-    check('DIR and VOL of a drive that isn\'t there (C: with no hard disk, Q:): DOS\'s "Invalid drive specification", '
-          'no volume header', o.count('Invalid drive specification') == 4 and 'Volume' not in o and 'Directory of' not in o, o)
+    o = sh.run('dir c:') + sh.run('vol c:') + sh.run('dir q:\\x') + sh.run('vol q:') + sh.run('dir @:') + sh.run('vol @:')
+    check('DIR and VOL of a drive that isn\'t there (C: with no hard disk, Q:, @:): DOS\'s "Invalid drive specification", '
+          'no volume header', o.count('Invalid drive specification') == 6 and 'Volume' not in o and 'Directory of' not in o, o)
     o = sh.run('type nosuch.x') + sh.run('echo kept && if errorlevel 1 echo P1')
     o2 = sh.run('dir sub > nul && tasks || if errorlevel 1 echo T1')
     check('the built-ins: ECHO (the first that leaves ERRORLEVEL) keeps it, TASKS (the last that sets it) sets it',
@@ -2396,31 +2432,41 @@ def t_cmdshare():
     o = sh.run('rem')
     sh.run('prompt $p$g')
     check('PROMPT $D $T: "01-02-2027  9:05>"', o.rstrip().endswith('01-02-2027  9:05>'), o)
-    deep = ''.join('\\' + c * 8 for c in 'ABCDEFG') + '\\HH'     # as deep as CWDLEN allows (65 characters as 47h gives it)
-    for c in 'ABCDEFG':
-        sh.run('md ' + c * 8); sh.run('cd ' + c * 8)
+    deep = ''.join('\\' + c * 8 for c in 'ABCDEF') + '\\GGGGGG\\HH'   # as deep as CHDIR allows ("\" and 63, MS-DOS's)
+    for c in ('AAAAAAAA', 'BBBBBBBB', 'CCCCCCCC', 'DDDDDDDD', 'EEEEEEEE', 'FFFFFFFF', 'GGGGGG'):
+        sh.run('md ' + c); sh.run('cd ' + c)
     sh.run('md HH'); sh.run('cd HH')
     sh.run('echo hi > x.txt'); sh.run('echo DECOY > t')
     outs = [sh.run(c) for c in ('copy x.txt longname.txt', 'copy x.txt longname.tx', 'copy x*.txt *.bak')]
     o = sh.run('copy longname.txt longname.txt')
     sh.run('cd \\')
     f = fs()
-    check("COPY from a 65-character directory: COPY's two names checked (74-82 bytes) don't reach its source name",
+    check("COPY from a 64-character directory (the deepest): COPY's two names checked (72-80 bytes) don't reach its source name",
           [f.get('A:' + deep + n) for n in ('\\LONGNAME.TXT', '\\LONGNAME.TX', '\\X.BAK')] == [b'hi \r\n'] * 3
           and all('1 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith('A:\\A'))))
-    check("... and a file there copied onto itself (an 81-character name): refused as such", 'cannot be copied onto itself' in o, o)
+    check("... and a file there copied onto itself (a 79-character name): refused as such", 'cannot be copied onto itself' in o, o)
     sh.run('cd ' + deep[:-3]); sh.run('md HHHHHHHH')
-    o = sh.run('cd HHHHHHHH') + sh.run('cd')                       # 71 characters: was cut to ...\HHH
+    o = sh.run('cd HHHHHHHH') + sh.run('cd')                       # 70 characters: refused (was cut to ...\HHH)
     sh.run('echo one > y1.txt')
     sh.run('cd HH'); sh.run('md IJ')
-    o2 = sh.run('cd IJ') + sh.run('cd')                            # 69: was "...\HH\" with IJ's cluster
+    o2 = sh.run('cd IJ') + sh.run('cd')                            # 67
     sh.run('echo two > y2.txt')
+    sh.run('cd ' + deep[:-3])
+    o3 = sh.run('cd HHHHHHHH\\..\\HH') + sh.run('cd')             # down past it and back: only the end counts
+    sh.run('cd ' + deep[:-3])
+    o4 = sh.run('cd HHHHHHHH\\..') + sh.run('cd')
+    sh.run('md HHH')
+    o5 = sh.run('cd HHH') + sh.run('cd')                           # 65: past MS-DOS's (Lodestone took it before)
     sh.run('cd \\')
     f = fs()
-    check('CD to a directory past 65 characters: "Invalid directory", the current one kept (its name and its '
-          'cluster: a file made next lands there)', 'Invalid directory' in o and ('A:' + deep[:-3] + '\n') in o.replace('\r', '')
+    check('CD a path that goes past 63 characters and comes back ("HHHHHHHH\\..\\HH"): the end is what counts, as MS-DOS',
+          'Invalid directory' not in o3 + o4 and ('A:' + deep + '\n') in o3.replace('\r', '')
+          and ('A:' + deep[:-3] + '\n') in o4.replace('\r', ''), (o3, o4))
+    check('CD to a directory past 63 characters ("\\" and 63, MS-DOS\'s: 47h\'s 64 bytes): "Invalid directory", '
+          'the current one kept (its name and its cluster: a file made next lands there)', 'Invalid directory' in o and ('A:' + deep[:-3] + '\n') in o.replace('\r', '')
           and 'Invalid directory' in o2 and ('A:' + deep + '\n') in o2.replace('\r', '')
-          and f.get('A:' + deep[:-3] + '\\Y1.TXT') == b'one \r\n' and f.get('A:' + deep + '\\Y2.TXT') == b'two \r\n', (o, o2, sorted(n for n in f if 'Y' in n)))
+          and f.get('A:' + deep[:-3] + '\\Y1.TXT') == b'one \r\n' and f.get('A:' + deep + '\\Y2.TXT') == b'two \r\n'
+          and 'Invalid directory' in o5 and ('A:' + deep[:-3] + '\n') in o5.replace('\r', ''), (o, o2, o5, sorted(n for n in f if 'Y' in n)))
     sh.run('cd sub')
     outs = [sh.run('copy ?.txt ' + '.\\' * n + '????????.' + e) for n, e in ((34, 'BBK'), (51, 'CCK'))]   # 80 and 114 characters
     sh.run('md \\q'); sh.run('cd \\q'); sh.run('echo 1 > a'); sh.run('echo 2 > b')
@@ -2433,9 +2479,13 @@ def t_cmdshare():
           and all('2 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith(('A:\\SUB', 'A:\\Q')))))
     # X29: a name found by a pattern in a 68- or 69-character directory runs past src's 79 characters;
     # COPY hung.  Now such a name is skipped and the rest copied (LONGNAME.TXT, 80, before LONGNAME.TX, 79)
-    pre68, pre69 = 'A:' + deep[:-3] + '\\H\\', 'A:' + deep + '\\'
-    sh.run('md ' + pre68[2:-1]); sh.run('cd ' + pre68[2:-1]); sh.run('echo hi > longname.txt'); sh.run('echo hi > longname.tx')
-    sh.run('cd ' + deep); sh.run('echo hi > abcdef.ghi'); sh.run('cd \\')
+    # (directories deeper than CD goes: made, and written in, by their paths)
+    x29 = ''.join('\\' + c * 8 for c in 'ABCDEFG') + '\\HH'
+    pre68, pre69 = 'A:' + x29[:-3] + '\\H\\', 'A:' + x29 + '\\'
+    sh.run('md ' + x29[:-3]); sh.run('cd ' + x29[:-3]); sh.run('md h'); sh.run('md hh')    # (62: CD goes there)
+    for n in ('h\\longname.txt', 'h\\longname.tx', 'hh\\longname.txt', 'hh\\longname.tx', 'hh\\abcdef.ghi'):
+        sh.run('echo hi > ' + n)
+    sh.run('cd \\')
     for pre, pat, got in ((pre68, 'longname.*', ['LONGNAME.TX']), (pre68, '*.txt', []), (pre69, '*.tx', []), (pre69, 'l*.txt', [])):
         f = fs()
         back = run_long(k, 'copy %s%s \\q' % (pre, pat), 6)      # (a hang: no prompt in 6 s)
@@ -2452,8 +2502,8 @@ def t_cmdshare():
     r2 = [e[5] for e in k.dos if e[0] == 0x56]; k.trace = False
     f = fs()
     check('... REN %sl*.txt (LONGNAME.TXT: 81 characters): "Duplicate file name", no rename asked of DOS; a*.* (ABCDEF.GHI: '
-          '79): renamed' % pre69, 'Duplicate file name' in o and not r1 and len(r2) == 1 and 'A:' + deep + '\\L.Y' in f
-          and 'A:' + deep + '\\LONGNAME.TXT' in f and 'A:' + deep + '\\X.Y' not in f, (o, r1, o2, r2))
+          '79): renamed' % pre69, 'Duplicate file name' in o and not r1 and len(r2) == 1 and 'A:' + x29 + '\\L.Y' in f
+          and 'A:' + x29 + '\\LONGNAME.TXT' in f and 'A:' + x29 + '\\X.Y' not in f, (o, r1, o2, r2))
     k.key('exit'); k.key(ktest.ENTER)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
@@ -2896,7 +2946,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

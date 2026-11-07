@@ -7,8 +7,8 @@ a deep tree; XCOPY from A: to B: and on one disk, a directory with /S and
 /D /P /V /W, a file onto itself, a cyclic copy, a full disk (the old
 destination kept, nothing half-written left), a file bigger than memory,
 and the exit codes.  Paths as the kernel reads them (8.3 parts, "SUB.", ".."
-from the root), a 65-character current directory, a path too long (said,
-the rest done), a tree 33 deep, ATTRIB leaving hidden and system files
+from the root), a 63-character current directory, a path too long (said,
+the rest done), a tree 32 deep, ATTRIB leaving hidden and system files
 unless told, XCOPY *.* *.BAK into the directory it reads, /P answered
 line by line from a file, Ctrl-C at /P, and XCOPY in a terminal window.
 
@@ -294,22 +294,24 @@ def t_full():
 
 LV = ['LEVEL%03d' % i for i in range(1, 8)]
 LVP = '\\'.join(LV)                                      # 62 characters
+LV6 = '\\'.join(LV[:6])                                  # 53
+AB = LV6 + '\\ABCDE.FGH'                                  # 63: the kernel's longest current directory, MS-DOS's
 def lvdisk():
-    """A: with LEVEL001\\..\\LEVEL007 (62 characters), AB in it (65: the kernel's longest current directory)
-    and LEVEL008 (71: too long)"""
+    """A: with LEVEL001\\..\\LEVEL007 (62 characters), ABCDE.FGH in LEVEL006 (63: the kernel's longest current
+    directory) and LEVEL008 in LEVEL007 (71: too long)"""
     return adisk(['\\'.join(LV[:i + 1]) + '\\' for i in range(7)]
-                 + [('%s\\F7.TXT' % LVP, b'seven'), LVP + '\\AB\\', ('%s\\AB\\G.TXT' % LVP, b'gee'),
+                 + [('%s\\F7.TXT' % LVP, b'seven'), AB + '\\', ('%s\\G.TXT' % AB, b'gee'),
                     LVP + '\\LEVEL008\\', ('%s\\LEVEL008\\H.TXT' % LVP, b'aitch')])
 
 def t_paths():
     k = boot(lvdisk())
-    run(k, 'cd \\%s\\ab' % LVP)
+    run(k, 'cd \\%s' % AB)
     o = run(k, 'xcopy g.txt b:')
     o2 = run(k, 'attrib')
-    check('a 65-character current directory (the kernel\'s longest): XCOPY G.TXT B: copies, ATTRIB lists it whole',
+    check('a 63-character current directory (the kernel\'s longest, MS-DOS\'s): XCOPY G.TXT B: copies, ATTRIB lists it whole',
           files(k.pc.drives[1].img, 'B').get('B:\\G.TXT') == b'gee' and said(o, 'E0')
-          and 'A       A:\\%s\\AB\\G.TXT' % LVP in o2 and said(o2, 'E0'), (o, o2))
-    run(k, 'cd ..')
+          and 'A       A:\\%s\\G.TXT' % AB in o2 and said(o2, 'E0'), (o, o2))
+    run(k, 'cd \\%s' % LVP)
     a0 = files(k.pc.drives[0].img)
     o = run(k, 'xcopy f7*' + 'z' * 50 + '.txt b:\\')
     check('a name past 8.3 from a deep directory: cut as the kernel cuts it (F7*ZZZZZ.TXT), F7.TXT copied, nothing else written',
@@ -319,31 +321,31 @@ def t_paths():
     o = run(k, 'xcopy a:\\level001 b:\\x\\ /s')
     got = files(k.pc.drives[1].img, 'B')
     xl = 'B:\\X\\' + '\\'.join(LV[1:])
-    check('XCOPY /S past 65 characters: "Path too long - A:\\...\\LEVEL008", the rest copied, exit code 5',
+    check('XCOPY /S past 63 characters: "Path too long - A:\\...\\LEVEL008", the rest copied, exit code 5',
           'Path too long - A:\\%s\\LEVEL008' % LVP in o and got.get(xl + '\\F7.TXT') == b'seven'
-          and got.get(xl + '\\AB\\G.TXT') == b'gee' and not any('H.TXT' in f for f in got) and said(o, 'E5'), (o, sorted(got)))
+          and got.get('B:\\X\\' + '\\'.join(LV[1:6]) + '\\ABCDE.FGH\\G.TXT') == b'gee' and not any('H.TXT' in f for f in got) and said(o, 'E5'), (o, sorted(got)))
     o = run(k, 'attrib /s')
     check('ATTRIB /S: the same said, the rest listed, exit code 1', 'Path too long - A:\\%s\\LEVEL008' % LVP in o
-          and 'A       A:\\%s\\AB\\G.TXT' % LVP in o and 'H.TXT' not in o and said(o, 'E1'), o)
+          and 'A       A:\\%s\\G.TXT' % AB in o and 'H.TXT' not in o and said(o, 'E1'), o)
     o = run(k, 'tree /f')
     check('TREE: the same said, the rest listed, exit code 1', 'Path too long - A:\\%s\\LEVEL008' % LVP in o
-          and 'Path: \\%s\\AB' % LVP in o and 'Files:            G       .TXT' in o and said(o, 'E1'), o)
-    # 33 deep: "D\\" 33 times is 65
+          and 'Path: \\%s' % AB in o and 'Files:            G       .TXT' in o and said(o, 'E1'), o)
+    # 32 deep: "D\\" 31 times and "D" is 63
     fs = []
-    for i in range(33):
+    for i in range(32):
         p = '\\'.join(['D'] * (i + 1)); fs += [p + '\\', (p + '\\F%d.TXT' % (i + 1), b'%d' % (i + 1))]
-    k = boot(b=mk('d33.img', fs))
+    k = boot(b=mk('d32.img', fs))
     o = run(k, 'tree b:', sim=200)
-    check('TREE B: on a tree 33 deep (the deepest PMAX allows): every level, nothing said, exit code 0',
-          'Path: \\' + '\\'.join(['D'] * 33) in o and 'Path too long' not in o and 'deep' not in o and said(o, 'E0'), o[-800:])
-    o = run(k, 'attrib b:\\f33.txt /s', sim=200)
-    check('ATTRIB /S finds the file at its bottom', 'A       B:\\' + '\\'.join(['D'] * 33) + '\\F33.TXT' in o and said(o, 'E0'), o[-500:])
+    check('TREE B: on a tree 32 deep (the deepest PMAX allows): every level, nothing said, exit code 0',
+          'Path: \\' + '\\'.join(['D'] * 32) in o and 'Path too long' not in o and 'deep' not in o and said(o, 'E0'), o[-800:])
+    o = run(k, 'attrib b:\\f32.txt /s', sim=200)
+    check('ATTRIB /S finds the file at its bottom', 'A       B:\\' + '\\'.join(['D'] * 32) + '\\F32.TXT' in o and said(o, 'E0'), o[-500:])
     o = run(k, 'xcopy b:\\ a:\\ /s /m', sim=300)
     got = files(k.pc.drives[0].img)
-    arc = [entries(k.pc.drives[1].img, '\\'.join(['D'] * i))['F%d.TXT' % i][0] for i in range(1, 34)]
-    check('XCOPY B:\\ A:\\ /S /M: all 33 levels copied, each source\'s archive bit cleared (its record whole)',
-          all(got.get('A:\\' + '\\'.join(['D'] * i) + '\\F%d.TXT' % i) == b'%d' % i for i in range(1, 34))
-          and arc == [0] * 33 and '       33 File(s) copied' in o and said(o, 'E0'), (o[-500:], arc))
+    arc = [entries(k.pc.drives[1].img, '\\'.join(['D'] * i))['F%d.TXT' % i][0] for i in range(1, 33)]
+    check('XCOPY B:\\ A:\\ /S /M: all 32 levels copied, each source\'s archive bit cleared (its record whole)',
+          all(got.get('A:\\' + '\\'.join(['D'] * i) + '\\F%d.TXT' % i) == b'%d' % i for i in range(1, 33))
+          and arc == [0] * 32 and '       32 File(s) copied' in o and said(o, 'E0'), (o[-500:], arc))
 
 def t_spell():
     k = boot(adisk(['LONGNAME\\', ('LONGNAME\\A.TXT', b'a'), 'LONGNAME\\Z\\', ('LONGNAME\\Z\\B.TXT', b'b')]))
@@ -356,7 +358,7 @@ def t_spell():
         check('%s: another spelling of the same, as the kernel reads it: "%s", exit code %d' % (line.upper(), want, lv),
               want in o and said(o, 'E%d' % lv), o)
     o = run(k, 'xcopy one.txt b:\\%s\\abc\\' % LVP)
-    check('a destination directory past 65 characters: "Path too long", exit code 4, nothing made',
+    check('a destination directory past 63 characters: "Path too long", exit code 4, nothing made',
           'Path too long' in o and said(o, 'E4') and files(k.pc.drives[1].img, 'B') == {}, o)
     e = entries(k.pc.drives[0].img, 'SUB'); e2 = entries(k.pc.drives[0].img, 'LONGNAME')
     check('... nothing made (no SUB\\CP, no LONGNAME\\NEW)', 'CP' not in e and 'NEW' not in e2, (sorted(e), sorted(e2)))

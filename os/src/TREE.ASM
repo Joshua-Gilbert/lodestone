@@ -19,7 +19,7 @@
 ;
 ; Hidden directories are listed (they are part of the tree); files as DIR
 ; shows them (no hidden or system ones).  "No sub-directories exist" when
-; the root has none (without /F).  A directory whose path would pass 65
+; the root has none (without /F).  A directory whose path would pass 63
 ; characters after "D:\" is said ("Path too long - ") and left out.
 ;
 ; Exit code: 0 listed, 1 couldn't (a bad drive or switch), or not all (a
@@ -27,7 +27,7 @@
 cpu 286
 org 100h
 
-MAXDEPTH equ 34                         ; (PMAX's 65: "X\" 32 times at most)
+MAXDEPTH equ 34                         ; (PMAX's 63: "X\" 31 times at most)
 DTASZ   equ 44
 COL     equ 18                          ; where names go
 
@@ -114,29 +114,28 @@ args:   mov     si, 81h
 label:  mov     dx, dta0
         mov     ah, 1Ah
         int     21h
-        mov     si, s_all
-        call    dir_add
-        mov     dx, dir
-        mov     cx, 08h
-        mov     ah, 4Eh
+        mov     al, [dir]               ; the label's 11 characters as on
+        sub     al, 'A' - 1             ;  the disk: an extended FCB's
+        mov     [vfcb + 7], al          ;  search, as DOS's COMMAND
+        mov     dx, vfcb
+        mov     ah, 11h
         int     21h
-        jc      .x
-        test    byte [dta0+21], 08h
-        jz      .x
+        or      al, al
+        jnz     .x
         mov     dx, s_vol
         call    print
-        mov     si, dta0 + 30           ; (the name as DOS gives it: no dot
-        mov     cx, 12                  ;  in a label)
+        mov     si, dta0 + 8 + 11       ; (its trailing spaces off)
+        mov     cx, 11
+.t:     cmp     byte [si-1], ' '
+        jne     .p
+        dec     si
+        loop    .t
+.p:     mov     si, dta0 + 8
+        jcxz    .x
 .c:     lodsb
-        or      al, al
-        jz      .x
-        cmp     al, '.'
-        je      .c
         call    putc
         loop    .c
-.x:     mov     bx, [dirlen]
-        mov     byte [dir+bx], 0
-        ret
+.x:     ret
 
 ; the directory at dir ([dirlen], "\" last): its listing, then each one in it
 walk:   call    set_dta
@@ -302,7 +301,7 @@ p83:    xor     cx, cx
 
 ; ASCIIZ at SI after dir's first [dirlen] characters -> [dirend], CF if
 ; too long (it isn't then added: dir's directory and an 8.3 name always
-; fit, PMAX's 65 after "D:\" and 13)
+; fit, PMAX's 63 after "D:\" and 13)
 dir_add:
         mov     di, [dirlen]
         mov     bx, di
@@ -349,6 +348,8 @@ puts:   lodsb
 s_all   db '*.*', 0
 s_head  db 13, 10, 'DIRECTORY PATH LISTING$'
 s_vol   db ' FOR VOLUME $'
+vfcb    db 0FFh, 0, 0, 0, 0, 0, 08h, 0, '???????????'  ; (the label's
+        times 25 db 0                   ;  extended FCB)
 s_path  db 13, 10, 'Path: $'
 s_subs  db 'Sub-directories:  $'
 s_files db 13, 10, 'Files:            $'

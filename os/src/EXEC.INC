@@ -19,7 +19,7 @@ FOC_TIT equ 0           ; the outlined item: Title (the list holds titles),
 FOC_DEV equ 1           ;  Device (the drives),
 FOC_SUB equ 2           ;  Subject (the subjects of this drive)
 SUBJ    equ 14          ; a subject in the list: depth, NAME    EXT, date
-SUBMAX  equ 66          ; a subject's path, "\" and all (the kernel's CWDLEN - 2)
+SUBMAX  equ 64          ; a subject's path, "\" and all (the kernel's CWDMAX: \ and 63, MS-DOS's)
 EV_TASK equ 0FF10h      ; (KMW's mw_poll, MULTITASK=1, only to ex_loop: a task ended;
 EV_TASKM equ 0FF11h     ;  one the Executive started: its message in msgbuf)
 
@@ -1333,7 +1333,7 @@ tree_del:
         jnc     .nx
         ret
 .dir:   call    tw_end                  ; (a path longer than DOS takes:
-        cmp     di, tpath + 2 + 66      ;  only from a damaged disk)
+        cmp     di, tpath + 2 + SUBMAX  ;  only from a damaged disk)
         mov     ax, 3
         ja      .bad
         inc     word [t_lvl]

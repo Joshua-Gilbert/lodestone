@@ -2865,35 +2865,27 @@ show_volume:
         mov     al, [vol_drv]
         add     al, 'A'
         call    putc
-        mov     byte [vpat], al
-        mov     word [vpat + 1], ':\'
-        mov     word [vpat + 3], '*.'
-        mov     word [vpat + 5], '*'
-        mov     dx, vpat
-        mov     cx, 8
-        mov     ah, 4Eh
-        int     21h
-        jc      .none
-        test    byte [dta + 21], 8
-        jz      .none
+        inc     ax                      ; (A = 1)
+        sub     al, 'A'
+        mov     [vfcb + 7], al
+        mov     dx, vfcb                ; the label's 11 characters as on
+        mov     ah, 11h                 ;  the disk: an extended FCB's
+        int     21h                     ;  search, as DOS's COMMAND
+        or      al, al
+        jnz     .none
         mov     si, s_is
         call    puts
-        mov     si, dta + 30            ; the label as its 11 characters:
-        xor     cx, cx                  ;  the name part back to 8 before
-.l:     lodsb                           ;  the "extension", not a dot
-        or      al, al
-        jz      .d
-        cmp     al, '.'
-        je      .pad
+        mov     si, dta + 8 + 11        ; (its trailing spaces off)
+        mov     cx, 11
+.t:     cmp     byte [si-1], ' '
+        jne     .p
+        dec     si
+        loop    .t
+.p:     mov     si, dta + 8
+        jcxz    .d
+.l:     lodsb
         call    putc
-        inc     cx
-        jmp     .l
-.pad:   cmp     cx, 8
-        jae     .l
-        mov     al, ' '
-        call    putc
-        inc     cx
-        jmp     .pad
+        loop    .l
 .d:     jmp     crlf
 .none:  mov     si, s_nolabel
         jmp     puts_nl
@@ -4045,9 +4037,12 @@ vol_bad:
         mov     si, e_drive
         jmp     err
 
-; drive DL (0 = A) there?  CF if not (INT 21h 47h: 15, no disk read).
-; DL kept
+; drive DL (0 = A) there?  CF if not (INT 21h 47h: 15, no disk read;
+; past Z:, or "@:" (FFh), without asking).  DL kept
 drv_chk:
+        cmp     dl, 26
+        cmc
+        jc      .x
         push    dx
         push    si
         sub     sp, 68
@@ -4058,7 +4053,7 @@ drv_chk:
         lea     sp, [si+68]
         pop     si
         pop     dx
-        ret
+.x:     ret
 
 do_rem: ret
 
@@ -4765,6 +4760,8 @@ s_nopath    db 'No Path', 0
 s_all       db '*.*', 0
 s_dotstar   db '.*', 0
 s_volin     db ' Volume in drive ', 0
+vfcb        db 0FFh, 0, 0, 0, 0, 0, 08h, 0, '???????????'  ; (VOL's
+            times 25 db 0               ;  extended FCB: the label)
 s_is        db ' is ', 0
 s_nolabel   db ' has no label', 0
 s_dirof     db ' Directory of  ', 0
@@ -4907,7 +4904,6 @@ fcbp        equ epb                 ; (REN's and COPY's name mapping: no
 fcbs        equ epb + 37            ;  program is started meanwhile)
 fcbr        equ epb + 74
 numbuf      resb 12
-vpat        resb 8
 dta         resb 44
 cmdl        resb LBUF + 2
 bat_raw     resb LBUF + 2
@@ -4933,7 +4929,7 @@ src         resb 80                 ; (a name found: 79 characters, checked)
 ; COPY's two names checked, in prog..src, which COPY doesn't use otherwise.
 ; Neither getarg nor canon has a bound: path2 (a line's last word, up to
 ; LBUF-6 characters) runs on into prog, so canon1 starts past that, with
-; room for any real file's name (X:\, 65 characters of directory, \, 8.3)
+; room for any real file's name (X:\, 63 characters of directory, \, 8.3)
 ; before canon2, and canon2 (that directory, then path2 and a name) ends
 ; before src
 canon1      equ prog + 46
