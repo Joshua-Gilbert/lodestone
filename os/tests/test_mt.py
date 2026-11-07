@@ -7189,20 +7189,31 @@ def t_k2cap():
           'loads and runs whole (its buffers in the INT 21h stack\'s low area), the screen saved once, nothing crashed',
           'Fail?' in o1 and 'HELLO' in o and len(shots) == 1 and not k.crashed, (o1[-200:], o[-300:], shots))
 
+def code_hooks(k, addrs, fn):
+    """fn(address) each time the instruction at one of addrs runs, exactly (a UC_HOOK_CODE on each address alone:
+    pcemu's block hook sees only a block's start, a label run on into is missed, and a block it stops the
+    emulator at is run, and seen, twice).  The translations made before are flushed, so the hooks see them."""
+    from unicorn import UC_HOOK_CODE
+    for a in addrs:
+        k.pc.mu.hook_add(UC_HOOK_CODE, lambda uc, addr, size, ud: fn(addr), None, a, a)
+    k.pc.mu.ctl_flush_tb()
+
 class DWait:
-    """M10's points in MT, counted as they are passed (a hook at each label), and the kernel's stack at each
-    9001h from inside INT 21h (its depth: kstack_top less SP, SS the kernel's)."""
-    LABELS = ('mt_dwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dready', 'mt_dtick', 'mt_i0e', 'mt_gate', 'mt_gate.no',
-              'mt_gate.h', 'mt_dwait.u')
+    """M10's points in MT, counted as they are passed (a hook at each label: code_hooks), and the kernel's stack
+    at each 9001h from inside INT 21h (its depth: kstack_top less SP, SS the kernel's).  A wait given away is
+    mt_dwait.out less mt_dwait.u (none to run); a task made ready again, mt_dready.w."""
+    LABELS = ('mt_dwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dready', 'mt_dready.w', 'mt_dtick', 'mt_i0e', 'mt_gate',
+              'mt_gate.no', 'mt_gate.h', 'mt_dwait.u', 'mt_dwait.out')
     def __init__(s, k):
         s.k, seg = k, mt_seg(k)
         s.at = {seg * 16 + k.Y[n]: n for n in s.LABELS}
         s.n = collections.Counter(); s.depth = []
         s.top = k.Y['kstack_top']
-        k.hooks.append(s.hook)
-    def hook(s, pc):
-        n = s.at.get(s.k.addr)
-        if n is None: return
+        code_hooks(k, s.at, s.hook)
+    def sw(s): return s.n['mt_dwait.out'] - s.n['mt_dwait.u']
+    def hook(s, a):
+        pc = s.k.pc
+        n = s.at[a]
         s.n[n] += 1
         if n == 'mt_dwait' and pc.r('ss') == 0x60:
             s.depth.append(s.top - pc.r('sp'))
@@ -7289,23 +7300,24 @@ def hw_files(ata):
 class HWait:
     """M12's points in MT, counted (a hook at each label); the kernel's stack at each 9000h from inside INT 21h;
     the time each owner was out (from its switch to its IRQ 14 or tick: given to the others)."""
-    LABELS = ('mt_hwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dwait.u', 'mt_dready', 'mt_dtick', 'mt_i76', 'mt_i77',
-              'mt_gate', 'mt_gate.no', 'mt_gate.h', 'mt_dwait.s')
+    LABELS = ('mt_hwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dwait.u', 'mt_dwait.out', 'mt_dready', 'mt_dready.w',
+              'mt_dtick', 'mt_i76', 'mt_i77', 'mt_gate', 'mt_gate.no', 'mt_gate.h', 'mt_dwait.s')
     def __init__(s, k):
         s.k, seg = k, mt_seg(k)
         s.at = {seg * 16 + k.Y[n]: n for n in s.LABELS}
-        s.sw = seg * 16 + k.Y['mt_dwait.bk'] - 3        # (mt_dwait's CALL mt_switch: the owner going out)
+        s.call = seg * 16 + k.Y['mt_dwait.bk'] - 3      # (mt_dwait's CALL mt_switch: the owner going out)
         s.n = collections.Counter(); s.depth = []; s.out = None; s.given = 0.0
         s.top = k.Y['kstack_top']
-        k.hooks.append(s.hook)
-    def hook(s, pc):
-        a = s.k.addr
-        if a == s.sw: s.out = pc.us
+        code_hooks(k, list(s.at) + [s.call], s.hook)
+    def sw(s): return s.n['mt_dwait.out'] - s.n['mt_dwait.u']
+    def hook(s, a):
+        pc = s.k.pc
+        if a == s.call: s.out = pc.us
         n = s.at.get(a)
         if n is None: return
         s.n[n] += 1
         if n == 'mt_hwait' and pc.r('ss') == 0x60: s.depth.append(s.top - pc.r('sp'))
-        if n == 'mt_dready' and s.out is not None: s.given += pc.us - s.out; s.out = None
+        if n == 'mt_dready.w' and s.out is not None: s.given += pc.us - s.out; s.out = None
     def m12(s, on):
         """M12 (and M10) on, or off: INT 15h straight to the BIOS."""
         k = s.k; seg = mt_seg(k)
@@ -7343,7 +7355,7 @@ def t_hwait():
         hw.m12(on)
         tc, _ = hw_copy(k)
         fs, probs = hw_files(ata)
-        alone.append((tc, hw.n['mt_dcan.y'], hw.n['mt_dwait.u'], fs.get('\\B2.BIN') == data and not probs))
+        alone.append((tc, hw.n['mt_dwait.out'], hw.n['mt_dwait.u'], fs.get('\\B2.BIN') == data and not probs))
     (a0, y0, u0, o0), (a1, y1, u1, o1) = alone
     check('a 1 MB copy on C: alone (timed: the CP30104H\'s seeks and rotation): %.2f s with M12 off, %.2f s on (%d of '
           'its waits could have been given away, nobody to take them: no switch), both exact, the FAT consistent'
@@ -7358,13 +7370,13 @@ def t_hwait():
         fs, probs = hw_files(ata)
         res[on] = (tc, c, fs.get('\\B2.BIN') == data and not probs, hw, ata, k)
     (t_off, c_off, ok0, hw0, _, _), (t_on, c_on, ok1, hw, ata, k) = res[False], res[True]
-    sw = hw.n['mt_dcan.y'] - hw.n['mt_dwait.u']
+    sw = hw.sw()
     check('... MTSPIN counting behind (40 ticks, within the copy): with M12 off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d '
           '(%d switches at 9000h, %.2f s given to it, every one back by IRQ 14 through MT\'s INT 76h: %d of them, '
           '%d IRQ 14s in all): the copy no slower, MTSPIN more; both exact, the FAT consistent; no command written '
           'to the drive while one was in flight'
-          % (t_off, c_off, t_on, c_on, sw, hw.given / 1e6, hw.n['mt_dready'], hw.n['mt_i76']),
-          ok0 and ok1 and hw0.n['mt_dcan.y'] == 0 and sw >= 20 and hw.n['mt_dready'] == sw and hw.n['mt_dtick'] >= 0
+          % (t_off, c_off, t_on, c_on, sw, hw.given / 1e6, hw.n['mt_dready.w'], hw.n['mt_i76']),
+          ok0 and ok1 and hw0.n['mt_dwait.out'] == 0 and sw >= 20 and hw.n['mt_dready.w'] == sw and hw.n['mt_dtick'] >= 0
           and c_on > c_off and t_on < 1.05 * t_off and hw.n['mt_i76'] > sw and not k.crashed,
           (ok0, ok1, dict(hw.n), c_off, c_on, t_off, t_on))
     d = hw.depth
@@ -7382,7 +7394,7 @@ def t_hwait():
         ok = fs.get('\\B2.BIN') == data and not probs and (mode == 'd' or len(fs.get('\\W.DAT', b'')) == 64 * c)
         check('MTSPIN %s behind, %s (%d times held, %d switches at 9000h): the copy exact (%.2f s), MTSPIN counted %d, '
               'the FAT consistent' % (mode.split()[0].upper(), what, hw.n['mt_gate'],
-                                       hw.n['mt_dcan.y'] - hw.n['mt_dwait.u'], tc, c),
+                                       hw.sw(), tc, c),
               ok and c > 0 and hw.n['mt_gate'] > 0 and hw.n['mt_gate.no'] == 0 and not k.crashed,
               (ok, c, dict(hw.n), probs, len(fs.get('\\W.DAT', b''))))
     # 4. a dead IRQ 14 line (the drive never raises it): the tick ends the waits, and after two MT stops switching
@@ -7393,7 +7405,7 @@ def t_hwait():
     htk = k.pc.rd(mt_seg(k), k.Y['mt_htk'], 1)[0]
     check('IRQ 14 dead: the first two waits given away come back by the tick (the drive\'s status: done), then no more '
           'switches on the hard disk (%d declined); the copy exact (%.2f s against %.2f s with M12 off), MTSPIN counted %d'
-          % (hw.n['mt_dcan.no'], tc, t_off, c), htk == 2 and hw.n['mt_dcan.y'] == 2 and hw.n['mt_dtick'] >= 2
+          % (hw.n['mt_dcan.no'], tc, t_off, c), htk == 2 and hw.sw() == 2 and hw.n['mt_dtick'] >= 2
           and hw.n['mt_dcan.no'] > 20 and fs.get('\\B2.BIN') == data and not probs and tc < 1.05 * t_off and c > 0
           and not k.crashed, (htk, dict(hw.n), tc, probs))
     # 5. without multitasking: KHD's 9000h goes to the BIOS, which zeroes AH (the wait's status mask): kept round it
@@ -7416,7 +7428,7 @@ def t_hwait():
     typ(k, 'mtlaunch mtspin.com 200 c.txt', 1.0); typ(k, '', 0.2)
     typ(k, r'copy c:\big.bin c:\b2.bin', 0.1)
     k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen() or k.pc.crash, 60)
-    o1, sw = k.pc.text_screen(), hw.n['mt_dcan.y']
+    o1, sw = k.pc.text_screen(), hw.sw()
     k.pc.keys.append(ord('f'))
     k.pc.run_until(lambda: bool(A.disk_file(k, 'C.TXT')) or k.pc.crash, 60); k.run_for(1.0)
     fs, probs = hw_files(ata)
@@ -7476,11 +7488,10 @@ def t_dmaems():
     try:
         k = boot('mt_de.img', b'MULTITASK=1\r\n', 88, CL, TERMRUN, TERMFNT, mouse=True, fd_wait=True, disk_model='real')
         seg = mt_seg(k); n = collections.Counter()
-        at = {seg * 16 + k.Y[x]: x for x in ('mt_dwait.out', 'mt_dwait.u', 'mt_dready.w', 'mt_eout')}   # (pcemu's hooks
-        # see a block's start: mt_dcan.y is one only when jumped to, not when a transfer in windows 2-3 runs on into it;
-        # .out less .u, none to run, is a wait given away; mt_dready itself runs for 9101h and IRQ 6 both, as the timing
-        # has it: .w is a task made ready, once a wait)
-        k.hooks.append(lambda pc: n.update([at[k.addr]]) if k.addr in at else None)
+        at = {seg * 16 + k.Y[x]: x for x in ('mt_dwait.out', 'mt_dwait.u', 'mt_dready.w', 'mt_eout')}   # (.out less .u,
+        # none to run, is a wait given away; mt_dready itself runs for 9101h and IRQ 6 both, as the timing has it: .w
+        # is a task made ready, once a wait; code_hooks: each counted exactly)
+        code_hooks(k, at, lambda a: n.update([at[a]]))
         k.select('CLAUDE.COM'); k.key(ktest.ENTER, settle=False); k.run_for(15.0)
         pc = k.pc
         check('Return on CLAUDE.COM in the Executive (its task reads it from the floppy, the 1520\'s drive timing): %d '
@@ -7700,7 +7711,7 @@ def t_dwait():
         dw.m10(on)
         typ(k, 'cls', 0.3); t0 = k.pc.us; typ(k, 'copy pad.bin p.bin', 0.1)
         k.pc.run_until(lambda: 'copied' in k.pc.text_screen() or k.pc.crash, 60)
-        alone.append(((k.pc.us - t0) / 1e6, dw.n['mt_dcan.y'], A.disk_file(k, 'P.BIN') == want))
+        alone.append(((k.pc.us - t0) / 1e6, dw.n['mt_dwait.out'], A.disk_file(k, 'P.BIN') == want))
     (a0, s0, o0), (a1, s1, o1) = alone
     check('the copy alone (the 1520\'s drive timing): %.2f s with M10 off, %.2f s on (%d of its waits could have been '
           'given away, nobody to take them: no switch), both exact' % (a0, a1, s1),
@@ -7709,7 +7720,7 @@ def t_dwait():
     dw.m10(False)
     t_off, c_off = dw_run(k, '200 c0.txt', 'copy pad.bin p0.bin', 'copied')
     ok0 = A.disk_file(k, 'P0.BIN') == want
-    sw0 = dw.n['mt_dcan.y']
+    sw0 = dw.sw()
     dw.m10(True)
     t_on, c_on = dw_run(k, '200 c1.txt', 'copy pad.bin p1.bin', 'copied')
     ok1 = A.disk_file(k, 'P1.BIN') == want
@@ -7718,9 +7729,9 @@ def t_dwait():
           'off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d (%d switches at 9001h, back in %d 9101h, %d IRQ 6s through '
           'MT\'s hook): the waits given to MTSPIN, the copy within 10%% (a switch back is ~1.5 ms); both copies '
           'exact; no INT 13h while one waited, no transfer whose EMS window '
-          'changed under it, no time-out' % (t_off, c_off, t_on, c_on, dw.n['mt_dcan.y'], dw.n['mt_dready'],
+          'changed under it, no time-out' % (t_off, c_off, t_on, c_on, dw.sw(), dw.n['mt_dready.w'],
                                                 dw.n['mt_i0e']),
-          ok0 and ok1 and sw0 == 0 and dw.n['mt_dcan.y'] >= 20 and c_on > 5 * c_off and t_on < 1.10 * t_off
+          ok0 and ok1 and sw0 == 0 and dw.sw() >= 20 and c_on > 5 * c_off and t_on < 1.10 * t_off
           and pc.fd_reentry == 0 and pc.fd_frame_bad == 0 and pc.fd_timeouts == 0 and not k.crashed,
           (ok0, ok1, sw0, dict(dw.n), c_off, c_on, t_off, t_on, pc.fd_reentry, pc.fd_frame_bad, pc.fd_timeouts))
     d = dw.depth
@@ -7736,7 +7747,7 @@ def t_dwait():
         tc, c = dw_run(k, '120 c.txt ' + mode, 'copy pad.bin p.bin', 'copied')
         ok = A.disk_file(k, 'P.BIN') == want
         check('MTSPIN %s behind, %s (%d times held, %d switches at 9001h): the copy exact (%.2f s), MTSPIN counted %d; '
-              'no INT 13h while one waited' % (mode.upper(), what, dw.n['mt_gate'], dw.n['mt_dcan.y'], tc, c),
+              'no INT 13h while one waited' % (mode.upper(), what, dw.n['mt_gate'], dw.sw(), tc, c),
               ok and c > 0 and dw.n['mt_gate'] > 0 and dw.n['mt_gate.no'] == 0 and k.pc.fd_reentry == 0
               and k.pc.fd_frame_bad == 0 and not k.crashed,
               (ok, c, dict(dw.n), k.pc.fd_reentry, k.pc.fd_frame_bad))
@@ -7747,7 +7758,7 @@ def t_dwait():
     check('MTSPIN M behind, its own EMS page mapped in window 2 (the cache\'s) and checked on each count: it doesn\'t '
           'run while a cache fill holds the window (%d switches at 9001h), so its page and the copy are exact (%.2f s; '
           'MTSPIN counted %d, its pattern intact); no transfer whose window changed under it'
-          % (dw.n['mt_dcan.y'], tc, c), ok and c > 0 and dw.n['mt_dcan.y'] > 0 and k.pc.fd_frame_bad == 0
+          % (dw.sw(), tc, c), ok and c > 0 and dw.sw() > 0 and k.pc.fd_frame_bad == 0
           and not k.crashed, (ok, c, dict(dw.n), k.pc.fd_frame_bad))
     # 4. behind: its INT 1Ch hook calls INT 21h (InDOS 0: its own task's) at interrupt time
     k, dw = fresh('mt_dw4.img')
@@ -7761,8 +7772,8 @@ def t_dwait():
     k, dw = fresh('mt_dw5.img')
     typ(k, 'mtlaunch mtspin.com 120 c.txt', 1.0); typ(k, '', 0.2)
     typ(k, 'copy pad.bin p.bin', 0.1)
-    k.pc.run_until(lambda: dw.n['mt_dcan.y'] >= 10, 20)
-    sw = dw.n['mt_dcan.y']
+    k.pc.run_until(lambda: dw.sw() >= 10, 20)
+    sw = dw.sw()
     k.pc.prtsc()
     k.pc.run_until(lambda: 'copied' in k.pc.text_screen() or k.pc.crash, 60); k.run_for(2.0)
     shots = [n for n in A.fatcheck.read_files(k.pc.drives[0].img) if 'SCREEN0' in n]
@@ -7772,8 +7783,8 @@ def t_dwait():
     # 6. MT_KILL of a task copying, in the middle of its copy
     k, dw = fresh('mt_dw6.img')
     typ(k, 'mtlaunch lcmd.com /c copy pad.bin p.bin', 0.5); typ(k, '', 0.2)
-    k.pc.run_until(lambda: dw.n['mt_dcan.y'] >= 10, 20)
-    sw = dw.n['mt_dcan.y']
+    k.pc.run_until(lambda: dw.sw() >= 10, 20)
+    sw = dw.sw()
     typ(k, 'mtlaunch /K:1', 3.0); line(k, ''); k.run_for(2.0)
     probs, files = A.fatcheck.check(bytes(k.pc.drives[0].img))
     got = A.disk_file(k, 'P.BIN')
@@ -7796,7 +7807,7 @@ def t_dwait():
     typ(k, 'mtlaunch mtspin.com 200 c.txt', 1.0); typ(k, '', 0.2)
     typ(k, 'copy pad.bin p.bin', 0.1)
     k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen() or k.pc.crash, 60)
-    o1, sw = k.pc.text_screen(), dw.n['mt_dcan.y']
+    o1, sw = k.pc.text_screen(), dw.sw()
     k.pc.keys.append(ord('f'))
     k.pc.run_until(lambda: bool(A.disk_file(k, 'C.TXT')) or k.pc.crash, 60); k.run_for(1.0)
     probs, _ = A.fatcheck.check(bytes(d.img))
@@ -7815,7 +7826,7 @@ def t_dwait():
     typ(k, 'mtlaunch mtspin.com 300 c.txt', 1.0); typ(k, '', 0.2)
     typ(k, 'dir b:', 0.1)
     k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen() or k.pc.crash, 60)
-    sw, to = dw.n['mt_dcan.y'], dw.n['mt_dtick']
+    sw, to = dw.sw(), dw.n['mt_dtick']
     k.pc.keys.append(ord('f')); k.run_for(2.0)
     k.pc.run_until(lambda: bool(A.disk_file(k, 'C.TXT')) or k.pc.crash, 60)
     check('B: with no disk, MTSPIN behind: each try switched away at 9001h (%d), back by MT\'s time-out (%d INT 13h '
