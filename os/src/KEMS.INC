@@ -1148,9 +1148,12 @@ ems_init:
         push    cs
         pop     ds
         mov     si, section.mdt.start
-        mov     di, MD_TPG
-        mov     cx, MD_TLEN
+        mov     di, MD_TPG + CWDLEN     ; (KMDISK.INC: md_cwd isn't in the file)
+        mov     cx, MD_TLEN - CWDLEN
         rep     movsb
+        mov     cl, MD_BLEN             ; (its variables: zeros)
+        mov     al, 0
+        rep     stosb
         pop     es                      ; (KSEG)
         mov     si, MDB(md_stub)
         mov     di, MD_STUB

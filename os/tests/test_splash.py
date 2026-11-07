@@ -252,7 +252,9 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '564.1', 88: '580.2'}   # (a failed write's FAT changes dropped: fat_drop, SF_LOST, 96 bytes, 0.1 KB less,
+MEM_044 = {0: '564.2', 88: '580.3'}   # (ROM 1's room: Lodefont packed, the UI block 64 bytes less: 0.1 KB more,
+                                      #  2026-11-07;
+                                      #  a failed write's FAT changes dropped: fat_drop, SF_LOST, 96 bytes, 0.1 KB less,
                                       #  2026-11-07;
                                       #  MS-DOS's FCB search for the label, its names and its CHDIR, the
                                       #  Executive's whole names: 0.4 KB less, 2026-11-07;

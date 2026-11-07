@@ -64,10 +64,12 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (none after 415Fh on
-# 2026-11-07, with fat_drop), and a change past it moves image_end and bss_end.  The UI's pads, UICORE.INC's, likewise: the slack
-# between ui_image_end and uibss's paragraph, 2 bytes after 553Eh then)
-OFF_MAP ={'image_end': 0x4160, 'bss_end': 0x7560, 'ui_keep_end': 0x6844}  # (4100h/7500h before a failed write's FAT
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 415Dh on
+# 2026-11-07, with fat_drop and ROM 1's room), and a change past it moves image_end and bss_end.  The UI's pads, UICORE.INC's,
+# likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
+OFF_MAP ={'image_end': 0x4160, 'bss_end': 0x7560, 'ui_keep_end': 0x6804}  # (6844h before Lodefont was packed (FONTPACK.INC)
+                                        #  and "Disk error (" shared in dos_msgs, ROM 1's room, 2026-11-07;
+                                        #  4100h/7500h before a failed write's FAT
                                         #  changes dropped (fat_drop, SF_LOST), 2026-11-07;
                                         #  40E0h/74E0h before the FCB search's checks of
                                         #  MS-DOS 3 (separators, the attribute) and LCMD's names cut to 8.3, 2026-11-07;
@@ -7029,7 +7031,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 580.2 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.2', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 580.3 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.3', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
@@ -7760,8 +7762,9 @@ def t_dwait():
     check('MTSPIN M behind, its own EMS page mapped in window 2 (the cache\'s) and checked on each count: it doesn\'t '
           'run while a cache fill holds the window (%d switches at 9001h), so its page and the copy are exact (%.2f s; '
           'MTSPIN counted %d, its pattern intact); no transfer whose window changed under it'
-          % (dw.sw(), tc, c), ok and c > 0 and dw.sw() > 0 and k.pc.fd_frame_bad == 0
-          and not k.crashed, (ok, c, dict(dw.n), k.pc.fd_frame_bad))
+          % (dw.sw(), tc, c), ok and c > 0 and dw.n['mt_dwait.out'] > 0 and k.pc.fd_frame_bad == 0
+          and not k.crashed, (ok, c, dict(dw.n), k.pc.fd_frame_bad))   # (waits offered: given away or not, as
+                                                                      #  the cache's fills fall)
     # 4. behind: its INT 1Ch hook calls INT 21h (InDOS 0: its own task's) at interrupt time
     k, dw = fresh('mt_dw4.img')
     tc, c = dw_run(k, '120 c.txt h', 'copy pad.bin p.bin', 'copied')

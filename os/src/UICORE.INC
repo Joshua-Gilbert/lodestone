@@ -209,6 +209,9 @@ exec_main:
 ; ui_load put it there); nothing returns into it once ex_start runs
 section uiboot
 ui_boot:
+        mov     si, font_z              ; Lodefont, unpacked (LODE.ASM,
+        mov     di, font                ;  FONTPACK.INC)
+        FONT_UNPACK
         mov     byte [mstarted], 1
         mov     ax, UI_PARAS * 16       ; where .RUN programs load
         mov     [run_base], ax
@@ -1957,7 +1960,15 @@ api_sberr:
         or      al, al
         jnz     .skip
         jmp     .find
-.hit:   call    sb_str
+.hit:   cmp     byte [si], '('          ; "(data)": "Disk error (data)"
+        jne     .s
+        push    si
+        mov     si, s_dskerr
+        call    sb_str
+        mov     al, ' '
+        stosb
+        pop     si
+.s:     call    sb_str
         jmp     .x
 .other: mov     si, s_err
         call    sb_str
@@ -4497,7 +4508,8 @@ exec_fcb    db 0, '           ', 0, 0, 0, 0
 run_epb     dw 0, run_tail, 0, exec_fcb, 0, exec_fcb, 0 ; exec_raw's EXEC block:
                                 ;  our environment; the segments are CS's
 s_err       db 'error ',0
-; DOS errors (code, text); 19-31 are INT 24h's too (its code + 18)
+; DOS errors (code, text); 19-31 are INT 24h's too (its code + 18).  A
+; text in brackets is "Disk error (...)" (api_sberr)
 dos_msgs    db 2, 'File not found',0
             db 3, 'Path not found',0
             db 4, 'Too many files open',0
@@ -4509,16 +4521,17 @@ dos_msgs    db 2, 'File not found',0
             db 19, 'Disk is write-protected',0
             db 20, 'Unknown drive',0
             db 21, 'Drive not ready (no disk?)',0
-            db 22, 'Disk error (unknown command)',0
-            db 23, 'Disk error (data)',0
-            db 24, 'Disk error (bad request)',0
-            db 25, 'Disk error (seek)',0
+            db 22, '(unknown command)',0
+            db 23, '(data)',0
+            db 24, '(bad request)',0
+            db 25, '(seek)',0
             db 26, 'Not a DOS disk',0
-            db 27, 'Disk error (sector not found)',0
+            db 27, '(sector not found)',0
             db 28, 'Printer out of paper',0
-            db 29, 'Disk error (write)',0
-            db 30, 'Disk error (read)',0
-            db 31, 'Disk error',0
+            db 29, '(write)',0
+            db 30, '(read)',0
+            db 31
+s_dskerr    db 'Disk error',0         ; (and "Disk error (...)" for those above)
             db 39, 'Disk is full',0
             db 80, 'File already exists',0
             db 83, 'Disk error',0
