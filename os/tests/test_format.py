@@ -333,7 +333,7 @@ def hfmt(k, line, answer='y', sim_s=600):
     """FORMAT C: at the prompt, `answer` to Proceed with Format; the screen after."""
     cmd(k, line + ' && echo FORMAT-OK || echo FORMAT-FAILED')
     if answer is not None and wait(k, 'Proceed with Format (Y/N)?', 30):
-        k.key(answer, settle=False)
+        k.key(answer); k.key(ktest.ENTER, settle=False)
     k.pc.run_until(lambda: said(scr(k), 'FORMAT-OK') or said(scr(k), 'FORMAT-FAILED'), sim_s)
     k.settle(20)
     return scr(k)
@@ -406,7 +406,7 @@ def t_hd_no():
     check('N at Proceed with Format: nothing written, exit code 5',
           said(o, 'FORMAT-FAILED') and 'LEVEL5' in o2 and bytes(ata.disk) == raw and not ata.writes, (o, o2))
     cmd(k, 'format c:'); wait(k, 'Proceed with Format', 30)
-    k.key('y', settle=False); wait(k, 'percent of disk formatted', 60)
+    k.key('y'); k.key(ktest.ENTER, settle=False); wait(k, 'percent of disk formatted', 60)
     k.key(chr(27)); k.settle(20)
     o = scr(k)
     o2 = shell(k, 'if errorlevel 3 echo LEVEL3')
@@ -464,6 +464,90 @@ def t_hd_own():
     check('/Q on a 34 MB partition the kernel has no file system on: 2 KB clusters, nothing verified, CHKDSK-clean',
           said(o, 'FORMAT-OK') and v.spc == 4 and v.files()[1] == [] and getattr(ata, 'verifies', 0) == 0, (o, bpb16(v)))
 
+def t_review():
+    # the review panel's findings, each held to
+    k = boot(blank('b.img'))
+    cmd(k, 'format b:')
+    wait(k, 'strike ENTER', 20)
+    k.key(ktest.ENTER, settle=False)
+    wait(k, 'Cylinder: 10', 200)
+    k.key('x', settle=False); k.pc.run_for(0.3); k.key(chr(27)); k.settle(10)
+    n = len(k.pc.drives[1].formats)
+    check('Esc typed after another key while a floppy formats: still stops it', 20 <= n < 40, n)
+    for line in ('format b: /t:80', 'format b: /n:9', 'format c: /t:80'):
+        o = shell(k, line + ' && echo FORMAT-OK || echo FORMAT-FAILED')
+        check('%s: "Invalid parameter" (/N and /T go together; C: has neither)' % line.upper(),
+              'Invalid parameter' in o and said(o, 'FORMAT-FAILED') and 'Insert new' not in o and 'Proceed' not in o, o)
+    ata = hdrive(hdisk()); raw = bytes(ata.disk)
+    k = boot(ata=ata)
+    cmd(k, 'format c: && echo FORMAT-OK || echo FORMAT-FAILED')
+    wait(k, 'Proceed with Format (Y/N)?', 30)
+    k.key('y'); k.settle(5)
+    o1 = scr(k)
+    k.key(ktest.BKSP); k.key('n'); k.key(ktest.ENTER); k.settle(20)
+    o = scr(k)
+    check('C:\'s warning: Y alone does nothing till Enter, Backspace takes it back, then N: nothing written, exit 5',
+          'percent' not in o1 and said(o, 'FORMAT-FAILED') and bytes(ata.disk) == raw and not ata.writes, (o1, o))
+    cmd(k, 'format c:'); wait(k, 'Proceed with Format', 30)
+    k.key('y'); k.key(ktest.ENTER, settle=False); wait(k, 'percent of disk formatted', 60)
+    k.key('q', settle=False); k.pc.run_for(0.3); k.key(chr(27)); k.settle(20)
+    check('Esc typed after another key while C: is read: still stops it, nothing written', bytes(ata.disk) == raw
+          and 'nothing written' in scr(k), scr(k))
+    # a DOS 3 boot sector (no 29h): the bytes after its BPB are boot code, not a 32-bit BPB
+    d = hdisk()
+    b = bytearray(d[PLBA * 512:PLBA * 512 + 512])
+    b[0x24:0x3E] = bytes(0x1A); b[0x1E:0x24] = bytes.fromhex('33c08ed0bc00')
+    d[PLBA * 512:PLBA * 512 + 512] = b
+    ata = hdrive(d)
+    k = boot(ata=ata)
+    o = hfmt(k, 'format c: /q')
+    s0 = bytes(ata.disk[PLBA * 512:PLBA * 512 + 512])
+    check('C: whose BPB is DOS 3\'s: the hidden sectors\' high word and 32-bit total made 0, not its old boot code',
+          said(o, 'FORMAT-OK') and s0[0x1E:0x24] == bytes(6) and struct.unpack_from('<H', s0, 0x1C)[0] == PLBA, (o, s0[:0x40]))
+    # a write that fails part way: C:'s current directory still back at the root
+    ata = hdrive(hdisk())
+    k = boot(ata=ata)
+    shell(k, 'cd c:\\sub')
+    v = F.Volume(ata.disk, PLBA)
+    ata.badw = {PLBA + v.rsv + 1}                        # (the first FAT's second sector won't take a write)
+    o = hfmt(k, 'format c: /q')
+    o2 = shell(k, 'cd c:')
+    check('C: /Q failing part way through its writes: "Format terminated", exit 4, C:\'s current directory the root',
+          said(o, 'FORMAT-FAILED') and 'Format terminated' in o and 'C:\\' in o2 and 'SUB' not in o2, (o, o2))
+    # path B: sizes at the top of a cluster size's band, and wrong entries
+    for secs, spc in ((262144, 4), (262140, 4), (524288, 8)):
+        cyl = secs // (16 * 63) + 2
+        d = bytearray(cyl * 16 * 63 * 512)
+        d[0:512] = F.mbr([(0x80, 0x06, 63, secs)], cyl, 16, 63)
+        ata = pcemu.Ata(model='Test', cyls=cyl, heads=16, spt=63, disk=d)
+        k = boot(ata=ata)
+        o = hfmt(k, 'format c: /q')
+        v = F.Volume(ata.disk, 63)
+        check('a new %d-sector partition: formatted, %d sectors a cluster, no more clusters than the kernel takes'
+              % (secs, spc), said(o, 'FORMAT-OK') and v.spc == spc and v.ncl - 2 <= 65518 and v.files()[1] == [],
+              (o, bpb16(v) if said(o, 'FORMAT-OK') else None))
+    for what, start, n in (('starting at sector 0', 0, 8000), ('running past the drive\'s end', 17, PSECS + 500)):
+        d = bytearray(HCYL * HHEADS * HSPT * 512)
+        d[0:512] = F.mbr([(0x80, 0x04, start, n)], HCYL, HHEADS, HSPT)
+        ata = hdrive(d); raw = bytes(ata.disk)
+        k = boot(ata=ata)
+        o = shell(k, 'format c: && echo FORMAT-OK || echo FORMAT-FAILED')
+        check('a partition entry %s: refused before the warning, nothing written' % what,
+              'partition entry is wrong' in o and said(o, 'FORMAT-FAILED') and 'Proceed' not in o
+              and bytes(ata.disk) == raw, o)
+
+def t_mt():
+    import test_mt as M
+    from test_kernel import Shell
+    b = blank('mtb.img')
+    k = M.boot('mtfmt.img', b'MULTITASK=1\r\n', 88, os.path.join(SRC, 'FORMAT.COM'), b=b)
+    k.pc.drives[1].noid = set(range(2880))
+    sh = Shell(k)
+    sh.run('start /w format.com b: > o.txt'); k.run_for(10)
+    o = sh.run('type o.txt')
+    check('with multitasking, FORMAT run as a task: refused ("other tasks are running"), nothing formatted',
+          'other tasks are running' in o and not k.pc.drives[1].formats, o)
+
 def t_hd_nopart():
     d = hdisk()
     d[446 + 4] = 0x0B                                   # FAT32's type: no partition of ours
@@ -476,7 +560,7 @@ def t_hd_nopart():
 if __name__ == '__main__':
     t0 = time.time()
     for t in (t_full, t_720, t_525, t_bad, t_wp_empty, t_quick, t_sys, t_own_drive, t_answers, t_refused,
-              t_hd_full, t_hd_quick, t_hd_no, t_hd_own, t_hd_nopart):
+              t_hd_full, t_hd_quick, t_hd_no, t_hd_own, t_hd_nopart, t_review, t_mt):
         if sys.argv[1:] and t.__name__ not in sys.argv[1:]: continue
         t()
     bad = [n for n, ok in results if not ok]
