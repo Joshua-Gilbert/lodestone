@@ -1735,6 +1735,57 @@ def t_fcbnames():
     check('47h in the deepest directory: 63 characters and the NUL, its 64-byte buffer\'s next byte untouched',
           'W 63 G' in o, o)
 
+def t_copycat():
+    """COPY's concatenation as MS-DOS 3.30's: one plain destination and a source with wildcards or a "+" list;
+    ASCII by default (each source to its first ^Z, one ^Z at the end), /B whole files; each source's name shown
+    and "1 File(s) copied"; "+" with blanks around it, to no destination (the first source's) or a directory;
+    the destination as the first source kept and appended to; met later, "Content of destination lost before
+    copy"; a single copy binary unless /A.  (They were binary, ^Zs left inside; "+" was "File not found".)"""
+    def mkf(n, b):
+        t = os.path.join(OUT, n); open(t, 'wb').write(b); return t
+    p = image('cat.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'A.TXT=' + mkf('ca', b'aaa\x1aJUNK'),
+              'B.TXT=' + mkf('cb', b'bbb\x1a'), 'C.REF=' + mkf('cc', b'ccc'), 'BIN1.DAT=' + mkf('cd', b'x\x1ay'),
+              'D\\', 'D\\M1.TXT=' + mkf('ce', b'm1'), 'D\\ZZ.TXT=' + mkf('cf', b'zz-old'),
+              'E\\', 'E\\AA.TXT=' + mkf('cg', b'aa\x1a'), 'E\\BB.TXT=' + mkf('ch', b'bb'))
+    k = ktest.KPC(p); k.start()
+    sh = Shell(k)
+    fs = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    o = sh.run('copy *.txt cat.dat')
+    check('COPY *.TXT CAT.DAT: ASCII, each to its first ^Z, one ^Z at the end; each name shown, "1 File(s) copied"',
+          fs().get('A:\\CAT.DAT') == b'aaabbb\x1a' and 'A.TXT' in o and 'B.TXT' in o and '1 File(s) copied' in o, (o, fs().get('A:\\CAT.DAT')))
+    o = sh.run('copy /b *.txt catb.dat')
+    check('COPY /B *.TXT CATB.DAT: whole files, nothing added', fs().get('A:\\CATB.DAT') == b'aaa\x1aJUNKbbb\x1a'
+          and '1 File(s) copied' in o, (o, fs().get('A:\\CATB.DAT')))
+    o = sh.run('copy a.txt+c.ref ac.dat') + sh.run('copy a.txt + c.ref ac2.dat') + sh.run('copy c.ref +a.txt ac3.dat /b')
+    f = fs()
+    check('COPY A.TXT+C.REF AC.DAT, with blanks around the "+", and /B after the names', f.get('A:\\AC.DAT') == b'aaaccc\x1a'
+          and f.get('A:\\AC2.DAT') == b'aaaccc\x1a' and f.get('A:\\AC3.DAT') == b'ccc' + b'aaa\x1aJUNK'
+          and o.count('1 File(s) copied') == 3, (o, f.get('A:\\AC.DAT'), f.get('A:\\AC2.DAT'), f.get('A:\\AC3.DAT')))
+    o = sh.run('copy b.txt+c.ref')
+    check('COPY B.TXT+C.REF (no destination): appended to B.TXT, over its ^Z', fs().get('A:\\B.TXT') == b'bbbccc\x1a'
+          and 'onto itself' not in o and '1 File(s) copied' in o, (o, fs().get('A:\\B.TXT')))
+    o = sh.run('copy c.ref+bin1.dat d')
+    check('COPY C.REF+BIN1.DAT D (a directory): D\\C.REF, the two in it', fs().get('A:\\D\\C.REF') == b'cccx\x1a', (o, fs().get('A:\\D\\C.REF')))
+    o = sh.run('copy d\\*.txt d\\zz.txt')
+    check('COPY D\\*.TXT D\\ZZ.TXT, ZZ.TXT found after the copy made it: "Content of destination lost before copy", '
+          'the rest kept on', fs().get('A:\\D\\ZZ.TXT') == b'm1\x1a' and 'Content of destination lost before copy' in o
+          and '1 File(s) copied' in o, (o, fs().get('A:\\D\\ZZ.TXT')))
+    o = sh.run('copy e\\*.txt e\\aa.txt')
+    check('COPY E\\*.TXT E\\AA.TXT, AA.TXT the first found: kept, BB.TXT appended (over its ^Z), not "onto itself"',
+          fs().get('A:\\E\\AA.TXT') == b'aabb\x1a' and 'onto itself' not in o and '1 File(s) copied' in o, (o, fs().get('A:\\E\\AA.TXT')))
+    o = sh.run('copy bin1.dat bin2.dat') + sh.run('copy bin1.dat bin3.dat /a') + sh.run('copy /a c.ref c2.ref')
+    f = fs()
+    check('a single copy: binary (BIN2.DAT whole), /A after or before: to the first ^Z and one added',
+          f.get('A:\\BIN2.DAT') == b'x\x1ay' and f.get('A:\\BIN3.DAT') == b'x\x1a' and f.get('A:\\C2.REF') == b'ccc\x1a',
+          (o, f.get('A:\\BIN2.DAT'), f.get('A:\\BIN3.DAT'), f.get('A:\\C2.REF')))
+    o = sh.run('copy *.txt+*.ref')
+    check('COPY *.TXT+*.REF (MS-DOS pairs such names; not here): "Syntax error", nothing made', 'Syntax error' in o, o)
+    o = sh.run('copy a.txt+nosuch.ref an.dat')
+    check('a "+" list with a source not there: "File not found", the rest copied', 'File not found' in o
+          and fs().get('A:\\AN.DAT') == b'aaa\x1a', (o, fs().get('A:\\AN.DAT')))
+    probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('... the disk consistent', not probs, probs)
+
 def t_spacenames():
     """Names with a space inside (another system's, or a program's: MS-DOS takes them) through LCMD's COPY
     and REN with wildcards, XCOPY's and CHKDSK's names: each the whole name, never cut at its space (COPY
@@ -3016,7 +3067,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
