@@ -1664,14 +1664,10 @@ f_4E:   call    get_path
         rep     stosb
         jmp     short .q
 .p:     rep     movsb
-.q:     mov     al, [bp+F_CX]
-        stosb
-        and     al, A_HID | A_SYS | A_DIR | A_VOL
-        cmp     al, A_VOL               ; (the label alone: the root's,
-        mov     ax, [r_dir]             ;  wherever the path points, as
-        jne     .r                      ;  MS-DOS's)
-        xor     ax, ax
-.r:     stosw
+.q:     mov     al, [bp+F_CX]           ; (the label alone: where the path
+        stosb                           ;  points, as GRiD MS-DOS 3.30's,
+        mov     ax, [r_dir]             ;  NOMATCH_MS.TXT; only the FCB
+        stosw                           ;  search goes to the root)
         xor     ax, ax
         stosw
         push    cs

@@ -5,7 +5,8 @@
 ; plain FCB's for *.TXT (11h/12h: "T [11 bytes]"), for "*       txt"
 ; ("U [11 bytes]"), for E5h "*      TXT" ("E [11 bytes]") and for
 ; "AB+CD   SEP" (a separator: "V" if found); an extended FCB's with 09h
-; ("K [label]"); 4Eh *.* with 08h from here ("C name": the root's label),
+; ("K [label]"); 4Eh *.* with 08h from here ("C name" if found: GRiD
+; MS-DOS 3.30 finds nothing, the label being in the root),
 ; \*.* with 09h ("B name", the label only) and with 3Fh ("A name", the
 ; label among them).  FCBNAMES W:
 ; INT 21h 47h into a 64-byte buffer, a guard byte after it ("W n G" n its
@@ -94,7 +95,7 @@ org 100h
         mov     si, dta + 8
         call    raw
 .any:   mov     dx, pat_cur             ; 4Eh *.* with 08h here (A:\SUB):
-        mov     cx, 08h                 ;  the root's label
+        mov     cx, 08h                 ;  nothing, as GRiD MS-DOS 3.30
         mov     ah, 4Eh
         int     21h
         jc      .b9

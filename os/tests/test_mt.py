@@ -7476,14 +7476,18 @@ def t_dmaems():
     try:
         k = boot('mt_de.img', b'MULTITASK=1\r\n', 88, CL, TERMRUN, TERMFNT, mouse=True, fd_wait=True, disk_model='real')
         seg = mt_seg(k); n = collections.Counter()
-        at = {seg * 16 + k.Y[x]: x for x in ('mt_dcan.y', 'mt_dready', 'mt_eout')}
+        at = {seg * 16 + k.Y[x]: x for x in ('mt_dwait.out', 'mt_dwait.u', 'mt_dready.w', 'mt_eout')}   # (pcemu's hooks
+        # see a block's start: mt_dcan.y is one only when jumped to, not when a transfer in windows 2-3 runs on into it;
+        # .out less .u, none to run, is a wait given away; mt_dready itself runs for 9101h and IRQ 6 both, as the timing
+        # has it: .w is a task made ready, once a wait)
         k.hooks.append(lambda pc: n.update([at[k.addr]]) if k.addr in at else None)
         k.select('CLAUDE.COM'); k.key(ktest.ENTER, settle=False); k.run_for(15.0)
         pc = k.pc
         check('Return on CLAUDE.COM in the Executive (its task reads it from the floppy, the 1520\'s drive timing): %d '
               'waits given away and back (%d), no EMS page register changed under a transfer (%d; the 1520 restarted '
-              'here before the fix), nothing crashed' % (n['mt_dcan.y'], n['mt_dready'], getattr(pc, 'fd_ems_write', 0)),
-              n['mt_dcan.y'] > 0 and n['mt_dready'] == n['mt_dcan.y'] and not getattr(pc, 'fd_ems_write', 0)
+              'here before the fix), nothing crashed' % (n['mt_dwait.out'] - n['mt_dwait.u'], n['mt_dready.w'],
+                                                          getattr(pc, 'fd_ems_write', 0)),
+              n['mt_dwait.out'] > n['mt_dwait.u'] and n['mt_dready.w'] == n['mt_dwait.out'] - n['mt_dwait.u'] and not getattr(pc, 'fd_ems_write', 0)
               and not pc.crash, (dict(n), pc.crash, pc.log[-4:]))
         k = boot('mt_de2.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, mouse=True, fd_wait=True, disk_model='real')
         k.key(ktest.CODE_P, settle=False); k.run_for(4.0)

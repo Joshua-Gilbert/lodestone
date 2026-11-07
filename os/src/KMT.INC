@@ -6390,8 +6390,8 @@ mt_i77: push    ax
 mt_dready:
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_WAITD
-        jne     .x
-        mov     byte [cs:bx+TE_STATE], TS_RUN
+        jne     .x                      ; (called by 9101h and IRQ 6 both:
+.w:     mov     byte [cs:bx+TE_STATE], TS_RUN   ;  .w once a wait)
         mov     [cs:mt_want], al
         mov     byte [cs:mt_pend], 1
 .x:     ret
@@ -6456,7 +6456,7 @@ mt_dwait:
         call    mt_fdrain               ; (interrupts on a moment: IRQ 6 may
         call    mt_ddone                ;  come then)
         jnz     .x
-        call    mt_cent
+.out:   call    mt_cent                 ; (.out: a block's start, test_mt's)
         mov     [cs:mt_down], al        ; out: only those it allows run
         mov     byte [cs:mt_dto], MT_DTO
         mov     byte [cs:bx+TE_STATE], TS_WAITD

@@ -1719,9 +1719,10 @@ def t_fcbnames():
           'that one (and the * stays in the name part: not AB CD.DAT)', 'U [\xe5ABC    TXT]\n' in o
           and 'U [AB CD   TXT]\n' in o and o.count('\nU [') == 2 and 'E [\xe5ABC    TXT]\n' in o, o)
     check('... a separator in an FCB\'s name ("AB+CD   SEP", an entry there by that name): nothing (FFh), as MS-DOS\'s '
-          'TransFCB; the label with 09h (read-only no matter); 4Eh: *.* with 08h from A:\\SUB the root\'s label, '
+          'TransFCB; the label with 09h (read-only no matter); 4Eh: *.* with 08h from A:\\SUB nothing (GRiD MS-DOS 3.30: '
+          'the path\'s directory, not the root), '
           '\\*.* with 09h the label only, with 3Fh the label among the rest, as MS-DOS\'s', '\nV [' not in o
-          and 'K [V1.0  X    ]\n' in o and 'C V1.0  X\n' in o and o.count('\nB ') == 1 and 'B V1.0  X\n' in o
+          and 'K [V1.0  X    ]\n' in o and '\nC ' not in o and o.count('\nB ') == 1 and 'B V1.0  X\n' in o
           and 'A V1.0  X\n' in o and 'A SUB\n' in o, o)
     ents = [d[i:i + 11] for i in range(0, len(d) - 32, 32) if d[i + 11:i + 12] == b'\x20' and d[i + 8:i + 11] == b'TXT']
     check('... on the disk the first E5h is 05h (E5h there is a free entry)', b'\x05ABC    TXT' in ents, ents)
