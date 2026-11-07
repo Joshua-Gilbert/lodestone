@@ -76,6 +76,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - Every built-in that can fail sets ERRORLEVEL, so scripts can check each step. Claude writes scripts too.
 
 **Tools**
+- **`FORMAT`:** formats a floppy in A: or B:, as DOS 3.30's FORMAT: 1.44 MB or 720 KB in the 1520's drive (360 KB and 1.2 MB in a 5¼-inch one), each track verified and bad sectors fenced off. `/S` makes it start Lodestone (the system read before the new disk goes in, so it works with one drive), `/V` gives it a label, `/Q` is a quick format of a disk formatted before. Every disk gets Lodestone's boot sector. It isn't on the ROMs: started from the ROM, copy `FORMAT.COM` to `C:\LODE` (on the `PATH`).
 - **`DEFRAG`:** defragments a floppy or C:. A power cut during any of its writes leaves the old file or the new one, never a damaged one. `DEFRAG /T` tests every free sector and fences off bad ones.
 - **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner. They drive the disk themselves, so with multitasking on they run only with no other task there.
 - **The rest:** BENCH, GRIDPROBE and others are in `tools/` and `os/bench/`.
@@ -144,7 +145,8 @@ From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C
 1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODEMT.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `TASKS.RUN`, `CALC.COM`, `PAINT.RUN`, `SCREEN.PRN` (Shift-PrtSc's file writer), `TERM.RUN` and `TERM.FNT` (the terminal window, with `MULTITASK=1`: without them text programs start full screen) and whatever programs you want. The current release's files are in `os/releases/`.
 2. Under GRiD MS-DOS, run `LODEBOOT` on it once (`B:LODEBOOT B` when booted from the EPROM, where the floppy is B:).
 3. Restart and tap **F** as the memory count finishes, or choose the floppy from Lodestone's boot menu.
-4. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`) reads it at start-up and stays off if it doesn't match.
+4. Once Lodestone runs, `FORMAT B: /S` (or `A:`) makes another start-up floppy in one step: format, boot sector and the system files; copy the programs after.
+5. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`) reads it at start-up and stays off if it doesn't match.
 
 See `docs/lodestone-floppy-dev.md`.
 
@@ -152,7 +154,7 @@ See `docs/lodestone-floppy-dev.md`.
 
 | Folder | What |
 |---|---|
-| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
+| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `FORMAT.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
 | `os/splash` | The start-up picture's source: the source image, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
 | `os/rom` | `LODE.INI`, the settings burned into the ROM. The ROM images are `os/LODE1_EPROM.BIN` and `os/LODE2_EPROM.BIN` (to burn) and `os/LODE1.BIN` and `os/LODE2.BIN` (as the BIOS sees them), built by `os/build.sh` with `tools/mkrom.py` |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN` (the calculator's window), `TASKS.RUN` (the tasks, CODE-T), `PAINT.RUN` (Paint, and the BMP viewer) and `TERM.RUN` (a text program's terminal window, with `MULTITASK=1`) |
@@ -209,7 +211,7 @@ See `docs/serial-link.md`. `os/tests/test_serial_kernel.py` builds it and checks
 
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,560 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,606 checks pass (the 16 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -227,6 +229,7 @@ python3 tests/test_mt.py              # multitasking (MULTITASK=1), and nothing 
 python3 tests/test_hdprobe.py         # HDPROBE
 python3 tests/test_hdscan.py          # HDSCAN
 python3 tests/test_headcln.py         # HEADCLN
+python3 tests/test_format.py          # FORMAT: sizes, bad sectors, /Q, /S, the kernel seeing the new disk
 python3 tests/test_modemid.py         # MODEMID, against no modem, Option 330 and Option 331
 python3 tests/test_serial_kernel.py   # the -dSERIAL kernel: its link driver, SERLINK=, the GPIB build untouched
 python3 tests/defrag_cut.py 2         # a power cut at every DEFRAG write (~20 min; "2 hd" for C:)
@@ -244,14 +247,14 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
-Multitasking works on the 1520, tasks running from its hard disk included, and so do Paint in a window and resident Claude reading the program's screen in the background (CLAUDE 1.11) and drawing the mascot in its console (1.12). Pipes from the ROM work there too, with a hard disk. Built since 0.6 and not yet tried there: the ROM's `TEMP=M:\` (which applies only without a hard disk), and SysReq as the task switcher.
+Multitasking works on the 1520, tasks running from its hard disk included, and so do Paint in a window and resident Claude reading the program's screen in the background (CLAUDE 1.11) and drawing the mascot in its console (1.12). Pipes from the ROM work there too, with a hard disk. Built since 0.6 and not yet tried there: the ROM's `TEMP=M:\` (which applies only without a hard disk), SysReq as the task switcher, and FORMAT.
 
 **Next:**
 - **On the 1520:** the list above tried on the machine, and what it finds fixed.
 - **GRIDMODE.COM:** the BIOS's display functions (INT 15h E420h-E422h) from the prompt, as GRiD's MS-DOS `MODE` gave them: the panel type, the internal panel or the external RGB port, the colour map (how CGA colours become plasma or LCD greys, at 40:A7h) and the hardware text font. A tool beside GRIDMEM, not in ROM 1; SYSTEM to show the panel type too.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.
-- **The FreeDOS kernel calls:** INT 21h 60h/6Ch and IOCTL 440Dh, so FreeDOS's FORMAT, LABEL, XCOPY and the like run.
+- **The FreeDOS kernel calls:** INT 21h 60h/6Ch and IOCTL 440Dh, so FreeDOS's LABEL, XCOPY and the like run.
 
 Third-party material in the repo (the Terminus font, FreeDOS for the benchmark, the AR488 patch, the bridge firmware's libraries, TM5000G) and its licenses: [`THIRD_PARTY.md`](THIRD_PARTY.md).
 
