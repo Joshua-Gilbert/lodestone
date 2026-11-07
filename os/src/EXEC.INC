@@ -28,7 +28,7 @@ exec_dta    resb 44
 entlist     resw MAXENT         ; -> entries (FAT layout), at the end of the
                                 ;  UI segment's BSS (LODE.ASM)
 runpath     resb 80
-argpath     resb 84                 ; X:\ + a 66-char subject + \ + NAME.EXT
+argpath     resb 84                 ; X:\ + a 64-char subject + \ + NAME.EXT
 dir_note    resw 1              ; load_dir: 0, a DOS error, or FFFFh (too many)
 last_sel    resw 1              ; relist: the selection before an empty list
 last_top    resw 1
@@ -50,7 +50,7 @@ msgbuf      resb 128
 infobuf     equ tmp                 ; the information line: built by draw_all
                                     ;  just before it is drawn (draw_form and
                                     ;  the clock use tmp too)
-dstpath     resb 84                 ; Copy, Move: X: + \ + a 66-char subject + \ +
+dstpath     resb 84                 ; Copy, Move: X: + \ + a 64-char subject + \ +
 tmppath     resb 84                 ;  NAME.EXT (83); the subject it goes to, then
                                     ;  the new file in it (X:\SUBJECT\ABCDTMP, 78)
 curdir      resb 72                 ; X:\SUBJECT, where the list is
