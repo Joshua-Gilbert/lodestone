@@ -385,11 +385,15 @@ font_boot:
         mov     di, font_path + 3       ; (the font is read once, after both)
         mov     cx, 12
 .c:     lodsb
-        cmp     al, ' '                 ; (CR, LF, the end, a space or tab)
-        jbe     .e
-        stosb
-        loop    .c
-.e:     mov     byte [di], 0            ; ("FONT=": Lodefont)
+        cmp     al, ' '                 ; (to CR, LF, the end or a tab: a
+        jb      .e                      ;  name may have a space inside, as
+        stosb                           ;  System's list can choose; the
+        loop    .c                      ;  trailing ones dropped)
+.e:     cmp     byte [es:di-1], ' '
+        jne     .e0
+        dec     di
+        jmp     .e
+.e0:    mov     byte [di], 0            ; ("FONT=": Lodefont)
         dec     si
 .next:  lodsb
         or      al, al

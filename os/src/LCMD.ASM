@@ -2283,8 +2283,14 @@ edit_line:
 .tfind: int     21h
         jc      .beep
 .tdot:  cmp     byte [dta + 30], '.'    ; (not . and ..)
-        jne     .tput
-        mov     ah, 4Fh
+        je      .tskip
+        mov     si, dta + 30            ; (nor a name with a space inside:
+.tsp:   lodsb                           ;  the line would take it for two,
+        or      al, al                  ;  and DEL or COPY hit the first)
+        jz      .tput
+        cmp     al, ' '
+        jne     .tsp
+.tskip: mov     ah, 4Fh
         jmp     .tfind
 .tnext: mov     dx, dta
         mov     ah, 1Ah
@@ -3051,6 +3057,7 @@ name_part:
 
 ; path SI -> DI as "X:\DIR\NAME", with . and .. worked out
 canon:  push    di
+        push    bx
         call    drv_of
         mov     dl, al
         add     al, 'A'
@@ -3104,19 +3111,36 @@ canon:  push    di
         je      .n1
         mov     al, '\'
         stosb
-.n1:    lodsb
-        or      al, al
-        jz      .dn
-        cmp     al, '\'
-        je      .c
+.n1:    mov     bx, 8                   ; (each part cut to 8.3, a dot
+.n2:    lodsb                           ;  last dropped: as the kernel
+        or      al, al                  ;  reads it, so COPY's "onto
+        jz      .ne                     ;  itself" sees the same file
+        cmp     al, '\'                 ;  however spelled)
+        je      .ne
+        cmp     al, '.'
+        jne     .nc
+        or      bh, bh
+        jnz     .nc
+        mov     bx, 103h                ; (the extension: 3)
+        stosb
+        jmp     .n2
+.nc:    or      bl, bl
+        jz      .n2
+        dec     bl
         call    upcase
         stosb
-        jmp     .n1
+        jmp     .n2
+.ne:    cmp     byte [di-1], '.'
+        jne     .nd
+        dec     di
+.nd:    or      al, al
+        jnz     .c
 .dn:    dec     si
 .done:  cmp     di, [canon_root]        ; "X:\" keeps its backslash
         ja      .t
         mov     di, [canon_root]
 .t:     mov     byte [di], 0
+        pop     bx
         pop     ax
         ret
 
@@ -3303,6 +3327,9 @@ copy_one:
         stc
         ret
 .dop:   mov     [fh2], ax
+        mov     si, path2               ; several into one file: the rest
+        call    has_wild                ;  appended; to a wildcard name each
+        jnc     .loop                   ;  its own, replaced (as MS-DOS's)
         mov     byte [concat], 1
 .loop:  mov     bx, [fh1]               ; a device's text ends at a ^Z
         mov     ax, 4400h

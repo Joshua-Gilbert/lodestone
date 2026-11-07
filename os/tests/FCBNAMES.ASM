@@ -3,7 +3,9 @@
 ; (3Ch), opened again (3Dh) and found (4Eh/4Fh: "F name"); then an extended
 ; FCB's search for the label (11h, attribute 08h: "L [11 bytes]") and a
 ; plain FCB's for *.TXT (11h/12h: "T [11 bytes]"), for "*       txt"
-; ("U [11 bytes]") and for E5h "*      TXT" ("E [11 bytes]").  FCBNAMES W:
+; ("U [11 bytes]"), for E5h "*      TXT" ("E [11 bytes]") and for
+; "AB.CD   TXT" (a separator: "V" if found); an extended FCB's with 09h
+; ("K [label]"); 4Eh \*.* with 3Fh ("A name", the label among them).  FCBNAMES W:
 ; INT 21h 47h into a 64-byte buffer, a guard byte after it ("W n G" n its
 ; length, G the guard kept, or "W n X").  Each line ends CR LF
 org 100h
@@ -18,6 +20,8 @@ org 100h
         call    make
         mov     si, nm_sp
         call    make
+        mov     si, nm_dat              ; (another extension: * stays in
+        call    make                    ;  its part)
         mov     dx, pat                 ; found
         mov     cx, 0
         mov     ah, 4Eh
@@ -67,10 +71,41 @@ org 100h
         mov     ah, 11h
         int     21h
         or      al, al
-        jnz     .q
+        jnz     .sep
         mov     al, 'E'
         mov     si, dta + 1
         call    raw
+.sep:   mov     dx, fcb4                ; a separator in the name: none
+        mov     ah, 11h
+        int     21h
+        or      al, al
+        jnz     .k
+        mov     al, 'V'
+        mov     si, dta + 1
+        call    raw
+.k:     mov     dx, xfcb9               ; 09h: read-only no matter, the label
+        mov     ah, 11h
+        int     21h
+        or      al, al
+        jnz     .any
+        mov     al, 'K'
+        mov     si, dta + 8
+        call    raw
+.any:   mov     dx, pat_all             ; 4Eh \*.* with 3Fh: the label too
+        mov     cx, 3Fh
+        mov     ah, 4Eh
+        int     21h
+.al:    jc      .q
+        mov     al, 'A'
+        call    putc
+        mov     al, ' '
+        call    putc
+        mov     si, dta + 30
+        call    puts
+        call    crlf
+        mov     ah, 4Fh
+        int     21h
+        jmp     .al
 .q:     mov     ax, 4C00h
         int     21h
 
@@ -189,6 +224,7 @@ putc:   push    ax
 
 nm_e5   db 0E5h, 'ABC.TXT', 0
 nm_sp   db 'AB CD.TXT', 0
+nm_dat  db 'AB CD.DAT', 0
 pat     db '*.TXT', 0
 s_ok    db ' ok', 0
 s_mk    db ' made-not', 0
@@ -201,5 +237,10 @@ fcb2    db 0, '*       txt'
         times 25 db 0
 fcb3    db 0, 0E5h, '*      TXT'
         times 25 db 0
+fcb4    db 0, 'AB.CD   TXT'
+        times 25 db 0
+xfcb9   db 0FFh, 0, 0, 0, 0, 0, 09h, 0, '???????????'
+        times 25 db 0
+pat_all db '\*.*', 0
 dta     times 64 db 0
 buf     times 200 db 0

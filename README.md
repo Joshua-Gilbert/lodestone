@@ -119,19 +119,19 @@ On the 1520, BENCH from each kind of drive, in seconds:
 | Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
 | **All ten tests** | **87.6** | **9.1** | **2.1** |
 
-Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its memory figures 2026-11-04, with the Executive's right-click menu and a program's modes on it) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
+Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its memory figures 2026-11-07, with the Executive's right-click menu, a program's modes on it, and MS-DOS's FCB search, names and CHDIR) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
 
 | | Lodestone | GRiD MS-DOS 3.30 | FreeDOS |
 |---|---:|---:|---:|
 | BENCH file-system total | **78.6** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **580.7 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 564.7 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **580.3 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 564.2 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
-- **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 15 KB more.
-- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 556.6 KB (557.5 before the Executive's right-click menu and a program's modes on it). The other 24.1 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
+- **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 16 KB more.
+- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 556.1 KB (556.6 before MS-DOS's FCB search, names and CHDIR; 557.5 before the Executive's right-click menu and a program's modes on it). The other 24.2 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
 - **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.4 KB when ROM 1 is there, 0.6 KB with ROM 2 as well.
 - **The Executive stays resident on purpose:** with multitasking on, it runs beside the tasks and windows.
 

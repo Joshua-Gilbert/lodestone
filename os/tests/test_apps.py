@@ -1001,7 +1001,7 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it; 0.5 KB, MS-DOS\'s FCB search (11h, 12h: a label\'s 11 bytes, as COMMAND\'s VOL reads it; its pattern as DOS 3 takes it), names (a space inside, a first E5h; the Executive\'s whole) and CHDIR (the whole path, 63 characters; no subject past it)): the directory buffer is lent while it runs' % kb,
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it; 0.4 KB, MS-DOS\'s FCB search (11h, 12h: a label\'s 11 bytes, as COMMAND\'s VOL reads it; its pattern as DOS 3 takes it), names (a space inside, a first E5h; the Executive\'s whole) and CHDIR (the whole path, 63 characters; no subject past it)): the directory buffer is lent while it runs' % kb,
           kb >= 564.2, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
@@ -1185,6 +1185,15 @@ def t_font():
         check('a LODE.INI longer than the 4,095 bytes read, FONT= in them, a font file of %d bytes: %s; the Executive comes up'
               % (n, 'taken' if n == 1536 else 'Lodefont stays'), (core_font(k) == data if n == 1536 else core_font(k) == LODEF)
               and not k.crashed and 'SYSTEM.RUN' in k.exec_list() and biosdate(k) == b'10/25/89', (k.where(), k.exec_list(), biosdate(k)))
+    # a font whose name has a space inside (System's list can choose one): FONT= read to the line's end, the
+    # trailing spaces dropped (it stopped at the space: AB.FNT, here a decoy)
+    f = os.path.join(OUT, 'ABXCD.FNT'); data = bytes((i * 5 + 3) & 0xFF for i in range(1536)); open(f, 'wb').write(data)
+    d = os.path.join(OUT, 'AB.FNT'); open(d, 'wb').write(bytes(1536))
+    open(ini, 'wb').write(b'FONT=AB CD.FNT  \r\n')
+    p = image('font6.img', SYSTEM, f, d, ini)
+    img = bytearray(open(p, 'rb').read()); i = img.find(b'ABXCD   FNT'); img[i + 2] = 0x20; open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    check('FONT=AB CD.FNT (a space inside, two after): that font, not AB.FNT', core_font(k) == data, k.where())
 
 # ---------------------------------------------------------------------
 def t_saver():
@@ -1353,6 +1362,12 @@ def t_prtsc_setting():
     k.key(ktest.ESC); k.settle()
     k = reboot(k, 'prs2.img')
     check('after a restart: the same driver (PRINTER= taken, found along PATH)', path() == names[0], (path(), names[0]))
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'PRINTER=PS A.PRN \r\n')
+    psx = os.path.join(OUT, 'PSXA.PRN'); shutil.copy(ps, psx)
+    p = image('prs3.img', SYSTEM, psx, ini)
+    img = bytearray(open(p, 'rb').read()); i = img.find(b'PSXA    PRN'); img[i + 2] = 0x20; open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    check('PRINTER=PS A.PRN (a space inside, one after): that driver, its whole name', path() == b'A:\\PS A.PRN', path())
 
 
 # ---------------------------------------------------------------------
