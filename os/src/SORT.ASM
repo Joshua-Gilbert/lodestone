@@ -7,8 +7,11 @@
 ;         comes first)
 ;
 ; Capitals and small letters are the same to it (as DOS's); otherwise
-; the character codes' order.  Lines end at LF (the CR before it is
-; dropped); each goes out with CR LF.  Ctrl-Z in the input is its end.
+; the character codes' order (no country's collating table: the kernel
+; has none), and equal lines keep their order.  Lines end at LF (the CR
+; before it is dropped; a NUL is a character); each goes out with CR LF.
+; Ctrl-Z in the input, or typed at the keyboard, is its end.  Its
+; messages go to standard error.
 ; At most 63 KB of input, as DOS's: more is "SORT: Insufficient memory".
 ; Exit code: 0, 1 (too much, a bad switch).
 cpu 286
@@ -48,7 +51,15 @@ start:  mov     sp, stack_top
         call    wr_all
         mov     ax, 4C00h
         int     21h
-fail:   mov     ah, 9
+fail:   mov     si, dx                  ; DX ($) to standard error
+        xor     cx, cx
+.l:     cmp     byte [si], '$'
+        je      .w
+        inc     si
+        inc     cx
+        jmp     .l
+.w:     mov     bx, 2
+        mov     ah, 40h
         int     21h
         mov     ax, 4C01h
         int     21h
@@ -102,7 +113,8 @@ args:   mov     si, 81h
         stc
         ret
 
-; standard input -> tseg:0 .. tlen.  CF: too much
+; standard input -> tseg:0 .. tlen, up to a Ctrl-Z (a file's, or typed at
+; the keyboard: the console's reads never come back empty).  CF: too much
 rd_all: xor     di, di
 .l:     mov     cx, MAXIN
         sub     cx, di
@@ -120,8 +132,17 @@ rd_all: xor     di, di
         jc      .x
         or      ax, ax
         jz      .x
-        add     di, ax
-        jmp     .l
+        push    es                      ; a Ctrl-Z in what came: the end
+        mov     es, [tseg]
+        mov     cx, ax
+        mov     bx, di
+        mov     al, 1Ah
+        repne   scasb
+        pop     es
+        jne     .on
+        dec     di                      ; (at it)
+        jmp     short .x
+.on:    jmp     .l                      ; (DI past what came)
 .full:  push    ds                      ; full: is there more?
         mov     dx, onec
         xor     bx, bx
@@ -141,54 +162,37 @@ rd_all: xor     di, di
         clc
         ret
 
-; the text's lines: their offsets in lseg (nlines), each line's end made
-; a 0 (CR LF, LF, or Ctrl-Z: the end).  CF: too many
+; the text's lines: their starts in lseg (nlines).  A line ends at its LF
+; (and the CR before it); the text gets an LF at its end if it hasn't one,
+; so every line has one.  (Nothing else in it is changed: a NUL is a
+; character like any other.)  CF: too many
 split:  push    es
-        mov     es, [lseg]
         push    ds
+        mov     cx, [tlen]
+        mov     es, [lseg]
         mov     ds, [tseg]
-        xor     si, si                  ; SI = here, DI = the offsets
         xor     di, di
-        mov     cx, [cs:tlen]
         jcxz    .done
-.ln:    mov     ax, si                  ; a line starts (BX: where)
-        mov     bx, si
-        cmp     di, MAXL * 2
+        mov     si, cx                  ; the last LF
+        cmp     byte [si-1], 10
+        je      .s
+        mov     byte [si], 10
+        inc     cx
+.s:     xor     si, si                  ; SI: a line's start
+.ln:    cmp     di, MAXL * 2
         jae     .many
+        mov     ax, si
         stosw
-.c:     cmp     si, cx
-        jae     .done
-        lodsb
-        cmp     al, 1Ah
-        je      .z
+.c:     lodsb                           ; to its LF
         cmp     al, 10
         jne     .c
-        mov     byte [si-1], 0          ; its LF, and the CR before it
-        cmp     si, 2
-        jb      .nx
-        cmp     byte [si-2], 13
-        jne     .nx
-        mov     byte [si-2], 0
-.nx:    cmp     si, cx
+        cmp     si, cx
         jb      .ln
-        jmp     short .done
-.z:     dec     si                      ; Ctrl-Z: the end, there
-        mov     cx, si
-        mov     byte [si], 0
-        cmp     bx, si                  ; (an empty last line: none)
-        jne     .done
-        sub     di, 2
-        jmp     short .done
 .done:  pop     ds
         pop     es
         shr     di, 1
         mov     [nlines], di
-        mov     si, [tlen]              ; (the last line, if no LF: ended)
-        push    ds
-        mov     ds, [tseg]
-        mov     byte [si], 0
-        pop     ds
-.x:     clc
+        clc
         ret
 .many:  pop     ds
         pop     es
@@ -196,7 +200,7 @@ split:  push    es
         stc
         ret
 
-; Shell's sort of the offsets
+; Shell's sort of the starts
 shell:  mov     ax, [nlines]
         cmp     ax, 2
         jb      .x
@@ -259,64 +263,81 @@ shell:  mov     ax, [nlines]
         jmp     .pass
 .x:     ret
 
-; does the line at AX come before the line at DX (from the column, the
-; letters' case aside; /R: after)?  CF if so.  BX, CX, SI, DI kept
+; does the line at AX come before the line at DX: from the column on, the
+; letters' case aside, a shorter one first (/R: the other way); the same,
+; the one that came first in the input (so equal lines keep their order).
+; CF if so.  BX, CX, DX, SI, DI kept
 before:
         push    bx
         push    cx
+        push    dx
         push    si
         push    di
         push    ds
-        push    es
+        mov     [tie1], ax              ; (the two starts: their order, if
+        mov     [tie2], dx              ;  they are the same)
         mov     cx, [col]
         mov     bl, [rev]
         mov     si, ax
         mov     di, dx
         mov     ds, [cs:tseg]
-        push    ds
-        pop     es
-        call    .skip                   ; SI to the column (or its 0)
+        call    .skip                   ; both to the column (or their end)
         xchg    si, di
         call    .skip
         xchg    si, di
-.l:     lodsb
-        call    .up
-        mov     ah, al
-        mov     al, [es:di]
-        inc     di
-        call    .up
-        cmp     ah, al
+.l:     call    .get                    ; AX, DX: a character + 1 each, 0 at
+        mov     dx, ax                  ;  the end
+        xchg    si, di
+        call    .get
+        xchg    si, di
+        xchg    ax, dx                  ; AX: the first's, DX: the second's
+        cmp     ax, dx
         jne     .d
-        or      al, al
+        or      ax, ax
         jnz     .l
-        clc                             ; the same: not before
+        mov     ax, [cs:tie1]           ; the same: the order they came in
+        cmp     ax, [cs:tie2]
         jmp     short .x
-.d:     or      bl, bl                  ; CF: AH < AL (before), the other
-        jnz     .rv                     ;  way with /R (the flags made again:
-        cmp     ah, al                  ;  the test of BL took them)
+.d:     or      bl, bl                  ; CF: the first's < the second's
+        jnz     .rv                     ;  (before), the other way with /R
+        cmp     ax, dx
         jmp     short .x
-.rv:    cmp     al, ah
-.x:     pop     es
-        pop     ds
+.rv:    cmp     dx, ax
+.x:     pop     ds
         pop     di
         pop     si
+        pop     dx
         pop     cx
         pop     bx
         ret
-.skip:  jcxz    .sx                     ; past CX characters, not past 0
+; DS:SI's next character, upper case, + 1 -> AX (SI past it); its line's
+; end (LF, or CR LF): 0 (SI kept)
+.get:   mov     al, [si]
+        cmp     al, 10
+        je      .end
+        cmp     al, 13
+        jne     .ch
+        cmp     byte [si+1], 10
+        je      .end
+.ch:    inc     si
+        cmp     al, 'a'
+        jb      .u
+        cmp     al, 'z'
+        ja      .u
+        sub     al, 20h
+.u:     xor     ah, ah
+        inc     ax
+        ret
+.end:   xor     ax, ax
+        ret
+.skip:  jcxz    .sx                     ; past CX characters, not its end
         push    cx
-.sl:    cmp     byte [si], 0
-        je      .se
-        inc     si
+.sl:    call    .get
+        or      ax, ax
+        jz      .se
         loop    .sl
 .se:    pop     cx
 .sx:    ret
-.up:    cmp     al, 'a'
-        jb      .ux
-        cmp     al, 'z'
-        ja      .ux
-        sub     al, 20h
-.ux:    ret
 
 ; the lines, in order, to standard output (each with CR LF)
 wr_all: xor     si, si
@@ -328,13 +349,18 @@ wr_all: xor     si, si
         shl     bx, 1
         mov     dx, [es:bx]
         mov     es, [tseg]
-        mov     di, dx                  ; its length
-        xor     al, al
+        mov     di, dx                  ; its length: to its LF, less a CR
+        mov     al, 10                  ;  before it
         mov     cx, 0FFFFh
         repne   scasb
-        not     cx
+        dec     di                      ; (at the LF)
+        mov     cx, di
+        sub     cx, dx
+        jcxz    .w
+        cmp     byte [es:di-1], 13
+        jne     .w
         dec     cx
-        pop     es
+.w:     pop     es
         push    ds
         mov     ds, [tseg]
         mov     bx, 1
@@ -366,6 +392,8 @@ tlen    resw 1
 nlines  resw 1
 gap     resw 1
 hold    resw 1
+tie1    resw 1
+tie2    resw 1
         resb 512
 stack_top:
 bss_end:

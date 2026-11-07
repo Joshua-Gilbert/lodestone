@@ -62,10 +62,11 @@ def t_find():
     k = boot(f('TWO.TXT', b'one COM\r\ntwo\r\nthree COM\r\n'))
     want = [l for l in lines(LIST) if 'COM' in l]
     o = run(k, 'find "COM" list.txt')
+    got = [l for l in body(o).split('\n') if l.strip()]
     check('FIND "COM" LIST.TXT: "---------- LIST.TXT", then the lines with COM in them, as they are; exit 0',
-          '---------- LIST.TXT' in o and [l for l in body(o).split('\n')[1:] if l.strip()] == want and said(o, 'E0'), o)
+          got[:1] == ['---------- LIST.TXT'] and got[1:] == want and said(o, 'E0'), o)
     o = run(k, 'find /v "COM" list.txt')
-    check('/V: the lines without it', [l for l in body(o).split('\n')[1:] if l.strip()] == [l for l in lines(LIST) if l and 'COM' not in l], o)
+    check('/V: the lines without it', [l for l in body(o).split('\n') if l.strip()][1:] == [l for l in lines(LIST) if l and 'COM' not in l], o)
     o = run(k, 'find /c "COM" list.txt')
     check('/C: "---------- LIST.TXT: 5"', '---------- LIST.TXT: 5' in o, o)
     o = run(k, 'find /n "COM" list.txt')
@@ -174,10 +175,57 @@ def t_comp():
     check('no names: asked for ("Enter primary file name"), answered from a file, then N', 'Enter primary file name' in o
           and 'Enter 2nd file name' in o and 'Files compare OK' in o and said(o, 'E0'), o)
 
+def t_review():
+    # the review panel's findings, each held to
+    k = boot(f('NL.TXT', b'zz\r\nab\0cd\r\naa\r\n'), f('ST.TXT', b'1b\r\n2a\r\n3a\r\n4a\r\n5a\r\n'),
+             f('L1023.TXT', b'a' * 1023 + b'\r\nnext\r\n'), f('LF.TXT', b'xa1\nxa2\n'))
+    run(k, 'sort < nl.txt > s1.txt')
+    got = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\S1.TXT')
+    check('SORT: a NUL in a line is a character: the line whole after it', got == b'aa\r\nab\0cd\r\nzz\r\n', got)
+    o = run(k, 'sort /+2 < st.txt')
+    check('SORT: equal keys keep their input order (/+2: 2a 3a 4a 5a 1b)', body(o).split('\n')[:5] == ['2a', '3a', '4a', '5a', '1b'], o)
+    o = run(k, 'sort /x > s2.txt')
+    got = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\S2.TXT')
+    check('SORT: its messages to standard error (on the screen, not in the file)', 'Invalid parameter' in o and got == b'', (o, got))
+    k.pc.tty.clear()
+    k.key('sort'); k.key(ktest.ENTER)
+    for x in ('pear', 'apple'): k.key(x); k.key(ktest.ENTER)
+    k.key(chr(0x1A)); k.key(ktest.ENTER); k.settle(10)
+    o = out(k)
+    check('SORT at the keyboard: Ctrl-Z (and Enter) ends the input, the lines sorted', o.rstrip().endswith('A:\\>')
+          and o.index('apple', o.index('pear')) < o.rindex('pear'), o)
+    o = run(k, 'find /c /v "zzz" l1023.txt')
+    check('FIND: a 1,023-character line and its CR is one line', 'L1023.TXT: 2' in o, o)
+    k.pc.tty.clear(); run(k, 'find "xa" lf.txt')
+    raw = ''.join(k.pc.tty)
+    check('FIND: lines that had only LF go out with CR LF; a blank line before the header',
+          'xa1\r\nxa2\r\n' in raw and '\r\n\r\n---------- LF.TXT' in raw, repr(raw[:200]))
+    a = bytes(range(256)) * 4; b = bytearray(a); b[3] = 9
+    k2 = boot(f('A.BIN', a), f('A2.BIN', a), f('B.BIN', bytes(b)), f('X.TXT', b'1\r\n'), f('X.BAK', b'2\r\n'),
+              f('ANS2.TXT', b'a.bin\r\na2.bin\r\nY\r\na.bin\r\nb.bin\r\nN\r\n'))
+    o = run(k2, 'comp < ans2.txt')
+    check('COMP: answers from a CR LF file, Y between: both pairs compared, then N', 'A.BIN and A2.BIN' in o
+          and 'A.BIN and B.BIN' in o and 'Files compare OK' in o and 'Compare error at OFFSET 0003' in o, o)
+    k2.pc.tty.clear()
+    k2.key('comp nosuch.bin a.bin'); k2.key(ktest.ENTER)
+    k2.key('y'); k2.key('x.txt'); k2.key(ktest.ENTER); k2.key('x.bak'); k2.key(ktest.ENTER); k2.key('n'); k2.settle(10)
+    o = out(k2)
+    k2.key('if errorlevel 2 echo L2'); k2.key(ktest.ENTER)
+    t = out(k2)
+    check('COMP: a file not found, then a difference: the exit code stays 2', 'File not found' in o
+          and 'X.TXT and X.BAK' in o and said(t[len(o):], 'L2'), t[-400:])
+    many = b''.join(b'row %02d\r\n' % i for i in range(1, 61))
+    k3 = boot(f('MANY.TXT', many))
+    k3.pc.tty.clear()
+    k3.key('more < many.txt', settle=False); k3.key(ktest.ENTER, settle=False); k3.key(chr(3), settle=False); k3.settle(10)
+    o = out(k3)
+    check('MORE: a Ctrl-C typed while a screen is written ends it at the prompt', 'row 25' not in o
+          and o.rstrip().endswith('A:\\>'), o[-200:])
+
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_find, t_more, t_sort, t_comp):
+    for t in (t_find, t_more, t_sort, t_comp, t_review):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
