@@ -76,7 +76,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - Every built-in that can fail sets ERRORLEVEL, so scripts can check each step. Claude writes scripts too.
 
 **Tools**
-- **`FORMAT`:** formats a floppy in A: or B:, as DOS 3.30's FORMAT: 1.44 MB or 720 KB in the 1520's drive (360 KB and 1.2 MB in a 5¼-inch one), each track verified and bad sectors fenced off. `/S` makes it start Lodestone (the system read before the new disk goes in, so it works with one drive), `/V` gives it a label, `/Q` is a quick format of a disk formatted before. Every disk gets Lodestone's boot sector. It isn't on the ROMs: started from the ROM, copy `FORMAT.COM` to `C:\LODE` (on the `PATH`).
+- **`FORMAT`:** formats a floppy in A: or B:, as DOS 3.30's FORMAT: 1.44 MB or 720 KB in the 1520's drive (360 KB and 1.2 MB in a 5¼-inch one), each track verified and bad sectors fenced off. `/S` makes it start Lodestone (the system read before the new disk goes in, so it works with one drive), `/V` gives it a label, `/Q` is a quick format of a disk formatted before. Every floppy gets Lodestone's boot sector. `FORMAT C:` formats the hard disk after MS-DOS's warning: the partition C: is on keeps its layout, so the kernel goes on using it at once; a disk the kernel found no file system on (a new CompactFlash card, a damaged boot sector) gets a new FAT16 layout in its first FAT16 partition, then a restart. The whole disk is read before anything is written, and Esc there leaves it as it was. It isn't on the ROMs: started from the ROM, copy `FORMAT.COM` to `C:\LODE` (on the `PATH`).
 - **`CHKDSK`:** checks a disk's file system as DOS 3.30's CHKDSK: A:, B:, C: or M:. Every chain is followed from its directory entry: cross links, chains into free or impossible clusters, loops, sizes that don't match, a subdirectory's `.` and `..`, the two FATs, lost clusters. `/F` writes the corrections (lost chains become `FILE0000.CHK`, ...; not on M:), `/V` lists the files. ERRORLEVEL 0 clean, 1 errors found, 2 couldn't check.
 - **`DEFRAG`:** defragments a floppy or C:. A power cut during any of its writes leaves the old file or the new one, never a damaged one. `DEFRAG /T` tests every free sector and fences off bad ones.
 - **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner. They drive the disk themselves, so with multitasking on they run only with no other task there.
@@ -212,7 +212,7 @@ See `docs/serial-link.md`. `os/tests/test_serial_kernel.py` builds it and checks
 
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,656 checks pass (the 17 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,677 checks pass (the 17 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -230,7 +230,7 @@ python3 tests/test_mt.py              # multitasking (MULTITASK=1), and nothing 
 python3 tests/test_hdprobe.py         # HDPROBE
 python3 tests/test_hdscan.py          # HDSCAN
 python3 tests/test_headcln.py         # HEADCLN
-python3 tests/test_format.py          # FORMAT: sizes, bad sectors, /Q, /S, the kernel seeing the new disk
+python3 tests/test_format.py          # FORMAT: floppy sizes, bad sectors, /Q, /S, C: both ways, the kernel seeing the new disk
 python3 tests/test_chkdsk.py          # CHKDSK: damaged disks found and put right, floppies, C:, M:
 python3 tests/test_modemid.py         # MODEMID, against no modem, Option 330 and Option 331
 python3 tests/test_serial_kernel.py   # the -dSERIAL kernel: its link driver, SERLINK=, the GPIB build untouched

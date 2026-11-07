@@ -357,6 +357,15 @@ class Ata:
                 s.wq = s.wq[:len(s.wq) // 2]; s.cutting = True
                 if not s.wq: return s.power_cut()
             s.st = ok | s.DRQ
+        elif val in (0x40, 0x41):                       # READ VERIFY SECTORS: read, no data moved
+            s.verifies = getattr(s, 'verifies', 0) + 1
+            for i in range(s.reg[2] or 256):
+                if not s.has_sector(c, h, n): return fail(0x10)
+                if (c * s.heads + h) * s.spt + n - 1 in s.bad: return fail(0x40)
+                n += 1
+                if n > s.spt: n = 1; h += 1
+                if h >= s.heads: h = 0; c += 1
+            s.st = ok
         elif val in (0x20, 0x21):
             s.reads += 1
             if s.stick_at and s.reads >= s.stick_at: s.stuck = True; return
