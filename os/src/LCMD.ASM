@@ -2273,6 +2273,7 @@ edit_line:
         mov     ax, '.*'
         stosw
 .t3:    mov     byte [di], 0
+        mov     byte [ed_wrap], 0
         mov     dx, dta
         mov     ah, 1Ah
         int     21h
@@ -2291,14 +2292,20 @@ edit_line:
         cmp     al, ' '
         jne     .tsp
 .tskip: mov     ah, 4Fh
-        jmp     .tfind
+        int     21h
+        jnc     .tdot
+.twrap: cmp     byte [ed_wrap], 0       ; past the last: the first again
+        jne     .beep                   ;  (once: every name left has a
+        inc     byte [ed_wrap]          ;  space, or there is none)
+        jmp     .tfirst
 .tnext: mov     dx, dta
         mov     ah, 1Ah
         int     21h
+        mov     byte [ed_wrap], 0
         mov     ah, 4Fh
         int     21h
         jnc     .tdot
-        jmp     .tfirst                 ; (past the last: the first again)
+        jmp     .twrap
 .tput:  mov     si, dta + 30            ; the name found, in place of the
         call    strlen                  ;  one typed (if it fits)
         test    byte [dta + 21], 10h    ; (a directory: with its \)
@@ -5017,6 +5024,7 @@ tpre_on     resb 1                  ; pipe_name: tpre read at this level (0: non
 tpre        resb 66                 ; pipe_name: %TEMP%, a '\' after (\: none)
 cdepth      resb 1                  ; CALLs (call_segs)
 ed_tab      resb 1
+ed_wrap     resb 1                      ; Tab: wrapped to the first once
 ed_len      resb 1                  ; (ed_len, ed_pos: a word)
 ed_pos      resb 1
 ed_old      resb 1                  ; the length on the screen
