@@ -549,6 +549,10 @@ fat_flush:
         call    use_drive
         pop     es
         popa
+        push    ax
+        mov     al, [fat_drv]           ; (what it holds can't go out now)
+        call    fat_drop
+        pop     ax
         mov     al, [io_err]
         xor     ah, ah
         stc
@@ -584,6 +588,38 @@ fat_back:
         mov     [fat_dmask], ax
         pop     ax
         ret
+
+; a write to drive AL failed (Fail, or Abort's close): the cached FAT's
+; changes, if it is that drive's, are dropped, and the disk keeps its own,
+; which its directory matches (the chain goes out before the entry that
+; names it).  Else a later flush, once the disk took writes again (a
+; write-protect tab taken off), carried a truncation's or a create-over's
+; freed clusters while their entries still named them.  Each open file of
+; the drive with changes pending is marked SF_LOST: written no more, its
+; entry not updated (KFILE.INC).  (C:'s FAT is KHD.INC's, kept apart.)
+; All kept
+fat_drop:
+        cmp     al, [fat_drv]
+        jne     .x
+        cmp     byte [fat_dirty], 0
+        je      .x
+        call    fat_forget
+        push    bx
+        push    cx
+        mov     bx, sft
+        mov     cx, NSFT
+.l:     cmp     byte [bx+S_REF], 0
+        je      .n
+        cmp     [bx+S_DRV], al
+        jne     .n
+        test    byte [bx+S_FLAGS], SF_DIRTY
+        jz      .n
+        or      byte [bx+S_FLAGS], SF_LOST
+.n:     add     bx, SFT_SZ
+        loop    .l
+        pop     cx
+        pop     bx
+.x:     ret
 
 ; drive AL's FAT to disk, if it is the one cached (KHD.INC: and C:'s)
 fat_flush_drv:
@@ -911,7 +947,12 @@ buf_put:
         call    disk_io
         pop     bx
         jnc     .ok
-        mov     byte [buf_drv+bx], 0FFh ; (CF stays set)
+        push    ax
+        mov     al, [buf_drv+bx]        ; (and the cached FAT's changes:
+        call    fat_drop                ;  fat_drop)
+        pop     ax
+        mov     byte [buf_drv+bx], 0FFh
+        stc
 .ok:    pop     es
         pop     dx
         pop     cx

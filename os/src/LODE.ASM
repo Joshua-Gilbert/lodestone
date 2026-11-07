@@ -261,7 +261,7 @@ lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
                                         ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
                                         ;  18 with R: (KROM.INC)
             align 16                    ; (free: the BSS starts on a paragraph;
-                                        ;  2 bytes after lastdrv, 40FDh, on
+                                        ;  none after lastdrv, 415Fh, on
                                         ;  2026-11-07: LODE.MAP has it now).
                                         ;  The EVEN pads make a change before
                                         ;  gp_isr's move this by its size +-1,
