@@ -183,10 +183,33 @@ def t_mt():
     check('with multitasking, LABEL run as a task: refused ("other tasks are running"), nothing written',
           'other tasks are running' in o and bytes(k.pc.drives[1].img) == raw, o)
 
+def t_review():
+    # the review panel's findings, each held to
+    img = mkimg.build(os.path.join(OUT, 'cap.img'), [os.path.join(SRC, f) for f in ('LODE.SYS', 'LCMD.COM', 'LABEL.COM')]
+                      + [os.path.join(GOS, 'drivers', 'SCREEN.PRN')])
+    k = ktest.KPC(img); k.start(); k.code_p()
+    k.pc.tty.clear()
+    k.key('label a:'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: 'ENTER for none)?' in out(k), 20)
+    k.pc.prtsc(); k.settle(8)                           # (Shift-PrtSc: A:\SCREEN01.TXT, while LABEL waits)
+    k.key('newlab'); k.key(ktest.ENTER, settle=False); k.settle(20)
+    im = bytes(k.pc.drives[0].img)
+    files = fatcheck.read_files(im)
+    check('a file written to the root while LABEL waits (a screen capture): kept, the label beside it',
+          'A:\\SCREEN01.TXT' in files and fatcheck.check(im)[0] == [] and b'NEWLAB     ' in im[19 * 512:33 * 512], sorted(files))
+    k = boot(disk())
+    o = run(k, 'label b:abcdefghijk ')
+    check('an 11-character label with a space after it: taken (the space cut first)', said(o, 'E0')
+          and (root_label(bytes(k.pc.drives[1].img)) or b'')[:11] == b'ABCDEFGHIJK', o)
+    run(k, 'label b:xy')
+    o = run(k, 'label ', answers=('',))
+    check('LABEL with only a space after it, after a longer tail: the current drive, not a bad drive letter',
+          'Invalid drive' not in o, o)
+
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_floppy, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt):
+    for t in (t_floppy, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

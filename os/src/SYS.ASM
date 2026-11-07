@@ -69,6 +69,7 @@ start:  mov     sp, stack_top
         mov     [s_d2], al
         mov     [s_d3], al
         mov     [s_d4], al
+        mov     [s_d5], al
         cmp     byte [dst], 1           ; A: or B: only
         mov     dx, s_notfl
         ja      fail
@@ -200,7 +201,12 @@ insert: call    flush_keys
         call    print
 .k:     mov     ah, 08h
         int     21h
-        cmp     al, 13
+        or      al, al                  ; (an extended key: its scan code
+        jnz     .c                      ;  next, not a key of its own)
+        mov     ah, 08h
+        int     21h
+        jmp     .k
+.c:     cmp     al, 13
         je      .go
         cmp     al, 27
         je      stop
@@ -252,8 +258,11 @@ rd_boot:
         je      .bad
         cmp     word [bootcp+16h], 0
         je      .bad
-        cmp     word [bootcp+13h], 0    ; (16-bit sectors: a floppy)
-        je      .bad
+        mov     ax, [bootcp+13h]        ; (16-bit sectors, a floppy's:
+        cmp     ax, 640                 ;  320 KB to 2.88 MB, as LODEBOOT)
+        jb      .bad
+        cmp     ax, 5760
+        ja      .bad
         clc
 .x:     ret
 .bad:   stc
@@ -303,7 +312,11 @@ room:   mov     ah, 36h                 ; free clusters, their size
         mul     cx                      ; (AX sectors a cluster, CX bytes)
         mov     [csize], ax
         mov     [free], bx
-        mov     bx, sysrec
+        call    rootfree                ; free root entries -> [rfree]
+        mov     dx, s_rderr
+        jc      .no
+        mov     word [absent], 1        ; (one more: a rename's new name, as
+        mov     bx, sysrec              ;  its temporary file holds one)
 .f:     cmp     word [bx+R_NAME], 0
         je      .nx
         mov     ax, [bx+R_SIZE]         ; its clusters: what it needs
@@ -317,18 +330,87 @@ room:   mov     ah, 36h                 ; free clusters, their size
         mov     cx, 07h
         mov     ah, 4Eh
         int     21h
-        jc      .nx
-        mov     ax, [dta+1Ah]
+        jnc     .old
+        inc     word [absent]           ; (not there: an entry of its own)
+        jmp     short .nx
+.old:   mov     ax, [dta+1Ah]
         mov     dx, [dta+1Ch]
         call    clus
         add     [free], ax
 .nx:    add     bx, RSZ
         cmp     bx, sysrec + NSYS * RSZ
         jb      .f
+        mov     ax, [absent]            ; and the root's entries
+        cmp     ax, [rfree]
+        mov     dx, s_rootf
+        ja      .no
         clc
         ret
 .full:  mov     dx, s_room
 .no:    stc
+        ret
+
+; d:'s root, read through: its free entries (00h or E5h) -> [rfree].  CF:
+; it can't be read
+rootfree:
+        mov     word [rfree], 0
+        mov     al, [bootcp+10h]        ; its first sector, how many
+        xor     ah, ah
+        mul     word [bootcp+16h]
+        add     ax, [bootcp+0Eh]
+        mov     [rlba], ax
+        mov     ax, [bootcp+11h]
+        add     ax, 15
+        shr     ax, 4
+        mov     [rn], ax
+.s:     cmp     word [rn], 0
+        je      .ok
+        mov     ax, [rlba]              ; its CHS (the BPB's geometry)
+        xor     dx, dx
+        div     word [bootcp+18h]
+        mov     cl, dl
+        inc     cl
+        xor     dx, dx
+        div     word [bootcp+1Ah]
+        mov     ch, al
+        mov     dh, dl
+        mov     bp, TRIES
+.t:     push    cs
+        pop     es
+        mov     bx, [sec]
+        mov     ax, 0201h
+        mov     dl, [dst]
+        push    cx
+        push    dx
+        int     13h
+        pop     dx
+        pop     cx
+        jnc     .rd
+        push    ax
+        push    dx
+        xor     ah, ah
+        mov     dl, [dst]
+        int     13h
+        pop     dx
+        pop     ax
+        dec     bp
+        jnz     .t
+        stc
+        ret
+.rd:    mov     si, [sec]
+        mov     cx, 16
+.e:     mov     al, [si]
+        or      al, al
+        jz      .fr
+        cmp     al, 0E5h
+        jne     .en
+.fr:    inc     word [rfree]
+.en:    add     si, 32
+        loop    .e
+        inc     word [rlba]
+        dec     word [rn]
+        jmp     .s
+.ok:    clc
         ret
 
 ; DX:AX bytes -> AX clusters of [csize]
@@ -523,16 +605,18 @@ copy_sys:
         mov     dx, path
         mov     ah, 41h
         int     21h
-        jnc     .rn
+        jnc     .del
         cmp     ax, 2                   ; (none there: fine)
         jne     .gone
+        jmp     short .rn
+.del:   mov     byte [replaced], 1      ; (an old one gone from here on)
 .rn:    mov     dx, tpath               ; the new one its name
         mov     di, path
         push    ds
         pop     es
         mov     ah, 56h
         int     21h
-        jc      .err
+        jc      .gone
 .nx:    add     bx, RSZ
         cmp     bx, sysrec + NSYS * RSZ
         jb      .f
@@ -547,6 +631,9 @@ copy_sys:
         cmp     byte [critcode], 0      ; (INT 24h's 0: write-protected)
         je      .e
 .e2:    mov     dx, s_syswr
+        cmp     byte [replaced], 0      ; (some replaced: the disk half
+        je      .e                      ;  done, not as it was)
+        mov     dx, s_syshalf
 .e:     stc
         ret
 
@@ -693,6 +780,10 @@ s_d4    db 'A:: nothing written', 13, 10, '$'
 s_nosys db 'Cannot find the system: no LODE.SYS there', 13, 10, '$'
 s_sysmem db 'Insufficient memory for system transfer', 13, 10, '$'
 s_sysrd db 'Cannot read the system files', 13, 10, '$'
+s_syshalf db 'Cannot write the system files: some were replaced, so the disk won', 39, 't start', 13, 10
+        db 'Lodestone as it is (SYS it again)', 13, 10, '$'
+s_rootf db 'No room for the system in the root directory of drive '
+s_d5    db 'A:', 13, 10, '$'
 s_syswr db 'Cannot write the system files: the old ones left as they were', 13, 10, '$'
 s_wprot db 'Write protect error: nothing written', 13, 10, '$'
 s_dchg  db 'The disk was changed: its boot sector not written', 13, 10, '$'
@@ -705,6 +796,12 @@ bootbin incbin "BOOT.BIN"
         alignb 2
 section .bss
 bss_start:
+replaced resb 1
+        alignb 2
+absent  resw 1
+rfree   resw 1
+rlba    resw 1
+rn      resw 1
 src     resb 1
 dst     resb 1
 xop     resb 1
