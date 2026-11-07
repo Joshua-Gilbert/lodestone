@@ -55,8 +55,8 @@ section .text
 ; astack); a screen capture and the PrtSc driver use the bottom 1 KB at
 ; INT 21h's entry, before any call runs; MT switches tasks inside INT 21h
 ; at a key wait (mt_can) and a floppy's wait (mt_dcan), and holds other
-; tasks' INT 21h calls (mt_i21) until the owner's is done.  CHDIR uses all
-; of P2, REN and EXN (none of their calls is under way then); the FCB
+; tasks' INT 21h calls (mt_i21) until the owner's is done.  CHDIR uses P2,
+; REN and EXN's first 44 bytes (none of their calls is under way then); the FCB
 ; search (11h, 12h) P2's first 43 bytes, its DTA for find_next.
 KL_P2       equ kstack_end              ; path2_buf, 130 (rename; CHDIR's)
 KL_REN      equ kstack_end + 130        ; rename's d_lba, d_off, de and drive, 37
