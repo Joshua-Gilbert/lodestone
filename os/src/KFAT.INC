@@ -676,27 +676,28 @@ new_entry:
 
 ; DS:SI entry name -> ES:DI "NAME.EXT",0
 name_out:
-        push    cx
-        push    si
-        mov     cx, 8
-.n:     lodsb
-        cmp     al, ' '
-        je      .ne
-        stosb
-        loop    .n
-        jmp     .e
-.ne:    dec     cx
-        add     si, cx
-.e:     cmp     byte [si], ' '
+        push    cx                      ; (as MS-DOS's: only the trailing
+        push    si                      ;  spaces of each part go, so a
+        mov     cx, 8                   ;  label's inside ones are kept)
+        rep     movsb
+.nt:    cmp     byte [es:di-1], ' '
+        jne     .e
+        dec     di
+        inc     cx
+        cmp     cx, 8
+        jb      .nt
+.e:     cmp     word [si], '  '         ; an extension: any of its 3 not a
+        jne     .x                      ;  space
+        cmp     byte [si+2], ' '
         je      .z
-        mov     al, '.'
+.x:     mov     al, '.'
         stosb
         mov     cx, 3
-.x:     lodsb
-        cmp     al, ' '
-        je      .z
-        stosb
-        loop    .x
+        rep     movsb
+.xt:    cmp     byte [es:di-1], ' '
+        jne     .z
+        dec     di
+        jmp     .xt
 .z:     xor     al, al
         stosb
         pop     si
@@ -940,11 +941,16 @@ f_3B:   call    get_path                ; CHDIR
         jc      .e
         call    find_dir
         jc      .e
-        mov     si, [actp]
-        mov     [si+D_CWD], ax
-        ; the new path string
+        mov     [cwd_cl], ax
+        ; the new path string, made in cwd_new (the drive's own changed
+        ; only if it fits: a longer one is 3, as MS-DOS's, nothing changed)
         mov     al, [act]
         call    cwd_of
+        mov     si, di
+        mov     di, cwd_new
+        mov     cx, CWDLEN / 2
+        rep     movsw
+        mov     di, cwd_new
         mov     si, path_buf
         cmp     byte [si+1], ':'
         jne     .nd
@@ -998,27 +1004,41 @@ f_3B:   call    get_path                ; CHDIR
 .cp:    push    si
         push    di
         mov     si, nm11
-        mov     di, path2_buf           ; (free here)
+        mov     di, cwd_nm
         call    name_out
         pop     di
-        mov     si, path2_buf
+        mov     si, cwd_nm
         mov     dx, [cwd_p]
         add     dx, CWDLEN - 2
-.cpl:   cmp     di, dx
-        jae     .cpx
-        lodsb
+.cpl:   lodsb
         stosb
         or      al, al
-        jnz     .cpl
-.cpx:   mov     byte [di], 0
-        pop     si
+        jz      .cpx
+        cmp     di, dx                  ; (65 after the root's '\')
+        jbe     .cpl
+        pop     si                      ; too long
+        mov     ax, 3
+        jmp     fail
+.cpx:   pop     si
         jmp     .comp
-.end:   jmp     ok
+.end:   mov     al, [act]               ; it fits: the drive's
+        call    cwd_of
+        mov     si, cwd_new
+        mov     cx, CWDLEN / 2
+        rep     movsw
+        mov     si, [actp]
+        mov     ax, [cwd_cl]
+        mov     [si+D_CWD], ax
+        jmp     ok
 .e:     jmp     fail
 
 section .bss
 cwd_p       resw 1
 section .text
+cwd_new equ path2_buf                   ; (CHDIR's, in K2: the new string,
+cwd_nm  equ path2_buf + CWDLEN          ;  a name for it, the cluster)
+cwd_cl  equ path2_buf + CWDLEN + 14
+        times -(CWDLEN + 16 > 130) db 0
 
 f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         call    drv_dflt

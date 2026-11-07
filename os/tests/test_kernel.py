@@ -2377,6 +2377,9 @@ def t_cmdshare():
     sh.run('cd ..')
     o = sh.run('cd q:')
     check('CD of a drive that isn\'t there', 'Invalid drive specification' in o, o)
+    o = sh.run('dir c:') + sh.run('vol c:') + sh.run('dir q:\\x') + sh.run('vol q:')
+    check('DIR and VOL of a drive that isn\'t there (C: with no hard disk, Q:): DOS\'s "Invalid drive specification", '
+          'no volume header', o.count('Invalid drive specification') == 4 and 'Volume' not in o and 'Directory of' not in o, o)
     o = sh.run('type nosuch.x') + sh.run('echo kept && if errorlevel 1 echo P1')
     o2 = sh.run('dir sub > nul && tasks || if errorlevel 1 echo T1')
     check('the built-ins: ECHO (the first that leaves ERRORLEVEL) keeps it, TASKS (the last that sets it) sets it',
@@ -2406,6 +2409,18 @@ def t_cmdshare():
           [f.get('A:' + deep + n) for n in ('\\LONGNAME.TXT', '\\LONGNAME.TX', '\\X.BAK')] == [b'hi \r\n'] * 3
           and all('1 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith('A:\\A'))))
     check("... and a file there copied onto itself (an 81-character name): refused as such", 'cannot be copied onto itself' in o, o)
+    sh.run('cd ' + deep[:-3]); sh.run('md HHHHHHHH')
+    o = sh.run('cd HHHHHHHH') + sh.run('cd')                       # 71 characters: was cut to ...\HHH
+    sh.run('echo one > y1.txt')
+    sh.run('cd HH'); sh.run('md IJ')
+    o2 = sh.run('cd IJ') + sh.run('cd')                            # 69: was "...\HH\" with IJ's cluster
+    sh.run('echo two > y2.txt')
+    sh.run('cd \\')
+    f = fs()
+    check('CD to a directory past 65 characters: "Invalid directory", the current one kept (its name and its '
+          'cluster: a file made next lands there)', 'Invalid directory' in o and ('A:' + deep[:-3] + '\n') in o.replace('\r', '')
+          and 'Invalid directory' in o2 and ('A:' + deep + '\n') in o2.replace('\r', '')
+          and f.get('A:' + deep[:-3] + '\\Y1.TXT') == b'one \r\n' and f.get('A:' + deep + '\\Y2.TXT') == b'two \r\n', (o, o2, sorted(n for n in f if 'Y' in n)))
     sh.run('cd sub')
     outs = [sh.run('copy ?.txt ' + '.\\' * n + '????????.' + e) for n, e in ((34, 'BBK'), (51, 'CCK'))]   # 80 and 114 characters
     sh.run('md \\q'); sh.run('cd \\q'); sh.run('echo 1 > a'); sh.run('echo 2 > b')

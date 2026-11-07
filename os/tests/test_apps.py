@@ -73,6 +73,19 @@ def check(name, cond, detail=''):
     results.append((name, bool(cond)))
     print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:600]) if detail and not cond else ''))
 
+def t_syslabel():
+    print('== System: a label with spaces in it')
+    p = image('syslab.img', SYSTEM)
+    img = bytearray(open(p, 'rb').read())
+    at = next(19 * 512 + i for i in range(0, 224 * 32, 32) if img[19 * 512 + i + 11] == 8)
+    img[at:at + 11] = b'ABC     DEF'
+    open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    k.key(CODE['U']); k.key(ktest.DOWN)
+    check('Disks: a label whose 8.3 split falls among spaces ("ABC     DEF") shown as on the disk',
+          has(k, 'ABC     DEF'), screen(k))
+    k.key(ktest.ESC)
+
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [SYS] + list(files))
 
@@ -3846,7 +3859,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
+    for t in (t_core, t_system, t_syslabel, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
               t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]

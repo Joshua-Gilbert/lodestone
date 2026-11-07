@@ -57,6 +57,21 @@ def root_label(img, rootsec=19, n=14):
         if e[0] != 0xE5 and e[11] != 0x0F and e[11] & 8: return e
     return None
 
+def t_spaces():
+    """labels written by another system: spaces where the 8.3 split falls"""
+    outs = []
+    for lab in (b'ABC     DEF', b'ABCDEFGH  I', b'AB      C  ', b'A          '):
+        p = disk('sp.img')
+        img = bytearray(open(p, 'rb').read())
+        e = root_label(img)
+        at = img.find(e, 19 * 512)
+        img[at:at + 11] = lab
+        open(p, 'wb').write(img)
+        k = boot(p)
+        outs.append((lab, run(k, 'vol b:')))
+    check('VOL of labels with spaces anywhere in their 11 characters: shown as on the disk (the trailing ones aside)',
+          all(('Volume in drive B is %s\n' % lab.decode().rstrip()) in o for lab, o in outs), outs)
+
 def t_floppy():
     k = boot(disk())
     o = run(k, 'label b:', ['newlab'])
@@ -77,6 +92,9 @@ def t_floppy():
           'directory kept (B:\\SUB)', said(o, 'E0') and root_label(img)[0:11] == b'HELLO WORLD' and img[0x2B:0x36] == b'HELLO WORLD'
           and sum(1 for i in range(0, 14 * 512, 32) if img[19 * 512 + i + 11] == 8 and img[19 * 512 + i] not in (0, 0xE5)) == 1
           and 'B:\\SUB' in o2, (o, o2))
+    o = run(k, 'vol b:')
+    check('... VOL and DIR show it with its space (FIND FIRST\'s name keeps a label\'s inside spaces, as MS-DOS\'s)',
+          'Volume in drive B is HELLO WORLD\n' in o and 'Volume in drive B is HELLO WORLD\n' in run(k, 'dir b:'), o)
     raw = bytes(k.pc.drives[1].img)
     o = run(k, 'label b:', ['', 'n'])
     check('Enter alone, then N at "Delete current volume label (Y/N)?": nothing written, exit code 0',
@@ -209,7 +227,7 @@ def t_review():
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_floppy, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review):
+    for t in (t_floppy, t_spaces, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
