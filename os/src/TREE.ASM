@@ -19,13 +19,15 @@
 ;
 ; Hidden directories are listed (they are part of the tree); files as DIR
 ; shows them (no hidden or system ones).  "No sub-directories exist" when
-; the root has none (without /F).
+; the root has none (without /F).  A directory whose path would pass 65
+; characters after "D:\" is said ("Path too long - ") and left out.
 ;
-; Exit code: 0 listed, 1 couldn't (a bad drive or switch, too deep).
+; Exit code: 0 listed, 1 couldn't (a bad drive or switch), or not all (a
+; path too long).
 cpu 286
 org 100h
 
-MAXDEPTH equ 32
+MAXDEPTH equ 34                         ; (PMAX's 65: "X\" 32 times at most)
 DTASZ   equ 44
 COL     equ 18                          ; where names go
 
@@ -172,14 +174,8 @@ walk:   call    set_dta
         call    names
         mov     dx, s_crlf
         call    print
-.subs:  cmp     word [depth], MAXDEPTH - 1
-        jb      .in
-        mov     dx, s_deep
-        call    print
-        mov     byte [err], 1
-        ret
-.in:    mov     si, s_all               ; each directory in it
-        call    dir_add
+.subs:  mov     si, s_all               ; each directory in it (no deeper
+        call    dir_add                 ;  than PMAX lets it: MAXDEPTH's)
         mov     dx, dir
         mov     cx, 16h
         mov     ah, 4Eh
@@ -194,8 +190,9 @@ walk:   call    set_dta
         push    word [dirlen]
         lea     si, [bx+30]
         call    dir_add
-        jc      .dl
         mov     si, [dirend]
+        cmp     si, 3 + PMAX
+        ja      .long
         mov     byte [dir+si], '\'
         inc     si
         mov     byte [dir+si], 0
@@ -211,6 +208,14 @@ walk:   call    set_dta
         int     21h
         jmp     .d
 .x:     ret
+.long:  mov     dx, s_long2             ; "Path too long - A:\SUB\NAME"
+        call    print
+        mov     si, dir
+        call    puts
+        mov     dx, s_crlf
+        call    print
+        mov     byte [err], 1
+        jmp     .dl
 
 set_dta:
         mov     ax, [depth]
@@ -296,12 +301,13 @@ p83:    xor     cx, cx
 .x:     ret
 
 ; ASCIIZ at SI after dir's first [dirlen] characters -> [dirend], CF if
-; too long (it isn't then added)
+; too long (it isn't then added: dir's directory and an 8.3 name always
+; fit, PMAX's 65 after "D:\" and 13)
 dir_add:
         mov     di, [dirlen]
         mov     bx, di
 .l:     lodsb
-        cmp     di, 78
+        cmp     di, 82
         jae     .long
         mov     [dir+di], al
         inc     di
@@ -348,7 +354,7 @@ s_subs  db 'Sub-directories:  $'
 s_files db 13, 10, 'Files:            $'
 s_nonew db 'None$'
 s_none  db 13, 10, 'No sub-directories exist', 13, 10, '$'
-s_deep  db 'Directories nested too deep: the rest not listed', 13, 10, '$'
+s_long2 db 'Path too long - $'
 s_badsw db 'Invalid parameter', 13, 10, '$'
 s_crlf2 db 13, 10
 s_crlf  db 13, 10, '$'

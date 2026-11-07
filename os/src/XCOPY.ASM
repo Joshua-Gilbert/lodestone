@@ -25,18 +25,31 @@
 ; CREATE TEMPORARY) and takes its name only when all of it is there, so a
 ; full disk or a bad sector leaves the old destination as it was, and a
 ; file that fails is said and the rest go on.  The answers come through
-; DOS, so XCOPY ... < ANS.TXT answers from a file.
+; DOS, so XCOPY ... < ANS.TXT answers from a file (its line ends aren't
+; answers).
+;
+; Paths are compared as the kernel reads them (CANON.INC: each part 8.3,
+; "SUB." SUB), so no other spelling gets a file onto itself or a tree into
+; itself.  Into the directory it reads (XCOPY *.* *.BAK), it lists the
+; names first and copies from the list, so its own copies aren't read
+; again.  A directory whose path would pass 65 characters after "D:\" is
+; said ("Path too long - ") and left out.  Ctrl-C says how many were
+; copied: files held in memory then aren't.  As the Executive's Copy: a
+; hidden or system destination is replaced by a plain copy, and a copy
+; needs room for the old and new files at once (the new one takes the
+; name only when it is all there).
 ;
 ; Exit code (DOS's): 0 copied, 1 no files found, 2 Ctrl-C, 4 couldn't start
 ; (a bad switch or path, no memory, a cyclic copy, a file onto itself), 5
-; a file failed (a full disk, a write error: each said).
+; a file failed (a full disk, a write error, a path too long: each said).
 cpu 286
 org 100h
 
-MAXDEPTH equ 32
+MAXDEPTH equ 34                         ; (PMAX's 65: "X\" 32 times at most)
 DTASZ   equ 44
 QMAX    equ 40                          ; files held in memory at once
 QSZ     equ 176                         ; a held file's record:
+LMAX    equ 4096                        ; samedir: names at most
 Q_SRC   equ 0                           ;  its source (82)
 Q_DST   equ 82                          ;  where it goes (82)
 Q_SIZE  equ 164                         ;  dword
@@ -45,6 +58,7 @@ Q_DATE  equ 170
 Q_SEG   equ 172                         ;  its data in memory (FFFFh: not
 CHUNK   equ 8000h                       ;  held: copied a piece at a time)
 VCH     equ 2048                        ; /V: compared a piece at a time
+MINBUF  equ VCH / 16 * 2 + CHUNK / 16   ; the least memory it runs in
 
 start:  mov     sp, stack_top
         cld
@@ -59,12 +73,13 @@ start:  mov     sp, stack_top
         mov     bx, 0FFFFh
         mov     ah, 48h
         int     21h
-        mov     ah, 48h                 ; (BX: as much as there is)
+        cmp     bx, MINBUF              ; (BX: as much as there is; less
+        jae     .big                    ;  than it needs: that, which a
+        mov     bx, MINBUF              ;  terminal window's task grows to
+.big:   mov     ah, 48h                 ;  make room for)
         int     21h
         mov     dx, s_nomem
         jc      fail
-        cmp     bx, VCH / 16 * 2 + CHUNK / 16
-        jb      fail
         mov     [bufseg], ax
         mov     [bufparas], bx
         mov     dx, ctrlc
@@ -134,7 +149,12 @@ ctrlc:  push    cs
         mov     dx, opath
         mov     ah, 41h
         int     21h
-.x:     mov     ax, 4C02h
+.x:     mov     ax, [ncopied]           ; "n File(s) copied": those held in
+        mov     cx, 9                   ;  memory, not yet written, aren't
+        call    pdecw
+        mov     dx, s_copied
+        call    print
+        mov     ax, 4C02h
         int     21h
 crit:   mov     al, 3                   ; (a critical error: Fail, said as
         iret                            ;  the call's own)
@@ -161,7 +181,7 @@ args:   mov     si, 81h
         cmp     byte [di], 0
         jne     .bad
 .nm:    dec     si
-        mov     cx, 79
+        mov     cx, 80
 .n:     lodsb
         cmp     al, ' '
         jbe     .ne
@@ -302,9 +322,9 @@ source: mov     si, srcarg
         call    isdir
         jnc     .whole
 .files: push    bx                      ; its directory, and the names
-        mov     si, bx
+        mov     si, bx                  ;  (8.3, as the kernel takes them)
         mov     di, pat
-        call    strcpy
+        call    part83
         pop     bx
         mov     al, [bx]
         push    ax
@@ -321,7 +341,9 @@ source: mov     si, srcarg
 .whole: mov     si, s_all
         mov     di, pat
         call    strcpy
-.set:   mov     si, cpath
+.set:   call    cdir
+        jc      .x
+        mov     si, cpath
         mov     di, sdir
         call    dirset
         mov     [sdl], ax
@@ -364,9 +386,9 @@ target: cmp     byte [dstarg], 0        ; none: the current directory
         call    ask_fd                  ; not there: a file, or a directory?
         jnc     .isd
 .one:   mov     byte [dkind], 1
-.file:  mov     si, bx                  ; dname, and its directory
+.file:  mov     si, bx                  ; dname (8.3), and its directory
         mov     di, dname
-        call    strcpy
+        call    part83
         mov     al, [bx]
         push    ax
         mov     byte [bx], 0
@@ -375,7 +397,9 @@ target: cmp     byte [dstarg], 0        ; none: the current directory
         pop     ax
         mov     [bx], al
         jc      .x
-.isd:   mov     si, cpath
+.isd:   call    cdir
+        jc      .x
+        mov     si, cpath
         mov     di, ddir
         call    dirset
         mov     [ddl], ax
@@ -426,7 +450,13 @@ cyclic: mov     si, sdir
 ; sdir (sdl) to ddir (ddl): its files matching pat, then with /S each
 ; directory in it
 walk:   call    set_dta
-        mov     si, pat
+        mov     si, sdir                ; into the directory it reads?
+        mov     di, ddir
+        call    streq
+        jne     .rd
+        call    samedir
+        jmp     short .sub
+.rd:    mov     si, pat
         mov     di, sdir
         add     di, [sdl]
         call    strcpy
@@ -443,10 +473,8 @@ walk:   call    set_dta
         mov     ah, 4Fh
         int     21h
         jmp     .f
-.sub:   cmp     byte [subs], 0
-        je      .x
-        cmp     word [depth], MAXDEPTH - 1
-        jae     .x
+.sub:   cmp     byte [subs], 0          ; (no deeper than PMAX lets it:
+        je      .x                      ;  MAXDEPTH's DTAs)
         mov     si, s_all
         mov     di, sdir
         add     di, [sdl]
@@ -467,16 +495,18 @@ walk:   call    set_dta
         mov     di, sdir
         add     di, [sdl]
         mov     bp, sdir
+        mov     cx, [sdl]
         call    subadd
-        jc      .dl
+        jc      .long
         sub     di, sdir
         mov     [sdl], di
         lea     si, [bx+30]
         mov     di, ddir
         add     di, [ddl]
         mov     bp, ddir
+        mov     cx, [ddl]
         call    subadd
-        jc      .dl
+        jc      .long
         sub     di, ddir
         mov     [ddl], di
         cmp     byte [empty], 0         ; /E: made now, files or not
@@ -501,24 +531,131 @@ walk:   call    set_dta
         int     21h
         jmp     .d
 .x:     ret
+.long:  mov     di, bp                  ; "Path too long - B:\SUB\NAME": not
+        add     di, cx                  ;  copied, said (CX: the length the
+        mov     byte [di], 0            ;  buffer at BP had)
+        mov     byte [werr], 1
+        mov     dx, s_plong
+        call    print
+        mov     si, bp
+        call    puts
+        lea     si, [bx+30]
+        call    say1
+        jmp     .dl
 
-; NAME at SI onto DI, then "\" (DI past it).  CF: too long
-; (BP = the buffer's start: DOS's 64 after "D:\", and room for a name)
+; NAME at SI onto DI, then "\" (DI past it), none of it past PMAX after
+; "D:\" (BP = the buffer's start).  CF: too long (nothing past it written)
 subadd: lodsb
         or      al, al
         jz      .e
+        mov     dx, di
+        sub     dx, bp
+        cmp     dx, 3 + PMAX
+        jae     .long
         stosb
         jmp     subadd
 .e:     mov     al, '\'
         stosb
         mov     byte [di], 0
-        mov     ax, di
-        sub     ax, bp
-        cmp     ax, 3 + 64
-        ja      .long
         clc
         ret
 .long:  stc
+        ret
+
+; sdir is ddir (XCOPY *.* *.BAK): the names matching pat listed first, at
+; the top of the buffer, then each found again by its name and copied, so
+; the copies made in the directory are never taken for its files (a .BAK
+; there before is: "onto itself")
+samedir:
+        call    .find
+        xor     bp, bp                  ; how many
+.c:     jc      .room
+        call    .is
+        jnz     .cn
+        inc     bp
+        cmp     bp, LMAX
+        jae     .nomem
+.cn:    mov     ah, 4Fh
+        int     21h
+        jmp     .c
+.room:  mov     ax, bp                  ; their room: 13 bytes each
+        mov     cx, 13
+        mul     cx
+        add     ax, 15
+        shr     ax, 4
+        mov     [lparas], ax
+        mov     cx, [bufparas]
+        sub     cx, ax
+        cmp     cx, MINBUF
+        jb      .nomem
+        mov     [bufparas], cx
+        add     cx, [bufseg]
+        mov     [lseg], cx
+        mov     [lnum], bp
+        call    .find                   ; the names
+        xor     di, di
+        mov     cx, [lnum]
+.l:     jc      .go
+        jcxz    .go
+        call    .is
+        jnz     .ln
+        push    cx
+        push    es
+        mov     es, [lseg]
+        lea     si, [bx+30]
+        mov     cx, 13
+        rep     movsb
+        pop     es
+        pop     cx
+        dec     cx
+.ln:    mov     ah, 4Fh
+        int     21h
+        jmp     .l
+.go:    mov     ax, di                  ; (as many as were found again)
+        xor     dx, dx
+        mov     cx, 13
+        div     cx
+        mov     [lnum], ax
+        xor     ax, ax
+        mov     [lidx], ax
+.e:     mov     ax, [lidx]              ; each: sdir + its name, found
+        cmp     ax, [lnum]
+        jae     .x
+        inc     word [lidx]
+        mov     cx, 13
+        mul     cx
+        mov     si, ax
+        mov     di, sdir
+        add     di, [sdl]
+        push    ds
+        mov     ds, [lseg]
+        rep     movsb
+        pop     ds
+        mov     dx, sdir
+        xor     cx, cx
+        mov     ah, 4Eh
+        int     21h
+        jc      .e
+        call    .is
+        jnz     .e
+        call    one
+        jmp     .e
+.x:     mov     ax, [lparas]            ; (the held files' memory is below)
+        add     [bufparas], ax
+        ret
+.nomem: mov     dx, s_nomem
+        jmp     fail
+.find:  mov     si, pat                 ; 4Eh: sdir + pat
+        mov     di, sdir
+        add     di, [sdl]
+        call    strcpy
+        mov     dx, sdir
+        xor     cx, cx
+        mov     ah, 4Eh
+        int     21h
+        ret
+.is:    mov     bx, [dta]               ; ZF: a file (not a directory or
+        test    byte [bx+21], 18h       ;  the label)
         ret
 
 set_dta:
@@ -583,7 +720,11 @@ one:    mov     bx, [dta]
         call    puts
         mov     dx, s_yn
         call    print
-        call    getkey
+.k:     call    getkey                  ; (a file's line ends: not answers)
+        cmp     al, 13
+        je      .k
+        cmp     al, 10
+        je      .k
         push    ax
         cmp     al, ' '
         jb      .pe
@@ -1131,7 +1272,7 @@ mkdirs_o:
 ; ---------------------------------------------------------------------
 ; the message at DX, then the path at SI: "Insufficient disk space - B:\X"
 say:    call    print
-        call    puts
+say1:   call    puts
         jmp     crlf
 
 ; the path at cpath: a directory?  CF if not (the root is)
@@ -1296,6 +1437,7 @@ s_vfy   db 'Verify error - $'
 s_kept  db 'Copy kept as $'
 s_dash  db ' - $'
 s_nomem db 'Insufficient memory', 13, 10, '$'
+s_plong db 'Path too long - $'
 s_badsw db 'Invalid parameter', 13, 10, '$'
 s_noparm db 'Required parameter missing', 13, 10, '$'
 s_crlf  db 13, 10, '$'
@@ -1338,6 +1480,10 @@ vh2     resw 1
 vn      resw 1
 voff    resw 1                          ; (les: offset, then segment)
 vseg    resw 1
+lseg    resw 1
+lparas  resw 1
+lnum    resw 1
+lidx    resw 1
 srcarg  resb 82
 dstarg  resb 82
 pat     resb 82

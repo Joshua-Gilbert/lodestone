@@ -83,8 +83,8 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **`LABEL`:** shows and sets a disk's volume label (A:, B:, C:), in the root and in the boot sector's DOS 4 BPB; Enter alone offers to delete it.
 - **`DISKCOPY` and `DISKCOMP`:** copy and compare floppies track for track, as DOS 3.30's: two drives, or one with the disks swapped as asked (and the wrong disk put back in said). A target that isn't of the source's layout is formatted as it is written; the copy gets a new serial number (DOS 4's), so the kernel knows it for another disk. Unreadable source sectors are said and the copy goes on; `/V` reads each track back.
 - **`ATTRIB`**, **`XCOPY`**, **`TREE`:** DOS 3.30's, at the prompt and in batch files, beside the Executive's File form.
-  - `ATTRIB [+R|-R] [+A|-A] [+H|-H] [+S|-S] [name] [/S]` lists or sets attributes (hidden and system as DOS 5's), never on directories or the label.
-  - `XCOPY source [destination] [/A /M /D:date /P /S /E /V /W]` reads as many files as fit in memory, then writes them; directories are made as needed. Each copy is made as a new file and takes its name only when all of it is there, as the Executive's Copy, so a full disk leaves the old destination as it was. `/V` reads each copy back.
+  - `ATTRIB [+R|-R] [+A|-A] [+H|-H] [+S|-S] [name] [/S]` lists or sets attributes (hidden and system as DOS 5's: a hidden or system file is changed only by a command that changes H or S), never on directories or the label.
+  - `XCOPY source [destination] [/A /M /D:date /P /S /E /V /W]` reads as many files as fit in memory, then writes them; directories are made as needed. Each copy is made as a new file and takes its name only when all of it is there, as the Executive's Copy, so a full disk leaves the old destination as it was. `/V` reads each copy back. Paths are compared as the kernel reads them (8.3 parts), so no other spelling copies a file onto itself or a tree into itself.
   - `TREE [d:] [/F]` lists the directories (and files), as DOS 3.30's.
 - **`FIND`, `MORE`, `SORT` and `COMP`:** DOS 3.30's filters and file compare. FIND (`/V /C /N`, files or its input), MORE (a screen at a time: its input or a file), SORT (`/R /+n`, 63 KB), COMP (byte for byte, wildcards, a directory or drive as the second name). Each sets ERRORLEVEL.
 - **`DEFRAG`:** defragments a floppy or C:. A power cut during any of its writes leaves the old file or the new one, never a damaged one. `DEFRAG /T` tests every free sector and fences off bad ones.
@@ -221,7 +221,7 @@ See `docs/serial-link.md`. `os/tests/test_serial_kernel.py` builds it and checks
 
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,909 checks pass (the 23 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,931 checks pass (the 23 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -245,7 +245,7 @@ python3 tests/test_fdisk.py           # FDISK: the partition made, set active, d
 python3 tests/test_sys.py             # SYS: a floppy's files kept, the system and boot sector put on
 python3 tests/test_label.py           # LABEL: floppies and C:, the kernel seeing the new label
 python3 tests/test_diskcopy.py        # DISKCOPY and DISKCOMP: two drives, one with swaps, formatting, bad sectors
-python3 tests/test_filetools.py       # ATTRIB, XCOPY, TREE: switches, trees, a full disk, a file bigger than memory
+python3 tests/test_filetools.py       # ATTRIB, XCOPY, TREE: switches, trees, a full disk, a file bigger than memory, paths as the kernel reads them, a terminal window
 python3 tests/test_filters.py         # FIND, MORE, SORT, COMP
 python3 tests/test_modemid.py         # MODEMID, against no modem, Option 330 and Option 331
 python3 tests/test_serial_kernel.py   # the -dSERIAL kernel: its link driver, SERLINK=, the GPIB build untouched
