@@ -11,14 +11,15 @@
 ; pipe: DIR | FIND "COM"); each file named is read in turn, under
 ; "---------- NAME" (wildcards: each file they match).  A file ends at
 ; its end or at Ctrl-Z; a line at LF (a CR before it is the line's).
-; Lines longer than 1,023 characters are taken as several.
+; Lines longer than 1,024 characters are taken as several.  Each line goes
+; out with CR LF (one that had only LF too).
 ;
 ; Exit code: 0 a line found (or, /V, one without it), 1 none, 2 an error
 ; (a file not found, a bad switch, no string).
 cpu 286
 org 100h
 
-LMAX    equ 1024                        ; a line's room
+LMAX    equ 1025                        ; a line's room (1,024 and its CR)
 CHUNK   equ 16384                       ; read at a time
 
 start:  mov     sp, stack_top
@@ -170,10 +171,10 @@ each:   mov     dx, dta
         mov     dx, argbuf
         mov     ax, 3D00h
         int     21h
-        jc      .none
+        jc      .nf                     ; (this one: said, on to the next)
         mov     bx, ax
         push    bx
-        mov     dx, s_head              ; "---------- NAME"
+        mov     dx, s_head              ; CR LF, "---------- NAME"
         call    print
         mov     si, argbuf
         call    pz
@@ -185,10 +186,12 @@ each:   mov     dx, dta
         call    one
         mov     ah, 3Eh
         int     21h
-        mov     ah, 4Fh
+.n:     mov     ah, 4Fh
         int     21h
         jnc     .f
         ret
+.nf:    call    .none
+        jmp     .n
 .none:  mov     dx, s_nofile            ; "File not found - NAME"
         call    eprint
         mov     si, argbuf
@@ -263,11 +266,18 @@ do_line:
         call    pdec
         mov     al, ']'
         call    putc
-.t:     mov     cx, di                  ; the line, and its LF
-        mov     dx, lbuf
-        mov     bx, 1
+.t:     mov     cx, di                  ; the line, and CR LF (its own CR if
+        mov     dx, lbuf                ;  it had one)
+        jcxz    .cr
+        mov     bx, di
+        cmp     byte [lbuf+bx-1], 13
+        jne     .w
+        dec     cx
+.w:     mov     bx, 1
         mov     ah, 40h
         int     21h
+.cr:    mov     al, 13
+        call    putc
         mov     al, 10
         call    putc
 .x:     ret
@@ -396,7 +406,7 @@ pdec:   pusha
         popa
         ret
 
-s_head  db '---------- $'
+s_head  db 13, 10, '---------- $'
 s_colon db ': $'
 s_crlf  db 13, 10, '$'
 s_badsw db 'FIND: Invalid switch', 13, 10, '$'

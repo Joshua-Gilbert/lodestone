@@ -366,7 +366,7 @@ pair:   mov     si, name1               ; "A:\X.TXT and B:\X.TXT"
         jmp     short .cl
 .diff:  mov     dx, s_size              ; "Files are different sizes"
         call    print
-        mov     byte [result], 1
+        call    differ
 .cl:    mov     bx, [h2]
         mov     ah, 3Eh
         int     21h
@@ -390,6 +390,12 @@ notfound:
         call    print
         mov     byte [result], 2
         ret
+
+; a difference: exit code 1, unless an error (2) came first
+differ: cmp     byte [result], 0
+        jne     .x
+        mov     byte [result], 1
+.x:     ret
 
 ; handle BX: its size -> DX:AX (and back to its start)
 size_of:
@@ -439,7 +445,7 @@ bytes:  mov     word [errs], 0
         adc     word [off+2], 0
         jmp     .ch
 .err:   push    cx                      ; "Compare error at OFFSET 1A"
-        mov     byte [result], 1
+        call    differ
         mov     dx, s_at
         call    print
         mov     ax, [off]
@@ -479,8 +485,38 @@ bytes:  mov     word [errs], 0
 .x:     ret
 
 ; ---------------------------------------------------------------------
+; a key through DOS -> AL; from a file, the rest of its line read too
+; (an answer's CR LF, so the next question gets the next line)
 getkey: mov     ah, 08h
         int     21h
+        cmp     al, 10                  ; (a line's LF before it, left by
+        je      getkey                  ;  0Ah: not the answer)
+        push    ax
+        push    bx
+        push    dx
+        mov     ax, 4400h               ; the input a device?
+        xor     bx, bx
+        int     21h
+        jc      .d
+        test    dl, 80h
+        jnz     .d
+        pop     dx
+        pop     bx
+        pop     ax
+        cmp     al, 1Ah
+        je      .x
+        push    ax
+.r:     mov     ah, 08h                 ; a file: on to its LF
+        int     21h
+        cmp     al, 10
+        je      .e
+        cmp     al, 1Ah
+        jne     .r
+.e:     pop     ax
+.x:     ret
+.d:     pop     dx
+        pop     bx
+        pop     ax
         ret
 print:  mov     ah, 9
         int     21h

@@ -7,7 +7,9 @@
 ; (40:4Ah columns, 40:84h + 1 rows, 25 if it says 0); a line longer than
 ; the screen counts as the rows it takes, a tab as up to the next of every
 ; eighth column.  The key comes from the keyboard itself (the input is the
-; pipe); Ctrl-C there ends it.  Ctrl-Z in the input is its end.
+; pipe); Ctrl-C there ends it.  Ctrl-Z in the input is its end.  (In a
+; terminal window it pages by the task's 25 rows, though the window may
+; show fewer: no call tells a program the window's height.)
 ; Exit code: 0, or 1 (the file can't be opened).
 cpu 286
 org 100h
@@ -80,8 +82,7 @@ start:  mov     sp, stack_top
 .end:   call    flush
         mov     ax, 4C00h
         int     21h
-fail:   mov     ah, 9
-        int     21h
+fail:   call    con                     ; (to standard error)
         mov     ax, 4C01h
         int     21h
 
@@ -128,11 +129,13 @@ one:    mov     [obuf+di], al
         push    si
         mov     dx, s_more
         call    con
-        mov     ah, 1                   ; (keys typed before it: not this)
-.fl:    int     16h
+        mov     ah, 1                   ; (keys typed before it: not this;
+.fl:    int     16h                     ;  but a Ctrl-C among them ends it)
         jz      .wk
         xor     ah, ah
         int     16h
+        cmp     al, 3
+        je      .stop
         mov     ah, 1
         jmp     .fl
 .wk:    xor     ah, ah
