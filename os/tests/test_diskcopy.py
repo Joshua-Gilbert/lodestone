@@ -1,10 +1,14 @@
 """DISKCOPY.COM and DISKCOMP.COM in the emulator, from the command prompt:
 A: to B: onto a blank disk (formatted while copying, a new serial number,
 the kernel reading the copy at once), DISKCOMP then (OK, and the disks
-that differ), one drive with its disks swapped over three passes (the
-wrong disk put in said), 720 KB, a source with bad sectors, a
-write-protected target, Esc in the middle (INT 1Eh as it was), and the
-switches and drives refused.
+that differ, /8, a target that won't read), one drive with its disks
+swapped over three passes (the wrong disk put in said: disks without
+serial numbers too, the source left in for the first target, an empty
+drive, a disk changed in the middle of a pass), an extended key at a
+prompt, 720 KB, 320 KB refused, a source with bad sectors (its LBA 1
+too), a write-protected target (another disk put in there), track 0
+that won't take the write, Esc in the middle (INT 1Eh as it was), and
+the switches and drives refused.
 
     python3 tests/test_diskcopy.py [name ...]
 """
@@ -70,6 +74,16 @@ def shell(k, line):
 def no_serial(img):
     b = bytearray(img); b[0x27:0x2B] = bytes(4); return bytes(b)
 
+def dos33(p):
+    """the disk at p made one of a DOS without serial numbers (no 29h BPB)"""
+    b = bytearray(open(p, 'rb').read()); b[0x26] = 0; b[0x27:0x3E] = bytes(0x17); open(p, 'wb').write(b); return p
+
+def put(d):
+    def f(k): d.changed = True; k.pc.drives[1] = d; k.key(ktest.ENTER, settle=False)
+    return f
+
+def writes(k): return sum(1 for c in k.pc.calls13 if c[0] == 3)
+
 def t_two():
     k = boot(blank('b.img'))
     src = bytes(k.pc.drives[0].img)
@@ -98,6 +112,23 @@ def t_two():
     check('DISKCOPY /V onto a formatted disk: no tracks formatted, every one read back, exit code 0',
           'Formatting' not in o and not k.pc.drives[1].formats and said(o, 'E0')
           and no_serial(bytes(k.pc.drives[1].img)) == no_serial(src), o)
+    k.pc.drives[1].img[(36 * 20 + 11) * 512] ^= 1      # sector 12 of side 0, cylinder 20
+    o = go(k, 'diskcomp a: b: /8', [('Press any key', ktest.ENTER), ('Compare another', 'n')])
+    o2 = go(k, 'diskcomp a: b:', [('Press any key', ktest.ENTER), ('Compare another', 'n')])
+    check('DISKCOMP /8: the first 8 sectors of each track compared ("Compare OK" though sector 12 differs; '
+          'without /8 "Compare error on side 0, track 20")',
+          '8 sectors/track' in o and 'Compare OK' in o and said(o, 'E0')
+          and 'Compare error on side 0, track 20' in o2 and said(o2, 'E1'), (o, o2))
+    k.pc.drives[1].bad = {36 * 30 + 5}
+    o = go(k, 'diskcomp a: b:', [('Press any key', ktest.ENTER), ('Compare another', 'n')])
+    k.pc.drives[1].bad = set()
+    check('DISKCOMP, a sector of the target that won\'t read: "Unrecoverable read error on drive B:, side 0, '
+          'track 30" (the target\'s drive), exit code 3',
+          'Unrecoverable read error on drive B:, side 0, track 30' in o and 'read error on drive A:' not in o and said(o, 'E3'), o)
+    k.pc.drives[1].noid = set(range(2880))
+    o = go(k, 'diskcomp a: b:', [('Press any key', ktest.ENTER), ('Compare another', 'n')])
+    check('DISKCOMP, a target with no boot sector: "The TARGET diskette\'s boot sector can\'t be read", exit code 3',
+          "The TARGET diskette's boot sector can't be read" in o and said(o, 'E3'), o)
 
 def t_one():
     s = data_disk('s1.img')
@@ -105,9 +136,6 @@ def t_one():
     src = bytes(k.pc.drives[1].img)
     tgt = unformatted()
     srcdisk = k.pc.drives[1]
-    def put(d):
-        def f(k): d.changed = True; k.pc.drives[1] = d; k.key(ktest.ENTER, settle=False)
-        return f
     wrong = pcemu.Floppy(open(mkimg.build(os.path.join(OUT, 'w.img'), [LCMD]), 'rb').read())   # (another disk: its
                                                                      #  boot sector perhaps the same, its FAT not)
     o = go(k, 'diskcopy b: b:', [('Press any key', ktest.ENTER),                 # the source
@@ -140,6 +168,148 @@ def t_one():
     check('DISKCOPY B: B: with another disk put in for the target at pass 2: said, asked again, that disk untouched',
           "That isn't the TARGET diskette" in o and said(o, 'E0') and no_serial(bytes(tgt2.img)) == no_serial(src)
           and bytes(wrong.img) == open(os.path.join(OUT, 'w.img'), 'rb').read(), o)
+
+def t_left():
+    """one drive, disks without serial numbers: the source left in, the target left in, an empty drive, a blank disk"""
+    s = dos33(data_disk('s3.img'))
+    k = boot(s)
+    srcdisk = k.pc.drives[1]
+    src = bytes(srcdisk.img)
+    o = go(k, 'diskcopy b: b:', [('Press any key', ktest.ENTER), ('Press any key', ktest.ENTER),   # the source left in
+                                  ('all the same', 'n'), ('Press any key', chr(27))])
+    check('one drive, no serial numbers: the source left in at the first TARGET prompt: asked ("Write on it all the '
+          'same (Y/N)?"), N: the prompt again; Esc: exit code 2, the source untouched',
+          "first two sectors are the SOURCE diskette's" in o and o.count('Insert TARGET') == 2 and said(o, 'E2')
+          and bytes(srcdisk.img) == src and not srcdisk.formats and 'may be unusable' not in o, o)
+    tgt = pcemu.Floppy(open(dos33(mkimg.build(os.path.join(OUT, 't3.img'), [LCMD, 'X.SYS=' + BIG, 'Y.SYS=' + BIG,
+                                                                              'Z.SYS=' + BIG])), 'rb').read())
+    tgt.img[2000 * 512:] = b'\xAA' * (880 * 512)
+    empty = pcemu.Floppy(bytes(1474560)); empty.empty = True
+    blankd = unformatted()
+    o = go(k, 'diskcopy b: b:', [('Press any key', ktest.ENTER), ('Press any key', put(tgt)),
+                                  ('Press any key', ktest.ENTER),        # pass 2's SOURCE: the target left in
+                                  ('Press any key', put(srcdisk)),
+                                  ('Press any key', ktest.ENTER),        # pass 2's TARGET: the source left in
+                                  ('Press any key', put(tgt)),
+                                  ('Press any key', put(blankd)),        # pass 3's SOURCE: a blank disk
+                                  ('Press any key', put(srcdisk)),
+                                  ('Press any key', put(empty)),         # pass 3's TARGET: no disk
+                                  ('Press any key', put(tgt)), ('Copy another', 'n')])
+    check('... the target left in at pass 2\'s SOURCE prompt, the source at its TARGET prompt (their first two sectors '
+          'the same but the copy\'s OEM byte, until the end): both said, asked again',
+          "That isn't the SOURCE diskette" in o and "That isn't the TARGET diskette" in o, o)
+    check('... a blank disk at a SOURCE prompt, no disk at a TARGET prompt: said, asked again (not the end)',
+          "The SOURCE diskette's boot sector can't be read" in o and 'Drive not ready' in o
+          and o.count('Insert SOURCE') == 5 and o.count('Insert TARGET') == 5 and not blankd.formats, o)
+    check('... the copy the source\'s byte for byte (its boot sector too, written last), exit code 0, the source untouched',
+          bytes(tgt.img) == src and said(o, 'E0') and bytes(srcdisk.img) == src, o)
+    again = pcemu.Floppy(src)                                 # an earlier copy: the same first two sectors
+    again.img[2000 * 512] ^= 0xFF
+    o = go(k, 'diskcopy b: b:', [('Press any key', put(srcdisk)), ('Press any key', put(again)), ('all the same', 'y'),
+                                  ('Press any key', put(srcdisk)), ('Press any key', put(again)),
+                                  ('Press any key', put(srcdisk)), ('Press any key', put(again)), ('Copy another', 'n')])
+    check('... an earlier copy put in for the target (the source\'s first two sectors): asked, Y: copied, exit code 0',
+          "first two sectors are the SOURCE diskette's" in o and bytes(again.img) == src and said(o, 'E0'), o)
+
+def t_ext():
+    s = data_disk('s4.img')
+    k = boot(s)
+    src = bytes(k.pc.drives[1].img)
+    st = {}
+    def look(k):
+        k.settle(30); st['w'] = writes(k) - w0; st['f'] = len(k.pc.drives[1].formats); k.key(chr(27), settle=False)
+    w0 = writes(k)
+    o = go(k, 'diskcopy b: b:', [('Press any key', ktest.RIGHT), ('Press any key', look)])
+    check('an extended key (Right) for "Press any key": one key, the TARGET prompt waits for its own (nothing written)',
+          st == {'w': 0, 'f': 0} and o.count('Press any key') == 2 and said(o, 'E2') and bytes(k.pc.drives[1].img) == src,
+          (st, o))
+
+def t_changed():
+    """INT 13h's 06h: a disk changed in the middle of a pass, at the write-protected prompt"""
+    s = data_disk('s5.img')
+    k = boot(s)
+    srcdisk = k.pc.drives[1]; srcdisk.change_err = True
+    src = bytes(srcdisk.img)
+    tgt = unformatted(); tgt.change_err = True
+    w0 = writes(k)
+    def swap(k):
+        k.pc.run_until(lambda: writes(k) - w0 >= 10, 600)
+        srcdisk.changed = True; k.pc.drives[1] = srcdisk          # the source in, no prompt
+    o = go(k, 'diskcopy b: b:', [('Press any key', ktest.ENTER), ('Press any key', put(tgt)),
+                                  ('Formatting while copying', swap),
+                                  ('Press any key', put(tgt)),            # asked for the target again
+                                  ('Press any key', put(srcdisk)), ('Press any key', put(tgt)),
+                                  ('Press any key', put(srcdisk)), ('Press any key', put(tgt)), ('Copy another', 'n')])
+    check('one drive, the source put in in the middle of pass 1\'s writes (06h, disk changed): "That isn\'t the '
+          'TARGET diskette", the prompt; the source untouched, the copy whole, exit code 0',
+          "That isn't the TARGET diskette" in o and bytes(srcdisk.img) == src and not srcdisk.formats
+          and no_serial(bytes(tgt.img)) == no_serial(src) and said(o, 'E0'), o)
+    other = pcemu.Floppy(open(mkimg.build(os.path.join(OUT, 'o4.img'), [LCMD, 'Q.SYS=' + BIG]), 'rb').read())
+    other.change_err = True
+    oth = bytes(other.img)
+    tgt = unformatted(); tgt.change_err = True
+    r0 = sum(1 for c in k.pc.calls13 if c[0] == 2)
+    def swapr(k):
+        k.pc.run_until(lambda: sum(1 for c in k.pc.calls13 if c[0] == 2) - r0 >= 10, 600)
+        other.changed = True; k.pc.drives[1] = other              # another disk in while pass 1 reads
+    o = go(k, 'diskcopy b: b:', [('Press any key', put(srcdisk)), ('Copying', swapr),
+                                  ('Press any key', put(srcdisk)),        # asked for the source again
+                                  ('Press any key', put(tgt)),
+                                  ('Press any key', put(srcdisk)), ('Press any key', put(tgt)),
+                                  ('Press any key', put(srcdisk)), ('Press any key', put(tgt)), ('Copy another', 'n')])
+    check('... another disk put in while pass 1 reads (06h): "That isn\'t the SOURCE diskette", the prompt; the copy '
+          'the source\'s, that disk untouched, exit code 0',
+          "That isn't the SOURCE diskette" in o and bytes(other.img) == oth and said(o, 'E0')
+          and no_serial(bytes(tgt.img)) == no_serial(src), o)
+    k = boot(blank('b5.img'))
+    k.pc.drives[1].noid = set()
+    tgtd = k.pc.drives[1]
+    other = pcemu.Floppy(open(mkimg.build(os.path.join(OUT, 'o5.img'), [LCMD]), 'rb').read())
+    oth = bytes(other.img)
+    w0 = writes(k)
+    def protect(k):
+        k.pc.run_until(lambda: writes(k) - w0 >= 10, 600); tgtd.wp = True
+    def other_in(k): other.changed = True; k.pc.drives[1] = other; k.key(ktest.ENTER, settle=False)
+    def back(k): tgtd.wp = False; tgtd.changed = True; k.pc.drives[1] = tgtd; k.key(ktest.ENTER, settle=False)
+    o = go(k, 'diskcopy a: b:', [('Press any key', ktest.ENTER), ('Copying', protect), ('write-protected', None),
+                                  ('Press any key', other_in), ('Press any key', back), ('Copy another', 'n')])
+    check('two drives, write-protected in the middle, another disk put in at that prompt: "That isn\'t the TARGET '
+          'diskette", the prompt; that disk untouched, the copy whole, exit code 0',
+          "That isn't the TARGET diskette" in o and bytes(other.img) == oth and said(o, 'E0')
+          and no_serial(bytes(tgtd.img)) == no_serial(bytes(k.pc.drives[0].img)), o)
+
+def t_t0():
+    k = boot(blank('b6.img'))
+    k.pc.drives[1].noid = set()
+    k.pc.drives[1].bad = set(range(18))                  # track 0, side 0: nothing reads back
+    o = go(k, 'diskcopy a: b: /v', [('Press any key', ktest.ENTER), ('Copy another', 'n')])
+    f = k.pc.drives[1].formats
+    check('track 0 that won\'t take the write (/V): "Unrecoverable write error on drive B:, side 0, track 0", '
+          '"Target diskette may be unusable", the copy ended there, exit code 3',
+          'Unrecoverable write error on drive B:, side 0, track 0' in o and 'Target diskette may be unusable' in o
+          and 'Copy process ended' in o and said(o, 'E3') and f and set(f) == {(0, 0)}, (o, f))
+
+def t_lba1():
+    s = data_disk('s8.img')
+    k = boot(s)
+    good = bytes(k.pc.drives[1].img)
+    k.pc.drives[1].bad = {1}
+    o = go(k, 'diskcopy b: a:', [('Press any key', ktest.ENTER), ('Copy another', 'n')])
+    a = bytes(k.pc.drives[0].img)
+    check('a source whose sector after the boot sector won\'t read: copied ("Unrecoverable read error on drive B:, '
+          'side 0, track 0"), that sector zeros, exit code 1',
+          'Unrecoverable read error on drive B:, side 0, track 0' in o and said(o, 'E1') and a[512:1024] == bytes(512)
+          and no_serial(a[:512] + a[1024:]) == no_serial(good[:512] + good[1024:]), o)
+
+def t_320():
+    s = data_disk('s9.img')
+    b = bytearray(open(s, 'rb').read()); struct.pack_into('<H', b, 0x13, 640); struct.pack_into('<H', b, 0x18, 8)
+    open(s, 'wb').write(b)
+    k = boot(s)
+    a = bytes(k.pc.drives[0].img)
+    o = go(k, 'diskcopy b: a:', [('Press any key', ktest.ENTER), ('Copy another', 'n')])
+    check('DISKCOPY of a 320 KB disk (8 sectors a track): refused ("no layout this can copy"), exit code 3, '
+          'nothing written', 'no layout this can copy' in o and said(o, 'E3') and bytes(k.pc.drives[0].img) == a, o)
 
 def t_720():
     s = data_disk('s7.img', size=720)
@@ -182,11 +352,13 @@ def t_esc():
     o = go(k, 'diskcopy a: b:', [('Press any key', ktest.ENTER), ('Formatting while copying', None),
                                   ('Formatting while copying', lambda k: (k.pc.run_for(1), k.key('x', settle=False),
                                                                           k.key(chr(27), settle=False)))])
-    check('Esc while it copies (after another key): "Copy process ended", exit code 2, INT 1Eh as it was',
-          'Copy process ended' in o and said(o, 'E2') and bytes(k.pc.rd(0, 0x1E * 4, 4)) == dpt
+    check('Esc while it copies (after another key): "Target diskette may be unusable", "Copy process ended", '
+          'exit code 2, INT 1Eh as it was',
+          'Target diskette may be unusable' in o and 'Copy process ended' in o and said(o, 'E2') and bytes(k.pc.rd(0, 0x1E * 4, 4)) == dpt
           and 0 < len(k.pc.drives[1].formats) < 160, (o, len(k.pc.drives[1].formats)))
     o = go(k, 'diskcopy a: b:', [('Press any key', chr(27))])
-    check('Esc at "Press any key": exit code 2, nothing written', said(o, 'E2') and 'Copying' not in o, o)
+    check('Esc at "Press any key": exit code 2, nothing written', said(o, 'E2') and 'Copying' not in o
+          and 'unusable' not in o, o)
 
 def t_kernel():
     k = boot(data_disk('kb.img'))
@@ -225,7 +397,7 @@ def t_mt():
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_two, t_one, t_720, t_bad, t_wp, t_esc, t_kernel, t_refused, t_mt):
+    for t in (t_two, t_one, t_left, t_ext, t_changed, t_t0, t_lba1, t_320, t_720, t_bad, t_wp, t_esc, t_kernel, t_refused, t_mt):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

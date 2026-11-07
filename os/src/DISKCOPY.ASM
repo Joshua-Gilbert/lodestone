@@ -9,21 +9,39 @@
 ;            The same drive twice: one drive, the disks swapped as asked
 ;   /1       side 0 only
 ;   /V       (DISKCOPY) each track read back after it is written
+;   /8       (DISKCOMP) the first 8 sectors of each track only
 ;
 ; The source's layout comes from its boot sector's BPB: 360 KB, 720 KB,
-; 1.2 MB, 1.44 MB (8, 9, 15 or 18 sectors a track, 40 or 80 cylinders, one
-; or two sides); a disk without one is refused.  As many tracks as memory
-; holds are read at a time (each in a buffer of its own that doesn't cross
-; a 64 KB DMA boundary): a 1.44 MB disk takes three passes on one drive.
-; With one drive, each pass after the first makes sure the right disk is
-; in: the source's boot sector as it was, the target's as written ("That
-; isn't the SOURCE diskette" and the question again).
+; 1.2 MB, 1.44 MB (9, 15 or 18 sectors a track, 40 or 80 cylinders, one
+; or two sides; DISKCOMP 160 and 320 KB too, 8 sectors: DISKCOPY can't set
+; that layout for a format, INT 13h 18h has none); a disk without one is
+; refused.  As many tracks as memory holds are read at a time (each in a
+; buffer of its own that doesn't cross a 64 KB DMA boundary): a 1.44 MB
+; disk takes three passes.  The source's boot sector alone is enough if
+; the sector after it won't read (that one is then zeros, as on the copy).
+;
+; With one drive, each prompt makes sure the right disk is in, by its
+; first two sectors (the boot sector and the FAT's first): "That isn't
+; the SOURCE diskette" (or TARGET, or "Drive not ready") and the prompt
+; again.  DISKCOPY's target keeps a boot sector unlike the source's (its
+; first OEM byte inverted) until the last pass is written, then gets the
+; real one, so even disks without serial numbers are told apart; at the
+; first TARGET prompt a disk with the source's first two sectors (the
+; source left in, or an earlier copy without a serial number) is asked
+; about ("Write on it all the same (Y/N)?").  DISKCOMP's two disks are
+; told apart only if their first two sectors differ (a serial number
+; does): a copy without one can't be told from the source.  A disk
+; changed in the middle of a pass (INT 13h's 06h), or at the
+; write-protected prompt, is checked the same way before anything more is
+; read or written.  An extended key (two bytes from DOS) is one key.
 ;
 ; DISKCOPY: the target's first track is verified at the source's layout
 ; (INT 13h 18h sets it; INT 1Eh points at the BIOS's table for it, and is
 ; put back on every way out); if it doesn't read, every track is
 ; formatted as it is written ("Formatting while copying"), and a track
-; that won't take a write is formatted and written again.  A source with
+; that won't take a write is formatted and written again (track 0 that
+; won't: the copy ended).  A copy ended once something is written says
+; "Target diskette may be unusable".  A source with
 ; DOS 4's serial number (a 29h BPB) gives the copy a new one, as MS-DOS 4
 ; does: the kernel then knows the copy for another disk; and the target
 ; drive's current directory goes to its root, for a source without one.
@@ -43,7 +61,8 @@
 ; stopped, 3 it couldn't (no disk, not ready, a layout the drive can't
 ; take), 4 wrong at the start (switches, drives, memory, not Lodestone);
 ; DISKCOMP 0 the same, 1 they differ, 2 stopped, 3 a read error, 4 the
-; same as DISKCOPY's.
+; same as DISKCOPY's.  (Read and write errors name the drive they were
+; on.)
 cpu 286
 org 100h
 
@@ -149,20 +168,7 @@ another:
         call    told
         mov     dx, s_again
 %endif
-        call    flush_keys
-        call    print
-        call    getkey
-        push    ax
-        cmp     al, ' '
-        jb      .nb
-        call    putc
-.nb:    mov     dx, s_crlf
-        call    print
-        pop     ax
-        cmp     al, 3
-        je      stopped
-        and     al, 0DFh
-        cmp     al, 'Y'
+        call    yesno
         je      another
         mov     al, [result]
         mov     ah, 4Ch
@@ -177,9 +183,13 @@ init_fail:
 stopped:
         mov     dx, s_crlf
         call    print
+stop1:
+%ifndef COMP
+        call    unus
+%endif
         mov     dx, s_ended
         call    print
-stop2:  call    dpt_back
+        call    dpt_back
 %ifndef COMP
         call    told
 %endif
@@ -187,11 +197,35 @@ stop2:  call    dpt_back
         int     21h
 ctrlc:  push    cs
         pop     ds
-        jmp     stop2
+        jmp     stop1
 crit:   mov     al, 3
         iret
 
+; DX ($) said, then a key: Y (ZF), or another (NZ; Ctrl-C stops)
+yesno:  call    print
+        call    flush_keys
+        call    getkey
+        push    ax
+        cmp     al, ' '
+        jb      .nb
+        call    putc
+.nb:    mov     dx, s_crlf
+        call    print
+        pop     ax
+        cmp     al, 3
+        je      stopped
+        and     al, 0DFh
+        cmp     al, 'Y'
+        ret
+
 %ifndef COMP
+; something written, the copy not whole: "Target diskette may be unusable"
+unus:   cmp     byte [wrote], 0
+        je      .x
+        mov     dx, s_unus
+        call    print
+.x:     ret
+
 ; the copy written (or some of it): the kernel reads the target again
 ; (INT 21h 0Dh), and its current directory there is the root
 told:   cmp     byte [wrote], 0
@@ -217,6 +251,8 @@ one_disk:
         int     21h
         mov     byte [firstw], 1
         mov     byte [fmtmode], 0
+        mov     byte [t0done], 0
+        mov     byte [force], 0
         mov     word [trk], 0
         mov     dx, s_insrc             ; the disks in
         call    print
@@ -258,7 +294,7 @@ one_disk:
         mov     dx, s_sides
         call    print
         call    slots
-        jc      fatal
+        jc      init_fail               ; (not enough memory: exit code 4)
 %ifndef COMP
         mov     si, bootsrc             ; what the copy's boot sector is to
         mov     di, bootdst             ;  be: a new serial number, if the
@@ -266,11 +302,16 @@ one_disk:
         rep     movsw                   ;  sector the source's)
         mov     byte [newser], 0
         cmp     byte [bootsrc+26h], 29h
-        jne     .pass
+        jne     .mk
         call    serial
         mov     [bootdst+27h], ax
         mov     [bootdst+29h], dx
         mov     byte [newser], 1
+.mk:    mov     si, bootdst             ; and its boot sector until the last
+        mov     di, bootmk              ;  pass is written: unlike the
+        mov     cx, 512                 ;  source's
+        rep     movsw
+        not     byte [bootmk+3]
 %endif
         ; ---- a pass: as many tracks as there are buffers
 .pass:  mov     ax, [ntr]
@@ -284,20 +325,9 @@ one_disk:
         je      .rd                     ;  the source in again
         cmp     byte [single], 0
         je      .rd
-.again: mov     dx, s_insrc
-        call    print
-        call    press
-        call    rd_boot                 ; (the same source?)
-        jc      fatal
-        mov     si, [tbuf]
-        mov     di, bootsrc
-        mov     cx, 512
-        repe    cmpsw
-        je      .rd
-        mov     dx, s_notsrc
-        call    print
-        jmp     .again
-.rd:    xor     bx, bx                  ; read them
+        call    src_in
+.rd:    mov     byte [phase], 0
+        xor     bx, bx                  ; read them
 .r:     cmp     bx, [npass]
         jae     .rdd
         push    bx
@@ -319,27 +349,10 @@ one_disk:
         jmp     .r
 .esc:   pop     bx
         jmp     stopped
-.rdd:   cmp     byte [single], 0        ; one drive: the target in
+.rdd:   mov     byte [phase], 1
+        cmp     byte [single], 0        ; one drive: the target in
         je      .wr
-.tg:    mov     dx, s_intg
-        call    print
-        call    press
-        cmp     byte [firstw], 0        ; (a pass after the first: the same
-        jne     .wr                     ;  target?)
-        call    rd_tboot
-        jc      fatal
-        mov     si, [tbuf]
-%ifdef COMP
-        mov     di, boottg
-%else
-        mov     di, bootdst
-%endif
-        mov     cx, 512
-        repe    cmpsw
-        je      .wr
-        mov     dx, s_nottg
-        call    print
-        jmp     .tg
+        call    tg_in
 .wr:
 %ifdef COMP
         cmp     byte [firstw], 0        ; the first time: the target's
@@ -403,19 +416,49 @@ one_disk:
         xor     di, di
         mov     cx, 256
         rep     movsw
-.wt:    call    wr_track
+        not     byte [es:3]             ; (until the last pass: unlike the
+.wt:    call    wr_track                ;  source's)
         push    cs
         pop     es
         pop     bx
         cmp     al, 2
         je      fatal
-        inc     bx
+        cmp     word [ctrk], 0          ; track 0 not written: the end
+        jne     .wn
+        or      al, al
+        jnz     fatal2
+        mov     byte [t0done], 1
+.wn:    inc     bx
         jmp     .wl
 %endif
 .next:  mov     ax, [npass]
         add     [trk], ax
         jmp     .pass
-.done:  call    dpt_back
+.done:
+%ifndef COMP
+        mov     si, bootdst             ; the copy's own boot sector, now
+        mov     di, [tbuf]
+        mov     cx, 256
+        rep     movsw
+        mov     byte [cyl], 0
+        mov     byte [head], 0
+        mov     ax, [tbuf]
+        shr     ax, 4
+        mov     bx, cs
+        add     ax, bx
+        mov     es, ax
+        push    word [spt]
+        mov     word [spt], 1
+        call    wr_one
+        pop     word [spt]
+        push    cs
+        pop     es
+        cmp     al, 2
+        je      fatal
+        or      al, al
+        jnz     fatal2
+%endif
+        call    dpt_back
 %ifdef COMP
         cmp     byte [result], 0
         jne     .x
@@ -441,6 +484,10 @@ one_disk:
 ; it couldn't go on: why (DX), "Copy process ended", exit code 3 (the
 ; stack as it is: one_disk's caller's frame is dropped)
 fatal:  call    print
+fatal2:
+%ifndef COMP
+        call    unus
+%endif
         mov     dx, s_ended
         call    print
         call    dpt_back
@@ -468,22 +515,136 @@ press:  call    flush_keys
 .s:     jmp     stopped
 
 ; ---------------------------------------------------------------------
+; one drive: the source in (a pass after the first), or the target (each
+; pass), made sure of: "That isn't ...", "Drive not ready", and the
+; prompt again
+src_in: mov     dx, s_insrc
+        call    print
+        call    press
+        call    src_ok
+        jnc     tg_in.x
+.no:    call    print
+        jmp     src_in
+tg_in:  mov     dx, s_intg
+        call    print
+        call    press
+        call    tg_ok
+        jnc     .x
+.no:
+%ifndef COMP
+        cmp     dx, s_issrc             ; the source's first two sectors
+        je      .q                      ;  (before track 0): sure?
+%endif
+        call    print
+        jmp     tg_in
+%ifndef COMP
+.q:     call    yesno
+        jne     tg_in
+        mov     byte [force], 1
+%endif
+.x:     ret
+
+; a disk changed under a pass (06h, or at the write-protected prompt):
+; still the one it should be (the source read, the target written)?  If
+; not, the prompt for it until it is.  ES kept
+isit:   pusha
+        cmp     byte [phase], 0
+        jne     .t
+        call    src_ok
+        jnc     .x
+        call    print
+        call    src_in
+        jmp     short .x
+.t:     call    tg_ok
+        jnc     .x
+        call    tg_in.no
+.x:     popa
+        ret
+
+; the source in?  (its first two sectors as at the start)  CF: DX = why
+src_ok: call    rd_boot
+        jc      .x
+        mov     di, bootsrc
+        call    same1k
+        mov     dx, s_notsrc
+        jne     no_x
+.x:     ret
+
+%ifdef COMP
+; the target in?  (as at its first read; the first time, any)  CF: DX
+tg_ok:  call    rd_tboot
+        jc      .x
+        cmp     byte [firstw], 0
+        jne     .x
+        mov     di, boottg
+        call    same1k
+        mov     dx, s_nottg
+        jne     no_x
+.x:     ret
+%else
+; the target in?  Once track 0 is written, its first two sectors as they
+; were written (unlike the source's); before, any disk but one with the
+; source's (DX = s_issrc, unless that was said to be all right).  CF: DX
+tg_ok:  call    rd_tboot
+        jnc     .rd
+        cmp     dx, s_nrdy
+        je      no_x
+        cmp     byte [t0done], 0        ; (a blank disk: a target, until
+        jne     no_x                    ;  track 0 is written)
+        clc
+        ret
+.rd:    cmp     byte [t0done], 0
+        jne     .mk
+        cmp     byte [force], 0
+        jne     .x
+        mov     di, bootsrc
+        call    same1k
+        mov     dx, s_issrc
+        je      no_x
+        clc
+.x:     ret
+.mk:    mov     di, bootmk
+        call    same1k
+        mov     dx, s_nottg
+        jne     no_x
+        ret
+%endif
+no_x:   stc
+        ret
+
+; tbuf's first 1024 bytes and DS:DI's: ZF if the same.  ES kept
+same1k: push    es
+        push    cs
+        pop     es
+        mov     si, [tbuf]
+        mov     cx, 512
+        repe    cmpsw
+        pop     es
+        ret
+
+; ---------------------------------------------------------------------
 ; the source's boot sector and the sector after it (cylinder 0, side 0,
-; sectors 1-2) -> tbuf: what tells one disk from another.  CF: DX = why
+; sectors 1-2) -> tbuf: what tells one disk from another.  The pair won't
+; read: the boot sector alone, the next sector zeros (as rd_track makes
+; one that won't read).  CF: DX = why.  ES kept
 rd_boot:
         mov     dl, [src]
+        mov     si, s_noboot
         jmp     short rd_b
 rd_tboot:
         mov     dl, [dst]
+        mov     si, s_tnoboot
 rd_b:   mov     [unit], dl
-        mov     bp, TRIES
+        mov     byte [nb], 2
+.n:     mov     bp, TRIES
 .t:     push    es
         push    cs
         pop     es
         mov     bx, [tbuf]
-        mov     ax, 0202h               ; (and the next: the FAT's first
-        mov     cx, 0001h               ;  sector, so two disks of a DOS
-        xor     dh, dh                  ;  without serial numbers differ)
+        mov     al, [nb]                ; (and the next: the FAT's first
+        mov     ah, 02h                 ;  sector, so two disks of a DOS
+        mov     cx, 0001h               ;  without serial numbers differ)
+        xor     dh, dh
         mov     dl, [unit]
         int     13h
         pop     es
@@ -494,10 +655,23 @@ rd_b:   mov     [unit], dl
         call    reset
         dec     bp
         jnz     .t
-        mov     dx, s_noboot
+        mov     dx, si
+        dec     byte [nb]
+        jnz     .n
 .no:    stc
         ret
-.ok:    clc
+.ok:    cmp     byte [nb], 2
+        je      .x
+        push    es
+        push    cs
+        pop     es
+        mov     di, [tbuf]
+        add     di, 512
+        mov     cx, 256
+        xor     ax, ax
+        rep     stosw
+        pop     es
+.x:     clc
         ret
 
 ; the source's BPB -> [spt], [heads], [cyls], [hc] (the sides copied),
@@ -507,9 +681,11 @@ layout: mov     dx, s_nolay
         jne     .no
         cmp     word [bootsrc+0Bh], 512
         jne     .no
-        mov     ax, [bootsrc+18h]       ; sectors a track: 8, 9, 15, 18
+        mov     ax, [bootsrc+18h]       ; sectors a track: 9, 15, 18 (and
+%ifdef COMP                             ;  DISKCOMP 8)
         cmp     ax, 8
         je      .s
+%endif
         cmp     ax, 9
         je      .s
         cmp     ax, 15
@@ -554,6 +730,12 @@ layout: mov     dx, s_nolay
         je      .k
         mov     al, 8
 .k:     mov     [kbit], al
+%ifdef COMP
+        cmp     byte [eight], 0         ; /8: 8 sectors a track compared
+        je      .ok
+        mov     word [spt], 8
+.ok:
+%endif
         clc
         ret
 .no:    stc
@@ -633,7 +815,7 @@ trk_ch: xor     dx, dx
 ; read, 1 some didn't, 2 not ready (DX = why).  ES kept
 rd_track:
         mov     [unit], dl
-        mov     bp, TRIES
+.go:    mov     bp, TRIES
 .t:     mov     ax, [spt]
         mov     ah, 02h
         mov     cl, 1
@@ -642,6 +824,8 @@ rd_track:
         jnc     .ok
         cmp     ah, 80h
         je      .nr
+        cmp     ah, 06h
+        je      .chg
         call    reset
         dec     bp
         jnz     .t
@@ -657,6 +841,8 @@ rd_track:
         mov     cl, [sct]
         call    bios_at
         jnc     .sn
+        cmp     ah, 06h
+        je      .chg
         call    reset
         dec     bp
         jnz     .st
@@ -677,6 +863,9 @@ rd_track:
         jbe     .s
         cmp     byte [bad], 0
         je      .ok
+        mov     al, [unit]
+        add     al, 'A'
+        mov     [s_es], al
         mov     dx, s_rderr             ; "Unrecoverable read error on drive
         call    print                   ;  A:, side 0, track 5"
         call    p_where
@@ -692,6 +881,8 @@ rd_track:
 .nr:    mov     dx, s_nrdy
         mov     al, 2
         ret
+.chg:   call    isit                    ; (the disk changed: the right one?
+        jmp     .go                     ;  the track again)
 
 ; AH = call, AL = sectors, CL = the first, at [cyl]/[head] of [unit],
 ; ES:BX.  CF: AH = the BIOS's error.  ES, BP kept
@@ -909,6 +1100,7 @@ media:  mov     bp, TRIES
 wr_track:
         mov     al, [dst]
         mov     [unit], al
+        mov     byte [wrote], 1         ; (something will have changed)
         mov     byte [fmted], 0
         cmp     byte [fmtmode], 0
         je      .w
@@ -932,8 +1124,7 @@ wr_track:
         cmp     byte [fmted], 0         ; it won't take a write: formatted,
         je      .f                      ;  then once more
         jmp     short .bad
-.v:     mov     byte [wrote], 1
-        cmp     byte [verify], 0
+.v:     cmp     byte [verify], 0
         je      .ok
         mov     bp, TRIES
 .vt:    mov     ax, [spt]
@@ -942,7 +1133,11 @@ wr_track:
         xor     bx, bx
         call    bios_at
         jnc     .ok
-        call    reset
+        cmp     ah, 06h                 ; (the disk changed: the right one?
+        jne     .vr                     ;  written again)
+        call    isit
+        jmp     .w
+.vr:    call    reset
         dec     bp
         jnz     .vt
 .bad:   mov     dx, s_wrerr             ; "Unrecoverable write error on drive
@@ -953,9 +1148,16 @@ wr_track:
         ret
 .ok:    xor     al, al
 .x:     ret
+; one sector (track 0's first, [spt] 1) from ES:0, not formatted if it
+; won't take it
+wr_one: mov     al, [dst]
+        mov     [unit], al
+        mov     byte [fmted], 1
+        jmp     wr_track.w
 
-; the BIOS's error AH at a target write: write-protected (said; a key:
-; ZF, try again), not ready (CF, AL = 2, DX), or another (NZ)
+; the BIOS's error AH at a target write: write-protected (said; a key)
+; or the disk changed (06h): the target made sure of, ZF: try again; not
+; ready (CF, AL = 2, DX); another (NZ)
 wp_or_nr:
         cmp     ah, 80h
         jne     .p
@@ -963,13 +1165,16 @@ wp_or_nr:
         mov     al, 2
         stc
         ret
-.p:     cmp     ah, 03h
+.p:     cmp     ah, 06h
+        je      .c
+        cmp     ah, 03h
         jne     .o
         push    es
         mov     dx, s_wprot
         call    print
         call    press
         pop     es
+.c:     call    isit
         mov     al, [dst]
         mov     [unit], al
         xor     ah, ah                  ; (ZF)
@@ -1010,7 +1215,7 @@ fmt_track:
         jnc     .ok
         call    wp_or_nr
         jc      .x
-        jz      .f
+        jz      fmt_track               ; (the IDs again: isit used tbuf)
         call    reset
         dec     bp
         jnz     .ft
@@ -1087,7 +1292,10 @@ args:   mov     si, 81h
         mov     byte [verify], 1
         jmp     .l
 %else
-        jmp     short .bad
+        cmp     al, '8'
+        jne     .bad
+        mov     byte [eight], 1
+        jmp     .l
 %endif
 .one:   mov     byte [side1], 1
         jmp     .l
@@ -1132,9 +1340,15 @@ esc_key:
 .n:     clc
         ret
 
+; a key through DOS (an extended one's second byte taken too: AL = 0)
 getkey: mov     ah, 08h
         int     21h
-        ret
+        or      al, al
+        jnz     .x
+        mov     ah, 08h
+        int     21h
+        xor     al, al
+.x:     ret
 print:  mov     ah, 9
         int     21h
         ret
@@ -1208,6 +1422,9 @@ s_wprot db 13, 10, 'The TARGET diskette is write-protected: correct it, then', 1
 s_open  db 'Files are open on drive '
 s_cd    db 'A: (a batch file or a program running from it)', 13, 10, '$'
 s_ser   db 13, 10, 'Volume Serial Number is $'
+s_unus  db 'Target diskette may be unusable', 13, 10, '$'
+s_issrc db "That disk's first two sectors are the SOURCE diskette's: is it the", 13, 10
+        db 'SOURCE?  Write on it all the same (Y/N)? $'
 %endif
 s_tracks db ' tracks', 13, 10, '$'
 s_spt   db ' sectors/track, $'
@@ -1217,6 +1434,7 @@ s_es    db 'A:, side $'
 s_trk   db ', track $'
 s_nrdy  db 'Drive not ready: no disk in it?', 13, 10, '$'
 s_noboot db 'The SOURCE diskette',39,'s boot sector can',39,'t be read', 13, 10, '$'
+s_tnoboot db 'The TARGET diskette',39,'s boot sector can',39,'t be read', 13, 10, '$'
 s_nolay db 'The SOURCE diskette has no layout this can copy (360 KB, 720 KB,', 13, 10
         db '1.2 MB or 1.44 MB, in its boot sector)', 13, 10, '$'
 s_nosup db 'Drive types or diskette types not compatible', 13, 10, '$'
@@ -1250,6 +1468,11 @@ sct     resb 1
 bad     resb 1
 kbit    resb 1
 dkind   resb 1
+t0done  resb 1
+force   resb 1
+phase   resb 1
+nb      resb 1
+eight   resb 1
         alignb 2
 spt     resw 1
 heads   resw 1
@@ -1273,6 +1496,7 @@ slotseg resw MAXTRK
 bootsrc resb 1024                       ; (with the sector after each)
 bootdst resb 1024
 boottg  resb 1024
+bootmk  resb 1024
         alignb 16
 tb1     resb MAXSPT * 512
 tb2     resb MAXSPT * 512
