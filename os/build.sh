@@ -32,9 +32,11 @@ python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
 python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODEMT.SYS src/LODE.PIC src/LCMD.COM \
     apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN apps/TASKS.RUN apps/TERM.RUN src/CALC.COM drivers/PS.PRN \
     drivers/SCREEN.PRN rom/LODE.INI
-# ROM 2, a data ROM joined to R: (KROM.INC): what ROM 1 has no room for.
+# ROM 2, a data ROM joined to R: (KROM.INC): what ROM 1 has no room for, and the disk utilities.
+# (tests/test_rom.py reads this line for ROM 2's files)
 # CLAUDE.COM as committed: run claude/build.sh first after a change to it
-python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM fonts/TERM.FNT apps/PAINT.RUN claude/CLAUDE.COM fonts/GRIDFONT.FNT fonts/TERMINUS.FNT
+python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM fonts/TERM.FNT apps/PAINT.RUN claude/CLAUDE.COM fonts/GRIDFONT.FNT fonts/TERMINUS.FNT \
+    src/FORMAT.COM src/CHKDSK.COM
 cd tests
 nasm -f bin -o TESTDOS.COM TESTDOS.ASM
 nasm -f bin -o UPPER.COM UPPER.ASM
