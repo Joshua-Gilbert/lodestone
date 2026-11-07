@@ -1695,8 +1695,10 @@ def t_fcbnames():
     FCB (from a subdirectory: the root's), files through a plain one; and 47h's answer in its 64 bytes."""
     com = os.path.join(OUT, 'FCBNAMES.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'FCBNAMES.ASM')], check=True)
-    p = image('fcbnames.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'FCBNAMES.COM=' + com, 'SUB\\')
+    sep = os.path.join(OUT, 'ABXCD.SEP'); open(sep, 'wb').write(b'sep')
+    p = image('fcbnames.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'FCBNAMES.COM=' + com, 'SUB\\', 'SUB\\ABXCD.SEP=' + sep)
     img = bytearray(open(p, 'rb').read())
+    i = img.find(b'ABXCD   SEP'); img[i + 2] = ord('+')                 # (another system's: a separator in a name)
     at = next(19 * 512 + i for i in range(0, 224 * 32, 32) if img[19 * 512 + i + 11] == 8)
     img[at:at + 11] = b'V1.0  X    '                         # (another system's: a dot, spaces inside)
     open(p, 'wb').write(img)
@@ -1716,9 +1718,11 @@ def t_fcbnames():
     check('... a plain FCB\'s "*       txt" (small letters, a *): both, as MS-DOS 3 takes it; one starting E5h: '
           'that one (and the * stays in the name part: not AB CD.DAT)', 'U [\xe5ABC    TXT]\n' in o
           and 'U [AB CD   TXT]\n' in o and o.count('\nU [') == 2 and 'E [\xe5ABC    TXT]\n' in o, o)
-    check('... a separator in an FCB\'s name ("AB.CD   TXT"): nothing (FFh), as MS-DOS\'s TransFCB; the label with 09h '
-          '(read-only no matter); 4Eh \\*.* with 3Fh: the label among the rest, as MS-DOS\'s', '\nV [' not in o
-          and 'K [V1.0  X    ]\n' in o and 'A V1.0  X\n' in o and 'A SUB\n' in o, o)
+    check('... a separator in an FCB\'s name ("AB+CD   SEP", an entry there by that name): nothing (FFh), as MS-DOS\'s '
+          'TransFCB; the label with 09h (read-only no matter); 4Eh: *.* with 08h from A:\\SUB the root\'s label, '
+          '\\*.* with 09h the label only, with 3Fh the label among the rest, as MS-DOS\'s', '\nV [' not in o
+          and 'K [V1.0  X    ]\n' in o and 'C V1.0  X\n' in o and o.count('\nB ') == 1 and 'B V1.0  X\n' in o
+          and 'A V1.0  X\n' in o and 'A SUB\n' in o, o)
     ents = [d[i:i + 11] for i in range(0, len(d) - 32, 32) if d[i + 11:i + 12] == b'\x20' and d[i + 8:i + 11] == b'TXT']
     check('... on the disk the first E5h is 05h (E5h there is a free entry)', b'\x05ABC    TXT' in ents, ents)
     o = sh.run('dir').replace('\r', '') + sh.run('copy *.txt \\').replace('\r', '')
@@ -1744,7 +1748,7 @@ def t_spacenames():
               os.path.join(GOS, 'src', 'CHKDSK.COM'), 'ABXCD.TXT=' + mkf('sn1', b'one'), 'ABXEF.TXT=' + mkf('sn2', b'two'),
               'AB.BAK=' + mkf('sn3', b'precious'), 'AB.TXT=' + mkf('sn4', b'mine'), 'P1.TXT=' + mkf('sn5', b'p1new'),
               'P2.TXT=' + mkf('sn6', b'p2new'), 'P1.OLD=' + mkf('sn7', b'p1old'), 'P2.OLD=' + mkf('sn8', b'p2old'),
-              'LONGFILE.TXT=' + mkf('sn9', b'long'))
+              'LONGFILE.TXT=' + mkf('sn9', b'long'), 'NOEXT=' + mkf('sn10', b'noext'))
     img = bytearray(open(p, 'rb').read())
     for n in (b'ABXCD   TXT', b'ABXEF   TXT'):
         i = img.find(n); img[i + 2] = 0x20
@@ -1772,15 +1776,20 @@ def t_spacenames():
     check('COPY P?.TXT *.OLD onto two that are there: each replaced (the second was appended to), as MS-DOS; '
           'COPY P?.TXT ALL.DAT: the two in one', f.get('A:\\P1.OLD') == b'p1new' and f.get('A:\\P2.OLD') == b'p2new'
           and f.get('A:\\ALL.DAT', b'').startswith(b'p1newp2new'), (o, f.get('A:\\P2.OLD'), f.get('A:\\ALL.DAT')))
-    o = sh.run('copy longfile.txt longfilename.txt') + sh.run('copy longfile.txt longfile.txt.')
-    check('COPY LONGFILE.TXT LONGFILENAME.TXT, and LONGFILE.TXT.: "File cannot be copied onto itself" (the same '
-          'file, as the kernel reads the name)', o.count('cannot be copied onto itself') == 2
+    o = sh.run('copy longfile.txt longfilename.txt') + sh.run('copy noext noext.')
+    check('COPY LONGFILE.TXT LONGFILENAME.TXT, and NOEXT NOEXT.: "File cannot be copied onto itself" (the same '
+          'file, as the kernel reads the name: cut to 8.3, a dot last dropped)', o.count('cannot be copied onto itself') == 2
           and fs().get('A:\\LONGFILE.TXT') == b'long', o)
     k.key('cls'); k.key(ktest.ENTER)
     k.key('type ab'); k.key(ktest.TAB); k.key(ktest.ENTER)
     o = k.pc.text_screen()
     check('Tab after "type ab" passes over the names with a space inside (the line would take "AB CD.TXT" for '
           '"AB" and "CD.TXT"): AB.BAK, the first without', 'TYPE AB.BAK' in o.upper() and 'precious' in o, o)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('type ab'); k.key(ktest.TAB); k.key(ktest.TAB); k.key(ktest.TAB); k.key(ktest.ENTER)
+    o = k.pc.text_screen()
+    check('... Tab, Tab, Tab: AB.BAK, AB.TXT, then (every name after them with a space) round to AB.BAK again',
+          'TYPE AB.BAK' in o.upper() and 'precious' in o, o)
     o = sh.run('cd @:') + sh.run('cd [:') + sh.run('cd')
     check('CD @: and CD [: (no drives: "@" was taken as the current one): "Invalid drive specification" each '
           '("@:" alone is "@" and a label, as COMMAND\'s: nothing)', o.count('Invalid drive specification') == 2, o)

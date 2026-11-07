@@ -1666,8 +1666,12 @@ f_4E:   call    get_path
 .p:     rep     movsb
 .q:     mov     al, [bp+F_CX]
         stosb
-        mov     ax, [r_dir]
-        stosw
+        and     al, A_HID | A_SYS | A_DIR | A_VOL
+        cmp     al, A_VOL               ; (the label alone: the root's,
+        mov     ax, [r_dir]             ;  wherever the path points, as
+        jne     .r                      ;  MS-DOS's)
+        xor     ax, ax
+.r:     stosw
         xor     ax, ax
         stosw
         push    cs
@@ -1688,7 +1692,8 @@ f_4F:   call    find_next
 ; calls the search is in the FCB from 0Ch (drive + 1, the directory's
 ; cluster, the next entry), the bytes MS-DOS keeps it in.  AL = 0, or FFh:
 ; nothing more (or no such drive, or a separator or control character in
-; the name, as MS-DOS 3's TransFCB)
+; the name: as MS-DOS 3's TransFCB, but for '.', which it would take into
+; the path it makes and Lodestone counts out with the rest)
 FCB_D   equ path2_buf                   ; (K2: a DTA for find_next, 43)
 f_11:   call    fcb_ptr
         mov     al, [es:di]             ; its drive (0: the current one):
@@ -1866,12 +1871,9 @@ find_next:
         test    al, A_VOL               ; label search: labels only
         jz      .n
         jmp     .m
-.nv:    test    al, A_VOL               ; a label: when 08h is asked for
-        jz      .f                      ;  with others too, as MS-DOS's
-        test    ah, A_VOL
-        jz      .n
-        jmp     .m
-.f:     and     al, A_HID | A_SYS | A_DIR
+.nv:    test    al, A_VOL               ; (a label: out of the way, below)
+        jnz     .lab
+        and     al, A_HID | A_SYS | A_DIR
         not     ah
         test    al, ah
         jnz     .n
@@ -1903,6 +1905,9 @@ find_next:
         jae     .l
         add     si, 32
         jmp     .e
+.lab:   test    ah, A_VOL               ; a label with others asked for:
+        jz      .n                      ;  when 08h is one of them, as
+        jmp     .m                      ;  MS-DOS's
 .derr:  cmp     ax, 18
         je      .nomore
         push    cs                      ; a disk error

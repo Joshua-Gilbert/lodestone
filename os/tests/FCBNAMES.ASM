@@ -4,8 +4,10 @@
 ; FCB's search for the label (11h, attribute 08h: "L [11 bytes]") and a
 ; plain FCB's for *.TXT (11h/12h: "T [11 bytes]"), for "*       txt"
 ; ("U [11 bytes]"), for E5h "*      TXT" ("E [11 bytes]") and for
-; "AB.CD   TXT" (a separator: "V" if found); an extended FCB's with 09h
-; ("K [label]"); 4Eh \*.* with 3Fh ("A name", the label among them).  FCBNAMES W:
+; "AB+CD   SEP" (a separator: "V" if found); an extended FCB's with 09h
+; ("K [label]"); 4Eh *.* with 08h from here ("C name": the root's label),
+; \*.* with 09h ("B name", the label only) and with 3Fh ("A name", the
+; label among them).  FCBNAMES W:
 ; INT 21h 47h into a 64-byte buffer, a guard byte after it ("W n G" n its
 ; length, G the guard kept, or "W n X").  Each line ends CR LF
 org 100h
@@ -91,7 +93,34 @@ org 100h
         mov     al, 'K'
         mov     si, dta + 8
         call    raw
-.any:   mov     dx, pat_all             ; 4Eh \*.* with 3Fh: the label too
+.any:   mov     dx, pat_cur             ; 4Eh *.* with 08h here (A:\SUB):
+        mov     cx, 08h                 ;  the root's label
+        mov     ah, 4Eh
+        int     21h
+        jc      .b9
+        mov     al, 'C'
+        call    putc
+        mov     al, ' '
+        call    putc
+        mov     si, dta + 30
+        call    puts
+        call    crlf
+.b9:    mov     dx, pat_all             ; 4Eh \*.* with 09h: the label only
+        mov     cx, 09h
+        mov     ah, 4Eh
+        int     21h
+.bl:    jc      .a3
+        mov     al, 'B'
+        call    putc
+        mov     al, ' '
+        call    putc
+        mov     si, dta + 30
+        call    puts
+        call    crlf
+        mov     ah, 4Fh
+        int     21h
+        jmp     .bl
+.a3:    mov     dx, pat_all             ; 4Eh \*.* with 3Fh: the label too
         mov     cx, 3Fh
         mov     ah, 4Eh
         int     21h
@@ -237,10 +266,11 @@ fcb2    db 0, '*       txt'
         times 25 db 0
 fcb3    db 0, 0E5h, '*      TXT'
         times 25 db 0
-fcb4    db 0, 'AB.CD   TXT'
+fcb4    db 0, 'AB+CD   SEP'
         times 25 db 0
 xfcb9   db 0FFh, 0, 0, 0, 0, 0, 09h, 0, '???????????'
         times 25 db 0
 pat_all db '\*.*', 0
+pat_cur db '*.*', 0
 dta     times 64 db 0
 buf     times 200 db 0
