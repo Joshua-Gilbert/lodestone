@@ -1714,7 +1714,11 @@ def t_fcbnames():
     check('plain FCB FIND FIRST/NEXT of ????????TXT: both, unpacked, the E5h as E5h', 'T [\xe5ABC    TXT]\n' in o
           and 'T [AB CD   TXT]\n' in o and o.count('\nT [') == 2, o)
     check('... a plain FCB\'s "*       txt" (small letters, a *): both, as MS-DOS 3 takes it; one starting E5h: '
-          'that one', 'U [\xe5ABC    TXT]\n' in o and 'U [AB CD   TXT]\n' in o and 'E [\xe5ABC    TXT]\n' in o, o)
+          'that one (and the * stays in the name part: not AB CD.DAT)', 'U [\xe5ABC    TXT]\n' in o
+          and 'U [AB CD   TXT]\n' in o and o.count('\nU [') == 2 and 'E [\xe5ABC    TXT]\n' in o, o)
+    check('... a separator in an FCB\'s name ("AB.CD   TXT"): nothing (FFh), as MS-DOS\'s TransFCB; the label with 09h '
+          '(read-only no matter); 4Eh \\*.* with 3Fh: the label among the rest, as MS-DOS\'s', '\nV [' not in o
+          and 'K [V1.0  X    ]\n' in o and 'A V1.0  X\n' in o and 'A SUB\n' in o, o)
     ents = [d[i:i + 11] for i in range(0, len(d) - 32, 32) if d[i + 11:i + 12] == b'\x20' and d[i + 8:i + 11] == b'TXT']
     check('... on the disk the first E5h is 05h (E5h there is a free entry)', b'\x05ABC    TXT' in ents, ents)
     o = sh.run('dir').replace('\r', '') + sh.run('copy *.txt \\').replace('\r', '')
@@ -1730,12 +1734,17 @@ def t_fcbnames():
 def t_spacenames():
     """Names with a space inside (another system's, or a program's: MS-DOS takes them) through LCMD's COPY
     and REN with wildcards, XCOPY's and CHKDSK's names: each the whole name, never cut at its space (COPY
-    *.TXT *.BAK wrote AB CD.TXT and AB EF.TXT both into AB.BAK, over what was there)."""
+    *.TXT *.BAK wrote AB CD.TXT and AB EF.TXT both into AB.BAK, over what was there).  The names are mapped
+    as the kernel packs them (MS-DOS's PackName) and as MS-DOS's REN (FCB rename) maps them; MS-DOS's own
+    COPY drops the spaces, which can name another file.  Also COPY to a wildcard name replaces each file
+    there (it appended), its "onto itself" as the kernel reads names, Tab, CD @:."""
     def mkf(n, b):
         t = os.path.join(OUT, n); open(t, 'wb').write(b); return t
     p = image('spn.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(GOS, 'src', 'XCOPY.COM'),
               os.path.join(GOS, 'src', 'CHKDSK.COM'), 'ABXCD.TXT=' + mkf('sn1', b'one'), 'ABXEF.TXT=' + mkf('sn2', b'two'),
-              'AB.BAK=' + mkf('sn3', b'precious'), 'AB.TXT=' + mkf('sn4', b'mine'))
+              'AB.BAK=' + mkf('sn3', b'precious'), 'AB.TXT=' + mkf('sn4', b'mine'), 'P1.TXT=' + mkf('sn5', b'p1new'),
+              'P2.TXT=' + mkf('sn6', b'p2new'), 'P1.OLD=' + mkf('sn7', b'p1old'), 'P2.OLD=' + mkf('sn8', b'p2old'),
+              'LONGFILE.TXT=' + mkf('sn9', b'long'))
     img = bytearray(open(p, 'rb').read())
     for n in (b'ABXCD   TXT', b'ABXEF   TXT'):
         i = img.find(n); img[i + 2] = 0x20
@@ -1758,6 +1767,20 @@ def t_spacenames():
     check('CHKDSK /V names them whole ("A:\\AB CD.TXT", not "A:\\AB.TXT" twice)', 'A:\\AB CD.TXT' in o and 'A:\\AB EF.TXT' in o, o)
     f = fs()
     check('... and AB.TXT, the file a cut name would have hit, untouched throughout', f.get('A:\\AB.TXT') == b'mine', sorted(f))
+    o = sh.run('copy p?.txt *.old') + sh.run('copy p?.txt all.dat')
+    f = fs()
+    check('COPY P?.TXT *.OLD onto two that are there: each replaced (the second was appended to), as MS-DOS; '
+          'COPY P?.TXT ALL.DAT: the two in one', f.get('A:\\P1.OLD') == b'p1new' and f.get('A:\\P2.OLD') == b'p2new'
+          and f.get('A:\\ALL.DAT', b'').startswith(b'p1newp2new'), (o, f.get('A:\\P2.OLD'), f.get('A:\\ALL.DAT')))
+    o = sh.run('copy longfile.txt longfilename.txt') + sh.run('copy longfile.txt longfile.txt.')
+    check('COPY LONGFILE.TXT LONGFILENAME.TXT, and LONGFILE.TXT.: "File cannot be copied onto itself" (the same '
+          'file, as the kernel reads the name)', o.count('cannot be copied onto itself') == 2
+          and fs().get('A:\\LONGFILE.TXT') == b'long', o)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('type ab'); k.key(ktest.TAB); k.key(ktest.ENTER)
+    o = k.pc.text_screen()
+    check('Tab after "type ab" passes over the names with a space inside (the line would take "AB CD.TXT" for '
+          '"AB" and "CD.TXT"): AB.BAK, the first without', 'TYPE AB.BAK' in o.upper() and 'precious' in o, o)
     o = sh.run('cd @:') + sh.run('cd [:') + sh.run('cd')
     check('CD @: and CD [: (no drives: "@" was taken as the current one): "Invalid drive specification" each '
           '("@:" alone is "@" and a label, as COMMAND\'s: nothing)', o.count('Invalid drive specification') == 2, o)

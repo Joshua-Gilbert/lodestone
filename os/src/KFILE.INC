@@ -1687,7 +1687,8 @@ f_4F:   call    find_next
 ; back as they are, spaces and all (COMMAND's VOL reads it so).  Between
 ; calls the search is in the FCB from 0Ch (drive + 1, the directory's
 ; cluster, the next entry), the bytes MS-DOS keeps it in.  AL = 0, or FFh:
-; nothing more (or no such drive)
+; nothing more (or no such drive, or a separator or control character in
+; the name, as MS-DOS 3's TransFCB)
 FCB_D   equ path2_buf                   ; (K2: a DTA for find_next, 43)
 f_11:   call    fcb_ptr
         mov     al, [es:di]             ; its drive (0: the current one):
@@ -1702,6 +1703,7 @@ f_11:   call    fcb_ptr
         jc      f_fcb
         call    fcb_ptr
         mov     dx, [r_dir]
+        and     al, A_HID | A_SYS | A_DIR | A_VOL
         cmp     al, A_VOL               ; (the label alone: the root's,
         jne     .d                      ;  wherever the current directory
         xor     dx, dx                  ;  is, as MS-DOS's)
@@ -1741,7 +1743,17 @@ f_12:   call    fcb_ptr                 ; its search -> FCB_D, as 4Eh's DTA
         inc     dx
 .q:     mov     al, '?'
         jmp     short .p
-.lc:    cmp     al, 'a'
+.lc:    cmp     al, ' '                 ; (a control character or a
+        jb      .bad                    ;  separator: no name, FFh, as
+        push    cx                      ;  MS-DOS's TransFCB)
+        push    di
+        mov     di, sepchars
+        mov     cx, NSEP
+        repne   scasb
+        pop     di
+        pop     cx
+        je      .bad
+        cmp     al, 'a'
         jb      .p
         cmp     al, 'z'
         ja      .p
@@ -1788,6 +1800,7 @@ f_12:   call    fcb_ptr                 ; its search -> FCB_D, as 4Eh's DTA
         pop     es
         xor     al, al
         jmp     ret_al
+.bad:   jmp     f_fcb
 ; the caller's FCB -> ES:DI (past an extended header), AL its attribute
 ; (0 without one), BL = 1 if it had one
 fcb_ptr:
@@ -1846,15 +1859,19 @@ find_next:
         mov     al, [si+11]
         cmp     al, 0Fh
         je      .n
-        mov     ah, [es:di+12]
-        cmp     ah, A_VOL
+        mov     ah, [es:di+12]          ; (as MS-DOS's: read-only and
+        and     ah, A_HID | A_SYS | A_DIR | A_VOL  ;  archive asked for count
+        cmp     ah, A_VOL               ;  nothing)
         jne     .nv
         test    al, A_VOL               ; label search: labels only
         jz      .n
         jmp     .m
-.nv:    test    al, A_VOL
-        jnz     .n
-        and     al, A_HID | A_SYS | A_DIR
+.nv:    test    al, A_VOL               ; a label: when 08h is asked for
+        jz      .f                      ;  with others too, as MS-DOS's
+        test    ah, A_VOL
+        jz      .n
+        jmp     .m
+.f:     and     al, A_HID | A_SYS | A_DIR
         not     ah
         test    al, ah
         jnz     .n

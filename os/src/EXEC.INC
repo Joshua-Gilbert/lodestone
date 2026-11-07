@@ -1580,7 +1580,7 @@ sc_list:
 sc_add:
         mov     ax, [sc_max]
         sub     ax, [sc_wr]
-        cmp     ax, 80                  ; (the longest: 66 + \ + NAME.EXT + 0)
+        cmp     ax, 80                  ; (the longest: 64 + \ + NAME.EXT + 0)
         mov     ax, 8
         jb      .no
         mov     si, [sc_rd]
