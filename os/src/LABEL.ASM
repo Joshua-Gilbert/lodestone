@@ -72,12 +72,16 @@ start:  mov     sp, stack_top
         call    chk_label
         mov     dx, s_badlab
         jc      fail
-.rd:    mov     dl, [drv]               ; its current directory ("A:\SUB"),
-        inc     dx                      ;  to be kept
+.rd:    mov     ax, 0D00h               ; the kernel's changes on the disk
+        int     21h
+        mov     dl, [drv]               ; its current directory ("A:\SUB"),
+        inc     dx                      ;  to be kept: once the kernel has
+        push    dx                      ;  looked at the disk again (36h),
+        mov     ah, 36h                 ;  so a disk swapped in before isn't
+        int     21h                     ;  given the old one's
+        pop     dx
         mov     si, curdir + 3
         mov     ah, 47h
-        int     21h
-        mov     ax, 0D00h               ; the kernel's changes on the disk
         int     21h
         call    buf_set
         call    rd_boot
@@ -87,6 +91,8 @@ start:  mov     sp, stack_top
         cmp     byte [given], 0
         jne     .set
         call    show                    ; "Volume in drive A is ..."
+        call    alone                   ; (said before the questions, not
+        jc      fail                    ;  after them)
         call    ask                     ; -> [label], or CF: nothing to do
         jc      done
         cmp     byte [label], 0
@@ -98,7 +104,13 @@ start:  mov     sp, stack_top
         jne     done
 .set:   call    alone                   ; (nothing written beside other
         jc      fail                    ;  tasks)
-        call    write
+        call    fresh                   ; the root as it is now
+        jc      fail
+        cmp     byte [label], 0         ; (nothing to delete now: done)
+        jne     .w
+        cmp     byte [hadlab], 0
+        je      done
+.w:     call    write
         jc      fail
         call    told
 done:   mov     ax, 4C00h
@@ -127,6 +139,8 @@ args:   mov     si, 81h
         xor     bh, bh
         mov     byte [si+bx], 13
         call    skipsp
+        cmp     byte [si], 13           ; (nothing: past the tail's end is
+        je      .lab                    ;  an earlier tail's leftovers)
         cmp     byte [si+1], ':'
         jne     .lab
         mov     al, [si]
@@ -137,29 +151,35 @@ args:   mov     si, 81h
         mov     [drv], al
         add     si, 2
         call    skipsp
-.lab:   mov     di, label               ; the rest of the line, its spaces
-        mov     cx, 12                  ;  at the end cut
+.lab:   mov     di, kbuf                ; the rest of the line, its spaces
+        mov     cx, 80                  ;  at the end cut, then 11 at most
 .c:     lodsb
         cmp     al, 13
         je      .e
         stosb
         loop    .c
-        mov     dx, s_badlab            ; (more than 11)
-        stc
-        ret
 .e:     mov     byte [di], 0
-.t:     cmp     di, label
+.t:     cmp     di, kbuf
         je      .x
         cmp     byte [di-1], ' '
         jne     .g
         dec     di
         mov     byte [di], 0
         jmp     .t
-.g:     mov     byte [given], 1
+.g:     mov     cx, di
+        sub     cx, kbuf
+        mov     dx, s_badlab            ; (more than 11)
+        cmp     cx, 11
+        ja      .bl
+        mov     si, kbuf
+        mov     di, label
+        inc     cx
+        rep     movsb
+        mov     byte [given], 1
 .x:     clc
         ret
 .bad:   mov     dx, s_baddrv
-        stc
+.bl:    stc
         ret
 skipsp: cmp     byte [si], ' '
         je      .n
@@ -428,7 +448,12 @@ yesno:  push    dx
         xor     bl, bl
 .k:     mov     ah, 08h
         int     21h
-        cmp     al, 27
+        or      al, al                  ; (an extended key: its scan code
+        jnz     .c                      ;  next, no key of its own)
+        mov     ah, 08h
+        int     21h
+        jmp     .k
+.c:     cmp     al, 27
         je      .esc
         cmp     al, 3
         je      .esc
@@ -525,6 +550,26 @@ write:  cmp     byte [hadlab], 0        ; a new entry: room for it?
         je      .no
         mov     dx, s_wrerr
 .no:    stc
+        ret
+
+; after a question: the root read again, so what was written to it while
+; LABEL waited (a capture's file, a task's) isn't written over with the
+; sector as it was.  A floppy whose change line says it may have been
+; changed (or that has none) keeps the sector read before, and the write
+; checks the disk still has it (same).  CF: DX
+fresh:  mov     ax, 0D00h               ; (the kernel's changes meanwhile)
+        int     21h
+        cmp     byte [kind], K_FL
+        jne     .re
+        mov     ah, 16h
+        mov     dl, [unit]
+        int     13h
+        jnc     .re
+        mov     byte [seen], 1          ; (the line read is the line cleared:
+        clc                             ;  same must not trust it now)
+        ret
+.re:    mov     byte [hadlab], 0
+        call    find
         ret
 
 ; the entry at DI: its time and date now
@@ -663,10 +708,13 @@ same:   cmp     byte [kind], K_FL
         jne     .ok
         pusha
         push    es
+        cmp     byte [seen], 0          ; (a change fresh saw: compare)
+        jne     .cmp
         mov     ah, 16h
         mov     dl, [unit]
         int     13h
         jnc     .y
+.cmp:
         mov     si, [sec]               ; (sec holds what is to be written:
         mov     di, wsave               ;  kept meanwhile)
         mov     cx, 256
@@ -883,7 +931,8 @@ pk_buf  resw 2
 label   resb 14
 curlab  resb 12
 curdir     resb 68
-kbuf    resb 16
+kbuf    resb 84
+seen    resb 1
         alignb 2
 boot    resb 512
 rootcp  resb 512

@@ -198,10 +198,26 @@ def t_mt():
     check('with multitasking, SYS run as a task: refused ("other tasks are running"), nothing written',
           'other tasks are running' in o and bytes(k.pc.drives[1].img) == raw, o)
 
+def t_review():
+    # the review panel's findings, each held to
+    import fat16img as F
+    BOOT = open(os.path.join(SRC, 'BOOT.BIN'), 'rb').read()
+    f = F.Fat(2880, 1, 0, False, rootents=224, spt=18, heads=2)
+    items = [('LODE.SYS', 0x20, b'old kernel' * 100), ('LCMD.COM', 0x20, b'old shell')] + [('F%03d.TXT' % i, 0x20, b'') for i in range(221)]
+    f.finish(f.tree(items))
+    img = bytearray(f.img); img[0:11] = BOOT[0:11]; img[0x3E:512] = BOOT[0x3E:512]   # an old Lodestone disk, its root nearly full
+    p = os.path.join(OUT, 'rootf.img'); open(p, 'wb').write(img)
+    k = boot(p)
+    raw = bytes(k.pc.drives[1].img)
+    o = run(k, 'sys b:')
+    check('a root with too few free entries (one, where LODEMT.SYS and LODE.PIC need their own and a rename one more): '
+          'refused before anything is written', 'No room for the system in the root directory' in o and said(o, 'E1')
+          and bytes(k.pc.drives[1].img) == raw, o)
+
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_basic, t_again, t_one_drive, t_source, t_room, t_changed, t_refused, t_mt):
+    for t in (t_basic, t_again, t_one_drive, t_source, t_room, t_changed, t_refused, t_mt, t_review):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
