@@ -147,9 +147,9 @@ def t_damage():
         d.set(a + 2, b + 3)                             # LCMD's third cluster on into LODE.SYS's fourth
         return b + 3
     def big_size(d):
-        d.setd(d.ent('LCMD.COM') + 28, 30000)           # (24 clusters, 30000 needs 59)
+        d.setd(d.ent('LCMD.COM') + 28, 30000)           # (LCMD's clusters, 25 or so: 30000 needs 59)
     def small_size(d):
-        d.setd(d.ent('LCMD.COM') + 28, 5000)            # (needs 10 of its 24)
+        d.setd(d.ent('LCMD.COM') + 28, 5000)            # (needs 10 of its 25 or so)
     def into_free(d):
         a = d.first('LCMD.COM'); d.set(a + 4, 2700)    # (2700 is free)
         return a
@@ -165,7 +165,8 @@ def t_damage():
         d.set(2500, 0xFFF, fats=(1,))
     for name, fn, msg, after in (
             ('a cross link', cross, 'Is cross linked on cluster', None),
-            ('a size past its chain', big_size, 'Allocation error, size adjusted', lambda f, v: len(f['\\LCMD.COM']) == 24 * 512),
+            ('a size past its chain', big_size, 'Allocation error, size adjusted',
+             lambda f, v: len(f['\\LCMD.COM']) == (os.path.getsize(os.path.join(SRC, 'LCMD.COM')) + 511) // 512 * 512),
             ('a chain past its size', small_size, 'Allocation error, size adjusted',
              lambda f, v: len(f['\\LCMD.COM']) == 5000 and '\\FILE0000.CHK' in f),
             ('a chain into a free cluster', into_free, 'Has invalid cluster, file truncated',
