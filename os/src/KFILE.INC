@@ -28,6 +28,9 @@ SF_DEV  equ 80h
 SF_DIRTY equ 40h                ; written: update the directory at close
 SF_RAW  equ 20h                 ; device in raw (binary) mode
 SF_STAMP equ 10h                ; time/date set by the program
+SF_LOST equ 08h                 ; its drive's changed FAT dropped (fat_drop,
+                                ;  KDISK.INC rule 4): no more writes, its
+                                ;  entry left as the disk has it
 DEV_CON equ 0
 DEV_NUL equ 1
 DEV_AUX equ 2
@@ -68,7 +71,8 @@ sft_init:
         mov     byte [si+S_DEV], DEV_PRN
         ret
 section .text
-
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even; after
+                                        ;  KFAT.INC's last JMP)
 ; handle BX (current process) -> SI = SFT entry, AL = its number.
 ; CF: AX = 6.  Keeps BX.
 h2sft:  cmp     bx, 20
@@ -452,7 +456,7 @@ do_create:
         mov     cx, 16
         rep     movsw
         pop     si
-.open:  call    fat_flush
+.open:  call    fat_flush_act
         jc      .x
         call    sft_alloc
         jc      .x
@@ -576,6 +580,8 @@ sft_release:
 sft_commit:
         test    byte [si+S_FLAGS], SF_DIRTY
         jz      .ok
+        test    byte [si+S_FLAGS], SF_LOST
+        jnz     .lost
         push    bx
         push    dx
         push    di
@@ -625,6 +631,11 @@ sft_commit:
         pop     bx
         stc
         ret
+.lost:  and     byte [si+S_FLAGS], ~(SF_DIRTY | SF_STAMP)
+        mov     ax, 5                   ; (its entry as on the disk: the
+        stc                             ;  chain its changes named is gone)
+        ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; use_drive for AL keeping SI
 use_drive_si:
@@ -754,6 +765,7 @@ sft_cluster_alloc:
         xor     dx, dx                  ; empty file: its first cluster
         call    clu_alloc
         jc      .e
+        call    .took
         mov     [si+S_CLU], ax
         or      byte [si+S_FLAGS], SF_DIRTY
         mov     word [si+S_CCL], 0
@@ -768,6 +780,8 @@ sft_cluster_alloc:
         mov     cx, [si+S_CIX]
 .l:     mov     dx, ax
         call    fat_get
+        cmp     ax, 2                   ; (free or reserved: a broken chain,
+        jb      .bad                    ;  not its end: KDISK.INC rule 7)
         cmp     ax, 0FFF0h
         jae     .add
         inc     cx
@@ -776,15 +790,25 @@ sft_cluster_alloc:
         mov     [si+S_CIX], cx
         call    clu_alloc               ; after DX
         jc      .e
+        call    .took
         jmp     .ext
 .ok:    pop     dx
         pop     cx
         clc
 .x:     ret
+.bad:   mov     ax, 5
 .e:     pop     dx
         pop     cx
         stc
         ret
+; cluster AX taken after DX (0: the first): the write's first such kept
+; (rw_a1, after rw_ap) for its undoing.  All kept
+.took:  cmp     word [rw_a1], 0
+        jne     .tx
+        mov     [rw_a1], ax
+        mov     [rw_ap], dx
+.tx:    ret
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: rw_where.one even)
 
 ; position -> BX = cluster index, CX = sector in cluster, DX = offset
 rw_where:
@@ -1006,11 +1030,25 @@ rw_flast    resw 1
 rw_new      resw 1              ; free clusters joined to a write run
 rw_link     resw 1              ;   after this one (the chain's end)
 rw_t0       resb 1              ; sector in the track a write run starts at
+            alignb 2
+rw_a1       resw 1              ; the first cluster this write took (0: none),
+rw_ap       resw 1              ;   linked after this one (0: the first)
+rw_sz0      resw 2              ; the file's size as the write began
 section .text
 
 file_write:
+        test    byte [si+S_FLAGS], SF_LOST      ; (fat_drop: no more: the
+        mov     ax, 5                           ;  chain it had is gone)
+        jnz     .ex
         call    rw_start
-        jc      .err
+        jc      .ex
+        call    fat_keep                ; (what a failed write gives back:
+        xor     ax, ax                  ;  the clusters it took, and the
+        mov     [rw_a1], ax             ;  FAT's changed state, KDISK.INC
+        mov     ax, [si+S_SIZE]         ;  rule 5)
+        mov     [rw_sz0], ax
+        mov     ax, [si+S_SIZE+2]
+        mov     [rw_sz0+2], ax
         or      byte [si+S_FLAGS], SF_DIRTY
         or      cx, cx
         jnz     .loop
@@ -1020,7 +1058,7 @@ file_write:
         je      .done
         call    rw_where
         call    sft_cluster_alloc
-        jc      .done                   ; disk full: what fitted
+        jc      .full
         mov     [rw_cl], ax
         push    cx
         call    clu2lba
@@ -1128,6 +1166,12 @@ file_write:
         jcxz    .lx
         mov     word [rw_new], 0
         mov     ax, [rw_link]
+        cmp     word [rw_a1], 0         ; (the write's first taken: KDISK.INC
+        jne     .lk                     ;  rule 5)
+        mov     [rw_ap], ax
+        inc     ax
+        mov     [rw_a1], ax
+        dec     ax
 .lk:    mov     dx, ax
         inc     dx
         call    fat_set
@@ -1176,7 +1220,31 @@ file_write:
 .done:  mov     ax, [rw_done]
         clc
         ret
-.err:   stc
+.full:  cmp     ax, 39                  ; disk full: what fitted
+        je      .done
+.err:   push    ax                      ; a failed write gives back the
+        mov     ax, [rw_a1]             ;  clusters it took (KDISK.INC rule
+        or      ax, ax                  ;  5), and the size it grew to
+        jz      .ee
+        mov     dx, [rw_ap]
+        or      dx, dx
+        jnz     .ec
+        mov     [si+S_CLU], dx          ; (they were all the file had)
+        jmp     short .ef
+.ec:    xchg    ax, dx                  ; the chain ends where it did
+        push    dx
+        mov     dx, 0FFFFh
+        call    fat_set
+        pop     ax
+.ef:    call    free_chain
+        call    fat_back
+        mov     ax, [rw_sz0]
+        mov     [si+S_SIZE], ax
+        mov     ax, [rw_sz0+2]
+        mov     [si+S_SIZE+2], ax
+        mov     word [si+S_CCL], 0
+.ee:    pop     ax
+.ex:    stc
         ret
 ; the file grew?
 .grow:  mov     ax, [si+S_POS]
@@ -1684,6 +1752,13 @@ close_all:
         jb      .l
         pop     si
         pop     bx
+        ret
+; close_all as terminate runs it: an INT 24h Abort in its closes is Fail
+; (KMT.INC's task ends: else each Abort ended the stub again, inside them)
+close_allt:
+        mov     byte [term_now], 1
+        call    close_all
+        mov     byte [term_now], 0
         ret
 
 ; ---------------------------------------------------------------------

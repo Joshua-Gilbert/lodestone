@@ -232,7 +232,7 @@ section .text
         EVEN    rw_start, rw_step, use_drive_si, sft_cluster, sft_cluster.w, sft_cluster.got
         EVEN    rw_where.one, file_read.loop, file_read.ext, file_read.go, file_read.part
         EVEN    sec_of, pos_sec, rw_setra, file_write.loop
-        EVEN    use_drive, fat_load, fat_get, fat_get.e, fat_flush.k, fat_flush.run, fat_flush.dirty
+        EVEN    use_drive, fat_load, fat_get, fat_get.e
         EVEN    fat_set.one, clu2lba
         EVEN    buf_getd, buf_get, buf_get.s, buf_get.f, buf_get.n, buf_get.hit
         EVEN    disk_io, dio.more, dio.ok, tc_piece, tc_mine
@@ -262,7 +262,7 @@ lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
                                         ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
                                         ;  18 with R: (KROM.INC)
             align 16                    ; (free: the BSS starts on a paragraph;
-                                        ;  2 bytes after lastdrv, 416Dh, on
+                                        ;  6 bytes after lastdrv, 4359h, on
                                         ;  2026-11-08: LODE.MAP has it now).
                                         ;  The EVEN pads make a change before
                                         ;  gp_isr's move this by its size +-1,

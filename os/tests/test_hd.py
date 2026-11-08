@@ -594,7 +594,55 @@ def t_mdisk():
     on, off = kb('md_on', []), kb('md_off', [ini])
     check('C: and EMS: DOS programs get as much with M: on as off (%.1f KB, %.1f KB)' % (on, off), on == off and on, (on, off))
 
-TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_system, t_testdos, t_exec, t_mem, t_mdisk]
+def t_wpfail():
+    # (KDISK.INC's rules for writes that fail, on C:)
+    def probe(n):
+        c = os.path.join(OUT, n + '.COM')
+        subprocess.run(['nasm', '-f', 'bin', '-o', c, os.path.join(HERE, n + '.ASM')], check=True)
+        return n + '.COM=' + c
+    # a create over C:\FAR\NOTE.TXT, its directory past C:'s first 64K sectors, the write refused and Abort
+    # (WPCRFA, its own INT 24h): that buffer forgotten (C:'s keyed with the high part: buf_inval missed it, and
+    # the next write to the sector took NOTE.TXT's new entry, size 0, to the disk)
+    d, f = std(); v = F.Volume(d, PLBA)
+    far = next(c for n, a, c, s in v.entries(0) if n == 'FAR')
+    lba = PLBA + v.data + (far - 2) * 4
+    ata = drive(d, badw=[lba])
+    k, _ = boot('wpc', ata, files=(LCMD, probe('WPCRFA')))
+    sh = Shell(k)
+    answer(k, 'wpcrfa', 'f')
+    ata.badw.clear()
+    sh.run('echo hello> c:\\far\\new.txt')
+    files, probs = vol(ata).files(f.gaps)
+    check('a create over C:\\FAR\\NOTE.TXT (past 64K sectors) refused, Abort: NOTE.TXT as it was, a file written '
+          'there after, C: consistent', not probs and files.get('\\FAR\\NOTE.TXT') == NOTE
+          and files.get('\\FAR\\NEW.TXT') == b'hello\r\n', (probs, sorted(files)[:8]))
+    # an append refused on a write-protected A: (WPAPW, Fail): C:'s calls flush C:'s FAT alone, and the append
+    # gave back its clusters: a copy to C:, DEL, MD on C: all done, no prompt (each asked "Write protect error
+    # writing drive A" and said it failed, though DEL had deleted and COPY left a 0-byte file)
+    # (and with only A:'s FAT refusing, its data written: the cache left changed, its flush failed, Fail: rule 3)
+    t = os.path.join(OUT, 'wpk1024'); open(t, 'wb').write(b'k' * 1024)
+    class FatBad:
+        def __init__(s, pc): s.pc = pc
+        def __bool__(s):
+            pc = s.pc; d = pc.drives[0]
+            cx, dx, al = pc.r('cx'), pc.r('dx'), pc.r('ax') & 0xFF
+            lba = ((cx >> 8) * d.heads + (dx >> 8)) * d.spt + (cx & 63) - 1
+            return lba < 19 and lba + al > 1
+    for how in ('an append refused on a write-protected A:', 'an append to A:, its FAT refusing'):
+        d, f = std(); ata = drive(d)
+        k, _ = boot('wpcs', ata, files=(LCMD, 'K.TXT=' + t, probe('WPAPW'), probe('WPNOP')))
+        sh = Shell(k)
+        k.pc.drives[0].wp = True if 'protected' in how else FatBad(k.pc)
+        answer(k, 'wpapw', 'f')
+        outs = [answer(k, c, 'f') for c in ('copy a:wpnop.com c:\\x.com', 'del c:\\readme.txt', 'md c:\\newd')]
+        files, probs = vol(ata).files(f.gaps)
+        check('%s (WPAPW, Fail), then COPY A:WPNOP.COM C:\\X.COM, DEL C:\\README.TXT and MD '
+              'C:\\NEWD: no prompt, each done, C: consistent' % how, all(n == 0 for n, o in outs)
+              and '1 File(s) copied' in outs[0][1] and files.get('\\X.COM') is not None and '\\README.TXT' not in files
+              and not probs, (outs, probs))
+
+TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_system, t_testdos, t_exec, t_mem, t_mdisk,
+         t_wpfail]
 if __name__ == '__main__':
     want = sys.argv[1:]
     for n in ('HDFLUSH', 'HDABS'):

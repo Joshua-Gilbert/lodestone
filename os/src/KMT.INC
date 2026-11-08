@@ -1776,7 +1776,7 @@ mt_owners:
         mov     es, ax                  ; a program's: its files, then its EMS
         cmp     word [es:0], 20CDh      ;  and its blocks (this one and on: the
         jne     .f                      ;  walk goes on); its end told to the UI
-        KCALL   close_all               ;  as terminate does (ui_progend: its
+        KCALL   close_allt              ;  as terminate does (ui_progend: its
         push    ax                      ;  mouse handler forgotten, m33_busy
         push    bx                      ;  cleared if it ended inside it)
         push    es
@@ -3756,7 +3756,7 @@ mt_end: call    mt_cent                 ; (first: a call refused changes
                                         ;  it inside: mt_swing, mt_vbusy)
         call    mt_fdrain               ; (before mt_load's FRSTOR; then
         sti                             ;  interrupts on, as INT 21h had them)
-        KCALL   close_all
+        KCALL   close_allt              ; (an Abort in its closes: Fail)
         mov     ax, [last_exit]
         mov     es, [cs:bx+TE_PSP]      ; (its program not started: FFxxh)
         cmp     byte [es:ST_FAIL + 1], 0FFh

@@ -64,10 +64,14 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 416Dh on
-# 2026-11-08, with the writes in order and ROM 1's room), and a change past it moves image_end and bss_end.  The UI's pads,
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (6 bytes after 4359h on
+# 2026-11-08, with a failed write's rules), and a change past it moves image_end and bss_end.  The UI's pads,
 # UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4170, 'bss_end': 0x7570, 'ui_keep_end': 0x6804}  # (4160h/7560h before fat_drop and SF_LOST gave
+OFF_MAP ={'image_end': 0x4360, 'bss_end': 0x7760, 'ui_keep_end': 0x6804}  # (4170h/7570h before a failed write's rules:
+                                        #  each disk's FAT its own, the clusters a failed write took given
+                                        #  back, chain walks that stop on a free entry, and "Invalid disk
+                                        #  change" while the old disk has changes to go, 2026-11-08;
+                                        #  4160h/7560h before fat_drop and SF_LOST gave
                                         #  way to the writes in order (an entry before the frees it lets go
                                         #  of), a failed buffer read again at Abort too, and terminate's
                                         #  Abort as Fail, 2026-11-08;
@@ -1098,6 +1102,35 @@ def t_ends():
     check('... and the next task\'s region goes at the top again (T1, below MT), and ends', A.disk_file(k, 'T.TXT') == b'next'
           and [(b[4], b[2]) for b in a1[-2:]] == [(b'T1', 8), (b'MT', 8)]
           and tstate(k)[0] == [(0, 1, 'Executive')] and merged(a) == m0, (show(a1), show(a), A.disk_file(k, 'T.TXT')))
+    # a resident program's file still open with changes (WPTSR), A:'s FAT refusing: the task's end closes it
+    # (mt_owners), the flush fails, Abort: Fail there, as in terminate's closes (else Abort terminated the
+    # stub inside its own end, and its closes asked again)
+    wpt = os.path.join(A.OUT, 'WPTSR.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', wpt, os.path.join(HERE, 'WPTSR.ASM')], check=True)
+    k = boot('mt_wpt.img', b'MULTITASK=1\r\n', 88, wpt)
+    sh = Shell(k)
+    sh.run('ver')
+    b0 = Baseline(k)
+    class FatBad:
+        def __bool__(s):
+            pc = k.pc; d = pc.drives[0]
+            cx, dx, al = pc.r('cx'), pc.r('dx'), pc.r('ax') & 0xFF
+            lba = ((cx >> 8) * d.heads + (dx >> 8)) * d.spt + (cx & 63) - 1
+            return lba < 19 and lba + al > 1
+    k.pc.drives[0].wp = FatBad()
+    typ(k, 'mtlaunch wptsr.com', 2.0)
+    n = 0
+    for _ in range(8):
+        c = k.pc.text_screen().count('Fail?')
+        if c <= n: break
+        n = c; k.key('a', settle=False); k.run_for(1.5)
+    k.pc.drives[0].wp = False
+    line(k, '')
+    v = sh.run('ver')
+    check('a resident program\'s file left open with changes (WPTSR), A:\'s FAT refusing: its task\'s end closes it, '
+          'asked twice (%d: terminate\'s flush, then the close), answered Abort: taken as Fail, not asked again; the '
+          'task gone, memory and handles as before, the prompt goes on' % n,
+          n == 2 and not k.crashed and 'Lodestone version' in v and b0.back(), (n, v[-80:], b0.now()))
 
 def t_fpu():
     print('== the coprocessor: each task\'s own')
@@ -7035,7 +7068,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 580.2 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.2', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 579.8 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '579.8', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)

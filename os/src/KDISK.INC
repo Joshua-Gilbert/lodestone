@@ -52,9 +52,13 @@ actp        resw 1              ; -> its drvtab entry
 fat_drv     resb 1              ; whose FAT is in fatbuf (FFh: none)
 fat_dirty   resb 1
 fk_dirty    resb 1              ; fat_keep: the two as they were
+fat_sdrv    resb 1              ; fat_sum's drive (fat_drv FFh or this)
             alignb 2
 fat_dmask   resw 1              ; which FAT sectors changed (bit n = sector n)
 fk_dmask    resw 1
+fat_sum     resw 2              ; its disk's FAT sector 0 as last read or
+                                ;  written there (sec_sum): same_disk's,
+                                ;  kept when the cache is forgotten
 ; the cylinder cache: places [tc_lo, tc_hi) of the cylinder starting at
 ; LBA tc_cyl on drive tc_drv (place = head * sectors per track + sector,
 ; from 0), each at place * 512 in the block at tc_seg:0 (KMEM puts it in
@@ -114,6 +118,7 @@ drv_init:
         cmp     bx, NDRV
         jb      .d
         mov     byte [fat_drv], 0FFh
+        mov     byte [fat_sdrv], 0FFh
         mov     byte [tc_drv], 0FFh
         mov     byte [tc_bad_drv], 0FFh
         mov     byte [de_drv], 0FFh     ; (KFAT's last root sector: none)
@@ -301,9 +306,46 @@ raw_bounce:
         pop     es
         ret
 
+; ---------------------------------------------------------------------
+;  Writes that fail (INT 24h Fail or Abort, a write-protected disk, a
+;  bad sector, a disk taken out), and what the disk is left with:
+;  1. The FAT cache is one disk's.  same_disk takes the disk in the drive
+;     for it only with the same BPB (serial and label included) and the
+;     same FAT sector 0 as that disk last had (fat_sum: as read, or as
+;     written whole; while a flush is part done, the cache's own sector 0
+;     may be that disk's too).  A changed cache never vouches for a disk.
+;  2. A chain goes to the disk before the entry that names it; an entry
+;     before the frees it lets go of (do_create, a truncating write,
+;     DELETE, RMDIR); dir_slot zeroes a directory's new cluster before it
+;     links it in.  So the disk's FAT and directory agree after any one
+;     failure, or differ by lost clusters only.
+;  3. A failed flush keeps the cache changed: on the same disk its
+;     sectors go out at the next flush.  Each copy goes as one transfer
+;     (from the first changed sector to the last), so a failure leaves at
+;     most one half-written run.
+;  4. Another disk in the drive while the old one has changes to go (the
+;     cache changed, or a file open with changes pending): INT 24h 0Fh,
+;     "Invalid disk change", as MS-DOS (drv_ready); Retry looks again, so
+;     the right disk back goes on as if nothing happened.  Fail or Abort,
+;     or a changed cache dropped otherwise (INT 21h 0Dh or a screen
+;     capture's reset after a failed flush): the drive's open files with
+;     changes pending are SF_LOST (sft_pend): their writes and close
+;     refused (5), their entries as the disk has them.  Other drives'
+;     files, and files without changes, are untouched; with nothing to go
+;     another disk is just mounted.
+;  5. A write that fails gives back what it took: file_write its clusters
+;     (fat_keep/fat_back), dir_slot and MKDIR theirs.
+;  6. A buffer whose write failed is the disk's no more: forgotten at
+;     Fail (buf_put), all the drive's at Abort (crit_disk; C:'s with high
+;     parts too: buf_inval looks at the drive bits).
+;  7. Chain walks stop on an entry below 2 (free, reserved) as a broken
+;     chain, never as its end.
+;  8. A path call flushes its own drive's FAT only (fat_flush_act).
+; ---------------------------------------------------------------------
 ; The change line says the disk may have changed: is it the same one?
-; Same boot sector BPB and, if our FAT cache is this drive's and clean,
-; the same first FAT sector.  CF if different (or unreadable).
+; Same boot sector BPB and, if our FAT cache is this drive's, a first FAT
+; sector as that disk last had it (rule 1).  CF if different (or
+; unreadable)
 same_disk:
         pusha
         push    es
@@ -317,18 +359,29 @@ same_disk:
         repe    cmpsb
         jne     .diff
         mov     al, [act]
-        cmp     [fat_drv], al
-        jne     .same                   ; (nothing cached to compare)
-        cmp     byte [fat_dirty], 0     ; ours is newer than the disk's
-        jne     .same
+        cmp     [fat_sdrv], al
+        jne     .same                   ; (nothing known to compare)
         mov     si, [actp]
         mov     dx, [si+D_RSV]
         call    raw_bounce
         jc      .diff
         mov     si, bounce
-        mov     di, fatbuf
-        mov     cx, 256
-        repe    cmpsw
+        call    sec_sum
+        cmp     ax, [fat_sum]
+        jne     .cur
+        cmp     dx, [fat_sum+2]
+        je      .same
+.cur:   cmp     byte [fat_dirty], 0     ; (a flush part done: its sector 0
+        je      .diff                   ;  may be the cache's already)
+        push    dx
+        push    ax
+        mov     si, fatbuf
+        call    sec_sum
+        pop     cx
+        pop     bx
+        cmp     ax, cx
+        jne     .diff
+        cmp     dx, bx
         jne     .diff
 .same:  mov     al, [act]               ; whatever is cached gets read again
         call    buf_inval
@@ -364,11 +417,28 @@ drv_ready:
         jne     .same
 .chg:   cmp     byte [si+D_MNT], 0
         je      .same
-        mov     al, [act]               ; sectors cached from it are suspect
+.ck:    mov     al, [act]               ; sectors cached from it are suspect
         call    buf_inval               ; (and same_disk must see the disk)
         call    same_disk               ; (drives without a change line
         jnc     .same                   ; report a change every time)
-        mov     al, [act]
+        mov     al, [act]               ; another disk, and the old one's
+        call    drv_pend                ;  changes still to go: INT 24h 0Fh,
+        jnc     .um                     ;  "Invalid disk change", as MS-DOS
+        mov     [io_drv], al            ;  (rule 4; Retry looks again: the
+        mov     byte [io_bios], 6       ;  right one back, nothing lost)
+        mov     byte [io_crit], 2
+        mov     byte [io_op], 2
+        call    crit_disk
+        cmp     al, 1
+        je      .ck
+        mov     al, [act]               ; Fail: the old disk's changes
+        call    unmount                 ;  dropped, and the call fails (34,
+        pop     dx                      ;  as MS-DOS); the next one mounts
+        pop     ax                      ;  the disk in
+        mov     ax, 34
+        stc
+        ret
+.um:    mov     al, [act]
         call    unmount
 .same:  pop     dx
         pop     ax
@@ -404,21 +474,86 @@ unmount:
         mov     word [si+D_CWD], 0
         call    cwd_of
         mov     word [di], '\'
-        cmp     [fat_drv], al
-        jne     .b
-        call    fat_forget
-.b:     call    buf_inval
+        mov     ah, SF_LOST             ; its files' changes too (rule 4:
+        call    sft_pend                ;  their entries are on that disk)
+        call    fat_drop
+        call    buf_inval
         pop     di
         pop     si
         pop     ax
         ret
 
+; checksum of the 512 bytes at SI (Fletcher's, two words) -> DX:AX.
+; CX, SI changed
+sec_sum:
+        xor     ax, ax
+        cwd
+        mov     cx, 256
+.l:     add     ax, [si]
+        add     dx, ax
+        inc     si
+        inc     si
+        loop    .l
+        ret
+
+; drive AL has changes still to go to its disk: the FAT cached changed,
+; or a file open with changes pending (not SF_LOST)?  CF if so.  All kept
+drv_pend:
+        cmp     al, [fat_drv]
+        jne     .f
+        cmp     byte [fat_dirty], 1
+        cmc
+        jc      .x
+.f:     push    ax
+        mov     ah, 0
+        call    sft_pend
+        pop     ax
+.x:     ret
+
+; drive AL's open files with changes pending (SF_DIRTY, not SF_LOST): AH
+; ORed into their flags, their place in the chain forgotten.  CF if any.
+; All kept
+sft_pend:
+        push    bx
+        push    cx
+        mov     bx, sft
+        mov     cx, NSFT                ; (CH: one found)
+.l:     cmp     byte [bx+S_REF], 0
+        je      .n
+        cmp     [bx+S_DRV], al
+        jne     .n
+        test    byte [bx+S_FLAGS], SF_DIRTY
+        jz      .n
+        test    byte [bx+S_FLAGS], SF_LOST
+        jnz     .n
+        or      [bx+S_FLAGS], ah
+        mov     word [bx+S_CCL], 0
+        mov     ch, 1
+.n:     add     bx, SFT_SZ
+        dec     cl
+        jnz     .l
+        neg     ch
+        pop     cx
+        pop     bx
+        ret
+
+; drive AL's cached FAT dropped, changes and all (rule 4): its open files
+; with changes pending SF_LOST.  Nothing if the cache isn't AL's.  All kept
+fat_drop:
+        cmp     al, [fat_drv]
+        jne     fat_forget.x
+        cmp     byte [fat_dirty], 0
+        je      fat_forget
+        push    ax
+        mov     ah, SF_LOST
+        call    sft_pend
+        pop     ax
 ; the cached FAT is nobody's (flags kept)
 fat_forget:
         mov     byte [fat_drv], 0FFh
         mov     byte [fat_dirty], 0
         mov     word [fat_dmask], 0
-        ret
+.x:     ret
 
 ; INT 21h 0Dh: write back and forget the cached FAT and sectors (the
 ; next access reads the disk again; mounts and directories stay)
@@ -435,7 +570,8 @@ disk_reset:
         jmp     short .f                ;  we can't tell, not written)
 .w:     call    fat_flush
 .f:     pushf
-        call    fat_forget
+        mov     al, [fat_drv]           ; (a flush refused, or not tried:
+        call    fat_drop                ;  its files' changes lost, rule 4)
         mov     al, 0
         call    buf_inval
         mov     al, 1
@@ -445,6 +581,7 @@ disk_reset:
         popf
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: fat_load even)
 ; ---------------------------------------------------------------------
 ;  FAT cache (one drive at a time) - [act] must be the drive
 ; ---------------------------------------------------------------------
@@ -478,10 +615,23 @@ fat_load:
         jc      .x
         mov     al, [act]
         mov     [fat_drv], al
+        call    fat_sum0
 .ok:    clc
 .x:     ret
+; fat_sum: the cache's sector 0, as its disk has it now.  All kept
+fat_sum0:
+        pusha
+        mov     al, [fat_drv]
+        mov     [fat_sdrv], al
+        mov     si, fatbuf
+        call    sec_sum
+        mov     [fat_sum], ax
+        mov     [fat_sum+2], dx
+        popa
+        ret
 
-; write the FAT sectors that changed (runs of them) to every FAT copy
+; write the FAT sectors that changed to every FAT copy: each copy in one
+; transfer, from the first changed sector to the last (rule 3)
 ; (KHD.INC: C:'s changed ones first)
 fat_flush:
         cmp     byte [fat_dirty], 0
@@ -498,26 +648,24 @@ fat_flush:
         mov     al, [fat_drv]
         call    use_drive
         mov     dx, [si+D_RSV]          ; this copy's first sector
-        mov     cl, [si+D_NFAT]
+        xor     bx, bx                  ; [BX, DI): the first changed sector
+        mov     ax, [fat_dmask]         ;  to the last
+        or      ax, ax
+        jz      .cl
+.lo:    shr     ax, 1
+        jc      .hi
+        inc     bx
+        jmp     .lo
+.hi:    lea     di, [bx+1]
+.h:     or      ax, ax
+        jz      .sp
+        shr     ax, 1
+        inc     di
+        jmp     .h
+.sp:    mov     cl, [si+D_NFAT]
         xor     ch, ch
 .c:     push    cx
-        xor     bx, bx                  ; sector of the FAT
-.k:     cmp     bx, [si+D_SPF]
-        jae     .cd
-        call    .dirty
-        jnz     .run
-        inc     bx
-        jmp     .k
-        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
-.run:   mov     di, bx                  ; [BX, DI) changed
-.r:     inc     di
-        cmp     di, [si+D_SPF]
-        jae     .w
-        xchg    bx, di
-        call    .dirty
-        xchg    bx, di
-        jnz     .r
-.w:     push    dx
+        push    dx
         push    bx
         mov     cx, di
         sub     cx, bx
@@ -530,12 +678,11 @@ fat_flush:
         pop     bx
         pop     dx
         jc      .e
-        mov     bx, di
-        jmp     .k
-.cd:    pop     cx
+        pop     cx
         add     dx, [si+D_SPF]
         loop    .c
-        mov     byte [fat_dirty], 0
+        call    fat_sum0
+.cl:    mov     byte [fat_dirty], 0
         mov     word [fat_dmask], 0
         pop     ax
         call    use_drive
@@ -559,16 +706,6 @@ fat_flush:
         xor     ah, ah
         stc
         ret
-; ZF clear if FAT sector BX changed
-.dirty: push    ax
-        push    cx
-        mov     cl, bl
-        mov     ax, 1
-        shl     ax, cl
-        test    [fat_dmask], ax
-        pop     cx
-        pop     ax
-        ret
 
 ; which FAT sectors changed, kept (fat_keep) and put back (fat_back): for a
 ; cluster taken and given back after a failed write, which leaves the FAT
@@ -591,13 +728,20 @@ fat_back:
         pop     ax
         ret
 
-; drive AL's FAT to disk, if it is the one cached (KHD.INC: and C:'s)
+; drive AL's FAT to disk, if it is the one cached (KHD.INC: and C:'s);
+; that drive's alone (rule 8: not fat_flush's hook, C:'s first)
 fat_flush_drv:
         cmp     al, [fat_drv]
 .hk:
-        je      fat_flush
+        je      .f
         clc
         ret
+.f:     cmp     byte [fat_dirty], 0
+        jmp     fat_flush.hk
+; [act]'s FAT to disk (a path call's).  AL changed
+fat_flush_act:
+        mov     al, [act]
+        jmp     fat_flush_drv
 
         times ($ - $$) & 1 db 90h       ; (hot: even)
 ; AX = cluster -> AX = its FAT entry, as FAT16's (FF0h-FFFh: FFF0h-FFFFh)
@@ -924,19 +1068,24 @@ buf_put:
         pop     bx
         ret
 
-; forget drive AL's buffers (and the track cache if it is that drive's)
+; forget drive AL's buffers (and the track cache if it is that drive's;
+; C:'s with any high part: the drive bits, as KHD.INC keys them)
 buf_inval:
         cmp     [tc_drv], al
         jne     .tc
         mov     byte [tc_drv], 0FFh
 .tc:    push    bx
+        push    cx
         xor     bx, bx
-.l:     cmp     [buf_drv+bx], al
+.l:     mov     cl, [buf_drv+bx]
+        and     cl, 3                   ; (FFh, empty: 3)
+        cmp     cl, al
         jne     .n
         mov     byte [buf_drv+bx], 0FFh
 .n:     inc     bx
         cmp     bx, NBUF
         jb      .l
+        pop     cx
         pop     bx
         ret
 
@@ -1575,7 +1724,11 @@ bios_crit:
         je      .seek
         cmp     al, 0Ch
         je      .med
+        cmp     al, 06h                 ; (drv_ready's: another disk in, the
+        je      .chg                    ;  old one's changes still to go)
         mov     al, 0Ch
+        ret
+.chg:   mov     al, 0Fh                 ; invalid disk change
         ret
 .wp:    xor     al, al
         ret
@@ -1639,10 +1792,13 @@ crit_disk:
         jbe     .x
 .fail:  mov     al, 3
 .x:     ret
-        db      90h                     ; (parity: f_36.l and on as they were)
-.abort: cmp     byte [io_op], 3         ; a write: the drive's buffers are
+.abort: mov     al, [io_drv]
+        cmp     byte [io_bios], 6       ; an invalid disk change: the old
+        jne     .ab0                    ;  disk's changes dropped (rule 4)
+        call    unmount                 ;  before terminate's closes
+.ab0:   cmp     byte [io_op], 3         ; a write: the drive's buffers are
         jne     .ab                     ;  the disk's no more (the one it
-        mov     al, [io_drv]            ;  wrote never returns to buf_put):
+                                        ;  wrote never returns to buf_put):
         call    buf_inval               ;  read again (write-through: none
 .ab:    cmp     byte [term_now], 0      ;  holds anything else).  In a
         jne     .fail                   ;  terminate's closes: Fail (else
