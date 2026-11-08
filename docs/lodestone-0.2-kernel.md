@@ -173,10 +173,13 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
   - Reads and writes go straight to the program's memory where they can, in runs across touching clusters. Transfers are split at track ends and 64 KB DMA boundaries. Reads that straddle a boundary go through the cache, writes through a bounce buffer.
   - 3 retries, then INT 24h (Abort / Retry / Fail).
 - **Disk changes.**
-  - The change line (INT 13h 16h) is checked on every path call. After INT 21h 0Dh the next access checks regardless (D_CHK).
+  - The change line (INT 13h 16h) is checked on every path call, and on every handle call on a floppy file. After INT 21h 0Dh the next access checks regardless (D_CHK).
   - On a "changed" report the kernel drops cached sectors, then compares the boot sector's BPB (0Bh–3Dh, which includes the serial number) and the first FAT sector with what it has.
-  - Same disk: it keeps its mount and current directory. Different disk: it remounts at the root.
-  - This also makes drives without a change line usable; the BIOS reports "changed" every time for those.
+  - Same disk: it keeps its mount and current directory. Different disk: it remounts, and finds the current directory again by its name, else the root. With no FAT sector to compare (after 0Dh), the current directory is found again by name too.
+  - With files open or changes to go on the old disk, another disk is INT 24h 0Fh, "Invalid disk change" (Retry, Fail), as MS-DOS 3.30 asks.
+  - A transfer the BIOS fails with 06h (the disk changed under it, read-ahead's too) is not tried again on whatever disk is in: the same disk goes on with it, another is INT 24h 0Fh there and then.
+  - Drives without a change line (INT 13h 15h: 1) are usable: the BIOS reports "changed" every time. Path calls look at the disk each time; handle calls only when the drive has been unused for about 2 seconds, as MS-DOS's rule. The 1520's drives have a change line (DEFRAG, which needs one, runs on them).
+  - Under multitasking each task's current directories go with the floppy's mount they were found on: after another mount they are found again by name.
 - **Handles and devices.**
   - 24 SFT entries and 20 handles per process, inherited on EXEC; dup, force-dup and IOCTL 4400h.
   - Devices: CON, NUL, AUX/COM1, COM2, PRN/LPT1 and GPIBnn. The GPIB device is a file handle too.

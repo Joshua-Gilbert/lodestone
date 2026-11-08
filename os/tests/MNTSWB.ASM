@@ -2,7 +2,8 @@
 ; (A), A:'s free space (the FAT cache goes to A:) (R), a key (another disk
 ; goes in B:), 3000 more written (B), closed (C); "+" or "-n".  OPENK: B:K.TXT
 ; opened instead and nothing written at A (a file open, nothing to go);
-; NOA: no free space on A:; PATHB: B:'s free space after the key (P)
+; NOA: no free space on A:; PATHB: B:'s free space after the key (P);
+; DELB: B:K.TXT deleted after the key (D), and again (E)
 org 100h
         mov     dx, oname
 %ifdef OPENK
@@ -40,6 +41,12 @@ org 100h
         cmc
         call    st
 %endif
+%ifdef DELB
+        mov     dl, 'D'
+        call    del
+        mov     dl, 'E'
+        call    del
+%endif
         mov     dl, 'B'
         call    wr
         mov     bx, [h]
@@ -49,6 +56,14 @@ org 100h
         call    st
 x:      mov     ax, 4C00h
         int     21h
+%ifdef DELB
+del:    push    dx
+        mov     dx, oname
+        mov     ah, 41h
+        int     21h
+        pop     dx
+        jmp     short st
+%endif
 wr:     push    dx
         mov     bx, [h]
         mov     cx, 3000

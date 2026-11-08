@@ -123,8 +123,11 @@ V_DCWD      equ V_MCB + 2
 V_CWD       equ V_DCWD + 2 * NDRV
 V_DTA       equ V_CWD + (cur_drv + 1 - cwdstr)
 V_PSP       equ V_DTA + (rw_t0 + 1 - dta)
-TX_KSTK     equ (V_PSP + (term_keep + 2 - cur_psp) + 1) & ~1    ; (even, as
-                                        ;  kstack_top is: its words aligned)
+TX_MG       equ (V_PSP + (term_keep + 2 - cur_psp) + 1) & ~1    ; each
+                                        ;  floppy's mount its directories are
+                                        ;  of (mt_vsave, mt_vload)
+TX_KSTK     equ TX_MG + 2 * NFLOP       ; (even, as kstack_top is: its words
+                                        ;  aligned)
 KSLICE      equ 256                     ; room for the kernel stack's slice
 TX_FPV      equ TX_KSTK + KSLICE        ; 1: its coprocessor state kept (0: FNINIT)
 TX_FPU      equ (TX_FPV + 2) & ~1       ; the state (FNSAVE's 94 bytes, even)
@@ -1433,10 +1436,26 @@ mt_emsget:
         jnc     .l
         ret
 
-; the kernel's variables (DS = KSEG) to the TX at ES, or back.  .r: the
+; the kernel's variables (DS = KSEG) to the TX at ES, or back (AX too
+; changed).  .r: the
 ; ranges at CS:BX, DS:x to ES:DI (mw_save's too), or ES:x from DS:SI with
 ; DS and ES swapped back after (mw_load_ctx's)
+; Each floppy's mount (mgen) goes with the task's current directories
+; (TX_MG): not that mount's if a look is due that finds them again (D_CHK
+; 2).  Back, another mount's are found again by name at the next access
+; (D_CHK 2: drv_ready's cwd_find), else the root
 mt_vsave:
+        mov     bx, 2 * (NFLOP - 1)
+.g:     mov     ax, [mgen+bx]
+        mov     si, bx
+        shl     si, 4                   ; (DRVSZ / 2)
+        cmp     byte [drvtab+si+D_CHK], 2
+        jne     .g1
+        not     ax
+.g1:    mov     [es:TX_MG+bx], ax
+        dec     bx
+        dec     bx
+        jns     .g
         mov     bx, mt_ranges
         mov     di, V_INDOS
 .r:     mov     si, [cs:bx]
@@ -1448,6 +1467,16 @@ mt_vsave:
         jmp     .r
 .x:     ret
 mt_vload:
+        mov     bx, 2 * (NFLOP - 1)
+.g:     mov     ax, [es:TX_MG+bx]
+        cmp     ax, [mgen+bx]
+        je      .g1
+        mov     si, bx
+        shl     si, 4
+        mov     byte [drvtab+si+D_CHK], 2
+.g1:    dec     bx
+        dec     bx
+        jns     .g
         push    ds
         push    es
         pop     ds                      ; (from the TX: DS)
@@ -6171,7 +6200,10 @@ mt_vcall:
 
 ; crit_disk.c24: the kernel's INT 24h (the critical error's prompt),
 ; counted while it runs (mt_crit): mt_v10 puts what it prints on the real
-; screen, since everything waits for its answer
+; screen, since everything waits for its answer.  A background task's
+; behind a graphics screen is Fail, an invalid disk change's too: held
+; there, the others couldn't use a disk (the transfer's state is the
+; kernel's) and nobody could see the question
 mt_c24: push    ds                      ; (a task not in front, a graphics
         push    ax                      ;  screen in front: Fail, not a
         mov     al, [cs:mt_cur]         ;  prompt, its handler's or
