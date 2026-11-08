@@ -468,16 +468,59 @@ saver_set:
         pop     ax
         ret
 
-; INT 24h while the UI runs: fail the call, remember why (UI_CRITERR)
+; INT 24h while the UI runs: fail the call, remember why (UI_CRITERR).
+; But an invalid disk change (0Fh: the disk taken out with its files open
+; or changes to go) is asked about, as MS-DOS does, the UI's screen in
+; front: the disk put back, RETURN tries again (Retry); ESC fails.  Keys
+; only, through the BIOS (no INT 21h, saver or switch meanwhile)
 ui_int24:
         push    ax
         mov     ax, di
         xor     ah, ah
         inc     ax
         mov     [cs:crit_err], ax
+        cmp     al, 0Fh + 1
         pop     ax
-        mov     al, 3                   ; Fail
+        jne     .f
+        pusha
+        push    ds
+        push    es
+        push    cs
+        pop     ds
+        add     al, 'A'
+        mov     [s_dchg_d], al
+        xor     bx, bx                  ; (a text screen in front: a task's,
+        mov     es, bx                  ;  MULTITASK=1: nowhere to ask)
+        mov     al, [es:449h]
+        mov     bl, 3
+        cmp     al, 7
+        je      .a
+        cmp     al, bl
+        jbe     .a
+        push    cs
+        pop     es
+        mov     si, s_dchg
+        mov     di, s_confirm
+        call    band_up
+.k:     call    read_key
+        cmp     ax, K_ESC
+        je      .n
+        cmp     ax, K_ENTER
+        je      .y
+        cmp     ax, K_CODE_ENTER
+        jne     .k
+.y:     mov     bl, 1                   ; Retry (asked again if it isn't
+        mov     [crit_err], bh          ;  back; BH 0)
+.n:     call    band_down
+.a:     mov     bp, sp
+        mov     [bp+18], bl             ; (AL: pusha's)
+        pop     es
+        pop     ds
+        popa
         iret
+.f:     mov     al, 3                   ; Fail
+        iret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 set24:  push    ax
         push    dx
@@ -4490,6 +4533,8 @@ wait_ticks:
 s_pause     db 13, 10                   ; (then s_anykey's)
 s_anykey    db 'Press any key',0
 s_confirm   db 'Press RETURN to confirm or ESC to cancel',0
+s_dchg      db 'Put the disk back in drive '        ; (ui_int24's)
+s_dchg_d    db 'B:',0
 s_formhelp  db 'RETURN: next item    CODE-RETURN or click here: confirm    ESC: cancel',0
 s_am        db ' am',0
 s_pm        db ' pm',0

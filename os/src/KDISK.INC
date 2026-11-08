@@ -30,7 +30,7 @@ D_DATA  equ 20                  ; LBA of cluster 2
 D_NCL   equ 22                  ; highest cluster + 1
 D_CWD   equ 24                  ; current directory (cluster, 0 = root)
 D_SHIFT equ 26                  ; log2(sectors per cluster)
-D_PRES  equ 27                  ; drive exists
+D_PRES  equ 27                  ; drive exists (3: a floppy with no change line)
 D_HINT  equ 28                  ; where to look for a free cluster
 D_MEDIA equ 30
 D_CHK   equ 31                  ; check it is the same disk at the next access
@@ -54,12 +54,15 @@ fat_drv     resb 1              ; whose FAT is in fatbuf (FFh: none)
 fat_dirty   resb 1
 fk_dirty    resb 1              ; fat_keep: the two as they were
 fat_sv      resb 1              ; bit n: fat_sum's for floppy n is known
-cwd_redo    resb 1              ; 1: this drv_ready calls cwd_find (unmount
-cwd_nmk     resb 11             ;  keeps the name), and cwd_find's nm11
-mgen        resb NFLOP          ; each floppy's mount (an SFT's S_GEN, rule 9)
+cwd_redo    resb 1              ; 1: this drv_ready calls cwd_find (the name
+cwd_nmk     resb 11             ;  kept), and cwd_find's nm11
 sd_err      resb 1              ; same_disk: 1 if a read failed (not another
-            alignb 2            ;  disk: its sector at sd_lba)
+            alignb 2            ;  disk: its sector at sd_lba); 2 while it runs
 sd_lba      resw 1
+mgen        resw NFLOP          ; each floppy's mount (an SFT's S_GEN: its low
+                                ;  byte, rule 9; all of a task's, KMT.INC)
+cl_tick     resw NFLOP          ; the BIOS tick of each floppy's last use by
+                                ;  a handle call (sft_chk: no change line)
 fat_ncl     resw 1              ; the cached FAT's D_NCL (fat_get, fat_set)
 fat_dmask   resw 1              ; which FAT sectors changed (bit n = sector n)
 fk_dmask    resw 1
@@ -81,11 +84,6 @@ tc_lock     resb 1              ; 1: its memory is lent out (help window)
 tc_bad_drv  resb 1              ; read-ahead failed on this drive's
             alignb 2
 tc_bad_cyl  resw 1              ;   cylinder: none there
-io_spec     resb 1              ; 1: this BIOS call is read-ahead
-            alignb 2
-io_ra       resw 1              ; read-ahead allowed past this transfer (sectors)
-io_drv      resb 1
-io_op       resb 1
 io_err      resb 1
 buf_drv     resb NBUF
             alignb 2
@@ -117,6 +115,14 @@ drv_init:
         cmp     bl, cl
         jae     .np
         mov     byte [di+D_PRES], 1
+        push    cx                      ; a change line?  (AH=15h: 2.  1 for
+        mov     ah, 15h                 ;  none, and an XT BIOS's "no such
+        mov     dl, bl                  ;  call": D_PRES 3, sft_chk's 2 s)
+        int     13h
+        pop     cx
+        cmp     ah, 1
+        jne     .np
+        mov     byte [di+D_PRES], 3
 .np:    mov     si, bx
         imul    si, si, CWDLEN
         mov     byte [cwdstr+si], '\'
@@ -324,7 +330,11 @@ raw_bounce:
 ;     read, not another disk.  INT 21h 0Dh forgets a floppy's sum when it
 ;     has no changes to go (a program may rewrite the disk then: CHKDSK
 ;     /F, DEFRAG), and its current directory is found again by name at the
-;     next access, as after any mount of another disk (cwd_find).
+;     next access, as after any mount of another disk (cwd_find).  (Kept,
+;     a rewrite would be another disk, "Invalid disk change" for any file
+;     open on it, a redirection's say: 0Dh is all a DOS program tells of
+;     one.  A copy of the disk put in then is taken for it.)  Taken with no
+;     sum compared, its current directory is found again by name too.
 ;  2. A chain goes to the disk before the entry that names it; an entry
 ;     before the frees it lets go of (do_create, a truncating write,
 ;     DELETE, RMDIR); dir_slot zeroes a directory's new cluster before it
@@ -344,8 +354,11 @@ raw_bounce:
 ;     are SF_LOST (sft_pend): their writes and close refused (5), their
 ;     entries as the disk has them.  With nothing open and nothing to go
 ;     another disk is just mounted.  A transfer the BIOS fails with 06h
-;     (changed under it) isn't tried again: it fails, the disk looked at
-;     at the next access.
+;     (changed under it; read-ahead's and the cylinder cache's too) isn't
+;     tried again on the disk in, nor read another way: the same disk goes
+;     on with it, another is INT 24h 0Fh there and then (chg_ask), Retry
+;     looks again, Fail the same as here, the call's other transfers
+;     failed with it (dio: none to an unmounted floppy).
 ;  5. A write that fails gives back what it took: file_write its clusters
 ;     (fat_keep/fat_back), dir_slot and MKDIR theirs.
 ;  6. A buffer whose write failed is the disk's no more: forgotten at
@@ -356,22 +369,28 @@ raw_bounce:
 ;     (FF0h-FF7h), a link past the disk's end and a cluster past it; a
 ;     directory longer than the disk (a loop) is 5 (dir_entry).
 ;  8. A path call flushes its own drive's FAT only (fat_flush_act).
-;  9. Each floppy mount has a number (mgen, unmount's), kept in the SFT of
-;     a file opened on it (S_GEN).  Read, write, commit and close with
-;     changes of a file another mount's, or SF_LOST, are refused (5,
-;     sft_chk), the file SF_LOST; each first looks at the drive
-;     (drv_ready).  A close without changes just lets the file go.
+;  9. Each floppy mount has a number (mgen, unmount's: 16 bits), its low
+;     byte kept in the SFT of a file opened on it (S_GEN); the old mount's
+;     files are SF_LOST as it goes (unmount), so the byte coming round
+;     again is never theirs.  Read, write, commit and close with changes of
+;     a file another mount's, or SF_LOST, are refused (5, sft_chk); each
+;     first looks at the drive (drv_ready; without a change line, only if
+;     unused for ~2 s).  A close without changes just lets the file go.
+;     Each task's current directories are its own, of the mount they were
+;     found on (KMT.INC: TX_MG): another mount's, found again by name.
 ; ---------------------------------------------------------------------
 ; The change line says the disk may have changed: is it the same one?
 ; Same boot sector BPB and, if our FAT cache is this drive's, a first FAT
 ; sector as that disk last had it (rule 1).  CF if different (or
-; unreadable)
+; unreadable).  With no sum to compare, cwd_redo: the current directory
+; is found again by name (drv_ready).  Nothing cached is dropped (the
+; caller's: drv_ready, chg_ask)
 same_disk:
         pusha
         push    es
         push    cs
         pop     es
-        mov     byte [sd_err], 0
+        mov     byte [sd_err], 2        ; (its reads: no 06h handling, dio.st)
         xor     dx, dx
         call    raw_bounce
         jc      .rerr
@@ -384,7 +403,10 @@ same_disk:
         mov     al, 1
         shl     al, cl
         test    [fat_sv], al
-        jz      .same                   ; (nothing known to compare)
+        jnz     .sum
+        mov     byte [cwd_redo], 1      ; (nothing known to compare: maybe a
+        jmp     short .same             ;  copy of it, its directories not
+.sum:                                   ;  where they were, rule 1)
         mov     si, [actp]
         mov     dx, [si+D_RSV]
         call    raw_bounce
@@ -413,19 +435,15 @@ same_disk:
         jne     .diff
         cmp     dx, bx
         jne     .diff
-.same:  mov     al, [act]               ; whatever is cached gets read again
-        call    buf_inval
-        cmp     [fat_drv], al
-        jne     .sm
-        cmp     byte [fat_dirty], 0
-        jne     .sm
-        mov     byte [fat_drv], 0FFh
-.sm:    clc
-        jmp     .x
-.rerr:  mov     byte [sd_err], 1        ; a read error, not another disk:
-        mov     [sd_lba], dx            ;  drv_ready asks about it as such
-.diff:  stc
-.x:     pop     es
+.same:  xor     al, al                  ; (CF clear)
+        jmp     short .x
+.rerr:  mov     [sd_lba], dx            ; a read error, not another disk:
+        mov     al, 1                   ;  drv_ready asks about it as such
+        db      3Dh                     ; (CMP AX, imm16: skips the next)
+.diff:  mov     al, 0
+        stc
+.x:     mov     [sd_err], al
+        pop     es
         popa
         ret
 
@@ -443,7 +461,7 @@ drv_ready:
         xchg    al, [si+D_CHK]          ;  have used the disk, and its change
         cmp     al, 2                   ;  line, behind our back, and moved
         jne     .c1                     ;  the current directory: 2)
-        mov     [cwd_redo], al
+        mov     byte [cwd_redo], 1
 .c1:    or      al, al
         jnz     .chg
         mov     dl, [si+D_UNIT]
@@ -457,8 +475,15 @@ drv_ready:
 .ck:    mov     al, [act]               ; sectors cached from it are suspect
         call    buf_inval               ; (and same_disk must see the disk)
         call    same_disk               ; (drives without a change line
-        jnc     .same                   ; report a change every time)
-        cmp     byte [sd_err], 0        ; it couldn't be read: INT 24h for
+        jc      .nsd                    ; report a change every time)
+        call    buf_inval               ; the same: whatever is cached gets
+        cmp     [fat_drv], al           ;  read again (same_disk's reads may
+        jne     .same                   ;  have filled the cylinder cache)
+        cmp     byte [fat_dirty], 0
+        jne     .same
+        mov     byte [fat_drv], 0FFh
+        jmp     short .same
+.nsd:   cmp     byte [sd_err], 0        ; it couldn't be read: INT 24h for
         je      .other                  ;  that read, Retry looks again
         push    bx                      ;  (rule 1: not another disk)
         push    cx
@@ -522,27 +547,23 @@ drv_ready:
         stc
         ret
 
-; drive AL: forget everything about the disk in it
+; drive AL: forget everything about the disk in it (its current
+; directory's name kept, found again at the next mount)
 unmount:
         push    ax
         push    si
         push    di
         call    use_drive
         mov     byte [si+D_MNT], 0
-        mov     word [si+D_CWD], 0
-        cmp     byte [cwd_redo], 0      ; (cwd_find to come: its name kept,
-        je      .r                      ;  and found at the next mount if
-        mov     byte [si+D_CHK], 2      ;  not at this one)
-        jmp     short .k
-.r:     call    cwd_of
-        mov     word [di], '\'
-.k:     cmp     al, NFLOP               ; a new mount: the files open on the
-        jae     .g                      ;  old one refused (rule 9)
-        mov     di, ax
-        and     di, 0FFh
-        inc     byte [mgen+di]
-.g:     mov     ah, SF_LOST             ; its files' changes too (rule 4:
-        call    sft_pend                ;  their entries are on that disk)
+        mov     word [si+D_CWD], 0      ; (its current directory's name kept,
+        mov     byte [si+D_CHK], 2      ;  found at the next mount: cwd_find)
+        cmp     al, NFLOP               ; a new mount: the files open on the
+        jae     .g                      ;  old one refused (rule 9), SF_LOST
+        mov     di, ax                  ;  here (so a mount number come round
+        and     di, 0FFh                ;  again, in the SFT's byte, is never
+        shl     di, 1                   ;  theirs), their changes too (rule
+        inc     word [mgen+di]          ;  4: their entries are on that disk)
+.g:     call    sft_lose
         call    fat_drop
         call    buf_inval
         pop     di
@@ -602,6 +623,7 @@ gen_of: mov     ah, 0
         push    bx
         mov     bl, al
         xor     bh, bh
+        add     bx, bx
         mov     ah, [mgen+bx]
         pop     bx
 .x:     ret
@@ -643,14 +665,13 @@ cwd_find:
         jne     .c
         inc     si
         jmp     .c
-.end:   mov     si, [actp]
-        mov     [si+D_CWD], ax
-        jmp     short .x
-.root:  mov     al, [act]               ; (D_CWD is the root already)
+.root:  mov     al, [act]
         call    cwd_of
         mov     word [di], '\'
-.x:     mov     si, [actp]              ; (found: no more to do)
-        mov     byte [si+D_CHK], 0
+        xor     ax, ax                  ; (the root: D_CWD 0 too, whatever
+.end:   mov     si, [actp]              ;  it held, the same disk's or not)
+        mov     [si+D_CWD], ax
+        mov     byte [si+D_CHK], 0      ; (found: no more to do)
         mov     si, cwd_nmk
         mov     di, nm11
         mov     cx, 11
@@ -661,9 +682,18 @@ cwd_find:
 
 ; drive AL's open files with changes pending (SF_DIRTY, not SF_LOST): AH
 ; ORed into their flags, their place in the chain forgotten.  CF if any.
-; All kept
+; sft_lose: all its files (not SF_LOST), SF_LOST (unmount).  All kept
+sft_lose:
+        push    ax
+        push    dx
+        mov     ah, SF_LOST
+        mov     dx, (SF_LOST | SF_DEV) << 8     ; (DL: none needed)
+        jmp     short sft_pend.go
 sft_pend:
-        push    bx
+        push    ax
+        push    dx
+        mov     dx, (SF_LOST | SF_DEV) << 8 | SF_DIRTY
+.go:    push    bx
         push    cx
         mov     bx, sft
         mov     cx, NSFT                ; (CH: one found)
@@ -671,11 +701,13 @@ sft_pend:
         je      .n
         cmp     [bx+S_DRV], al
         jne     .n
-        test    byte [bx+S_FLAGS], SF_DIRTY
-        jz      .n
-        test    byte [bx+S_FLAGS], SF_LOST
+        test    [bx+S_FLAGS], dh        ; (DH: none of these)
         jnz     .n
-        or      [bx+S_FLAGS], ah
+        or      dl, dl
+        jz      .y
+        test    [bx+S_FLAGS], dl        ; (DL: this one)
+        jz      .n
+.y:     or      [bx+S_FLAGS], ah
         mov     word [bx+S_CCL], 0
         mov     ch, 1
 .n:     add     bx, SFT_SZ
@@ -684,6 +716,8 @@ sft_pend:
         neg     ch
         pop     cx
         pop     bx
+        pop     dx
+        pop     ax
         ret
 
 ; drive AL's cached FAT dropped, changes and all (rule 4): its open files
@@ -1341,8 +1375,14 @@ dio:    push    bx
         mov     [io_drv], al
         mov     [io_op], ah
         push    ax
-        call    use_drive_keep
+        call    use_drive_keep          ; (ZF: not mounted)
         pop     ax
+        jnz     .loop
+        cmp     byte [io_crit], 1       ; (a transfer to the disk that was
+        jne     .loop                   ;  there, after chg_ask's Fail: none
+        mov     ax, 34                  ;  till the next call mounts the one
+        stc                             ;  in, rule 4)
+        jmp     .x
 .loop:  or      cx, cx
         jnz     .more
         jmp     .ok
@@ -1377,8 +1417,10 @@ dio:    push    bx
         mov     ax, cx
 .pc:    mov     [io_pc], ax
 .tcp:   call    tc_piece                ; through the track cache?  (KEMS.INC:
-                                        ;  ems_tc, the cache's pages in first)
-        jc      .err
+                                        ;  ems_tc, the cache's pages in first,
+        jc      .err                    ;  gives a failed read back as dio's:
+        cmp     byte [io_chg], 0        ;  not one the disk changed under)
+        jne     .err
         or      al, al
         jnz     .adv
 %endif
@@ -1450,7 +1492,14 @@ dio:    push    bx
         pop     cx
         pop     bx
         ret
-.err:   mov     ah, 0
+.err:   cmp     byte [io_chg], 0        ; the disk changed under it: the same
+        je      .e0                     ;  one back goes on with this piece
+        call    chg_ask                 ;  (its state as it was, rule 4)
+        jc      .x
+        mov     dx, [io_lba]
+        mov     cx, [io_left]
+        jmp     .loop
+.e0:    mov     ah, 0
         stc
         jmp     .x
 
@@ -1474,18 +1523,8 @@ dio:    push    bx
         int     13h
         pop     bx
         jnc     .bok
-        mov     [io_bios], ah
-        cmp     ah, 6                   ; the disk changed (an AT BIOS's
-        jne     .rs                     ;  change line) under a transfer to
-        cmp     byte [io_crit], 1       ;  a disk known: not tried again on
-        jne     .rs                     ;  whatever disk is in now.  It
-        push    bx                      ;  fails (34), the drive looked at
-        mov     al, DRVSZ               ;  at the next access (drv_ready:
-        mul     byte [io_drv]           ;  rule 4 if it is another).  (A
-        xchg    bx, ax                  ;  mount's and same_disk's reads go
-        mov     byte [drvtab+bx+D_CHK], 1       ; on: the disk is being
-        pop     bx                      ;  looked at)
-        jmp     short .bfail
+        call    .st
+        je      .bfail                  ; (06h: not tried again, chg_ask)
 .rs:    xor     ah, ah
         mov     dl, [io_unit]
         int     13h                     ; reset, then try again
@@ -1504,6 +1543,8 @@ dio:    push    bx
         jne     .bcrit
         call    .bysec
         jnc     .bok
+        cmp     byte [io_chg], 0
+        jne     .bfail
 .bcrit: cmp     byte [io_crit], 0
         je      .bfail
         call    crit_disk               ; AL = action
@@ -1541,13 +1582,14 @@ dio:    push    bx
         int     13h
         pop     bx
         jnc     .bsok
-        mov     [io_bios], ah
+        call    .st
+        je      .bse
         xor     ah, ah
         mov     dl, [io_unit]
         int     13h
         dec     byte [io_try]
         jnz     .bs1
-        pop     es
+.bse:   pop     es
         stc
         ret
 .bsok:  mov     ax, es                  ; the next sector's place (the
@@ -1559,6 +1601,24 @@ dio:    push    bx
         jb      .bs
         pop     es
         clc
+        ret
+; BIOS status AH into [io_bios]: 06h, the disk changed (an AT BIOS's change
+; line) under a transfer to a disk known, read-ahead and the cylinder
+; cache's own reads too, is not tried again on whatever disk is in now
+; (the line is reset): io_chg, ZF; dio asks for the disk (chg_ask).  A
+; mount's reads (io_crit 2) and same_disk's (sd_err 2) go on: the disk
+; is being looked at
+.st:    mov     [io_bios], ah
+        cmp     ah, 6
+        jne     .stx
+        cmp     byte [io_crit], 2
+        je      .sty
+        cmp     byte [sd_err], 2
+        je      .sty
+        mov     [io_chg], ah
+        cmp     ah, ah                  ; (ZF)
+.stx:   ret
+.sty:   or      ah, ah                  ; (NZ: 6)
         ret
 ; a write that didn't happen: what the cache was given for it is wrong
 .wfail: cmp     byte [io_op], 3
@@ -1659,6 +1719,8 @@ tc_piece:
         mov     [io_crit], cl
         mov     byte [io_spec], 0
         jnc     .out
+        cmp     byte [io_chg], 0        ; (the disk changed: not the piece
+        jne     .err                    ;  read on whatever is in, dio.st)
         mov     al, [io_drv]            ; failed: no more guessing on this
         mov     [tc_bad_drv], al        ; cylinder; just the piece, then
         mov     ax, [io_cl]
@@ -1741,7 +1803,8 @@ tc_fill:
         mov     al, [io_s0]
         inc     al
         mov     [io_sec], al
-.ok:    clc
+.ok:    cmp     byte [io_chg], 1        ; (CF if head 1's read found the disk
+        cmc                             ;  changed: dio.st)
 .x:     pop     cx
         ret
 
@@ -1778,6 +1841,7 @@ tc_upd: push    cx
         pop     dx
         pop     cx
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: tc_mine even)
 
 ; ZF if the cache holds (part of) this cylinder of this drive
 tc_mine:
@@ -1887,9 +1951,17 @@ io_left     resw 1
 io_n        resw 1
 io_geo_spt  resw 1
 io_geo_heads resw 1
+io_ra       resw 1              ; read-ahead allowed past this transfer (sectors)
+io_spec     resb 1              ; 1: this BIOS call is read-ahead
+io_drv      resb 1
+io_op       resb 1
+IO_LEN      equ $ - io_crit     ; (a transfer's state: chg_ask keeps it in io_sv)
+io_chg      resb 1              ; 1: the BIOS said 06h (dio.st)
+io_sv       resb IO_LEN
 section .text
 
-; geometry and unit of drive [io_drv] (before mounting: 18 x 2 guess)
+; geometry and unit of drive [io_drv] (before mounting: 18 x 2 guess;
+; ZF then)
 use_drive_keep:
         push    si
         push    dx
@@ -1913,6 +1985,7 @@ use_drive_keep:
         pop     ax
 .g:     mov     [io_geo_spt], ax
         mov     [io_geo_heads], dx
+        cmp     byte [si+D_MNT], 0      ; (ZF: not mounted)
         pop     dx
         pop     si
         ret
@@ -1958,6 +2031,57 @@ bios2dos:
         xor     ah, ah
         add     ax, 19
         ret
+
+; dio: the BIOS said the disk changed (06h: io_chg) under this transfer to
+; a disk known.  As MS-DOS's driver and INT 24h: the same disk in the
+; drive (same_disk: its buffers, cached FAT and files go on as they were)
+; goes on with the piece, NC.  Another, or none to read: INT 24h 0Fh,
+; "Invalid disk change" (Retry, Fail; the transfer's read or write), and
+; Retry looks again, so the right one back goes on.  Fail: the old disk's
+; changes dropped and its files refused (unmount, rule 4), its directory
+; found again by name at the next call, which mounts the disk in; this
+; call's transfers fail till then (dio): CF, AX = 34.  The transfer's
+; state (io_*) is kept across the looks, transfers themselves.  AX changed
+chg_ask:
+        pusha
+        push    es
+        push    ds
+        pop     es
+        mov     byte [io_chg], 0
+        mov     si, io_crit
+        mov     di, io_sv
+        call    .cp
+        push    word [act]
+        mov     al, [io_drv]
+        call    use_drive
+.ck:    cmp     [tc_drv], al            ; (the disk, not what the cylinder
+        jne     .c1                     ;  cache holds of it)
+        mov     byte [tc_drv], 0FFh
+.c1:    call    same_disk
+        jnc     .ok
+        call    .back                   ; (io_bios 6, the transfer's drive
+        mov     byte [io_crit], 2       ;  and read or write)
+        call    crit_disk
+        cmp     al, 1
+        mov     al, [act]
+        je      .ck
+        call    unmount
+        stc
+.ok:    call    .back                   ; (flags kept)
+        pop     ax
+        pushf
+        call    use_drive
+        popf
+        pop     es
+        popa
+        mov     ax, 34
+        ret
+.back:  mov     si, io_sv
+        mov     di, io_crit
+.cp:    mov     cx, IO_LEN
+        rep     movsb
+        ret
+        times ($ - $$) & 1 db 90h       ; (crit_disk even, as it was)
 
 ; INT 24h for the failed transfer -> AL = 0 ignore, 1 retry, 3 fail
 ; (abort ends the program here and doesn't come back; while EXEC loads one

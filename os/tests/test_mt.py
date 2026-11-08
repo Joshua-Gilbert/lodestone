@@ -64,10 +64,15 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (4 bytes after 457Bh on
-# 2026-11-08, with a floppy's mount rules), and a change past it moves image_end and bss_end.  The UI's pads,
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 466Dh on
+# 2026-11-08, with a disk changed under a transfer asked about), and a change past it moves image_end and bss_end.  The UI's pads,
 # UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4580, 'bss_end': 0x79A0, 'ui_keep_end': 0x6804}  # (4360h/7760h before a floppy's mount
+OFF_MAP ={'image_end': 0x4670, 'bss_end': 0x7AC0, 'ui_keep_end': 0x6874}  # (4580h/79A0h/6804h before a disk
+                                        #  changed under a transfer was asked about there and then
+                                        #  (Retry, Fail), each task's directories went with their
+                                        #  mount, MS-DOS's 2-second rule for a drive without a change
+                                        #  line, and the Executive's question for it, 2026-11-08;
+                                        #  4360h/7760h before a floppy's mount
                                         #  rules: a file's mount number, "Invalid disk change" while
                                         #  files are open, the current directory found again by name,
                                         #  broken links past the disk's end, 2026-11-08;
@@ -7072,7 +7077,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 579.2 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '579.2', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 578.8 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '578.8', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
@@ -7938,6 +7943,50 @@ def t_nodisk():
           'asked), not "Bad command or file name"', crit == 0 and 'Data error' in o and 'Bad command' not in o
           and 'HELLO' not in o, (crit, o[-300:]))
 
+def t_cwdmount():
+    """Each task's current directories go with the floppy's mount they are of (TX_MG, KDISK.INC rule 1): task 1's
+    LCMD in B:\\SUB; in task 0 another disk in B: (another serial, no SUB, a file over SUB's cluster) is mounted;
+    back in task 1 a relative ECHO > NEW.TXT goes to the new disk's root (its SUB found again by name: none), the
+    file over SUB's cluster whole; the same with task 1 run, and switched from, before it looks at B: and task 0
+    looks again.  The first disk back before task 1 runs again: B:\\SUB still."""
+    import mkimg, fatcheck
+    def mkf(n, b):
+        p = os.path.join(A.OUT, 'mc_' + n.replace('\\', '_')); open(p, 'wb').write(b); return n + '=' + p
+    b1 = mkimg.build(os.path.join(A.OUT, 'mc1.img'), ['SUB\\', mkf('SUB\\A.TXT', b'a' * 100)])
+    b2 = mkimg.build(os.path.join(A.OUT, 'mc2.img'), [mkf('BIG.TXT', (b'B' * 480 + b'\0' * 32) * 39)])
+    d2 = bytearray(open(b2, 'rb').read()); d2[0x27:0x2B] = b'\x12\x34\x56\x78'; d2 = bytes(d2)
+    big = fatcheck.read_files(d2)['A:\\BIG.TXT']
+    for back in (False, 'twice', True):
+        k = boot('mt_cwd.img', b'MULTITASK=1\r\n', 88, b=b1)
+        sh = Shell(k); sh.run('ver')
+        typ(k, 'start lcmd.com', 1.0)
+        line(k, 'b:'); line(k, 'cd sub')
+        front(k, 0); k.run_for(0.5)
+        first = k.pc.drives[1]
+        other = pcemu.Floppy(bytearray(d2)); other.changed = True; k.pc.drives[1] = other
+        sh.run('dir b:')
+        if back is True:
+            first.changed = True; k.pc.drives[1] = first
+            sh.run('dir b:')
+        if back == 'twice':                     # (task 1 switched from with its look still due: TX_MG not
+            front(k, 1); k.run_for(0.5)         #  this mount's then)
+            front(k, 0); k.run_for(0.5)
+            sh.run('dir b:')
+        front(k, 1); k.run_for(0.5)
+        line(k, 'echo hello>new.txt'); line(k, 'cd')
+        scr = k.pc.text_screen()
+        if back is not True:
+            f = fatcheck.read_files(bytes(other.img)); probs = fatcheck.check(bytes(other.img))[0]
+            check('B:\\SUB current in task 1, another disk mounted in task 0%s: task 1\'s ECHO > NEW.TXT goes to that '
+                  'disk\'s root (B:\\), BIG.TXT over SUB\'s cluster whole' % ('' if not back else
+                  ', task 1 in front and back before it looks, task 0 looking again'), f.get('A:\\NEW.TXT') == b'hello\r\n'
+                  and f.get('A:\\BIG.TXT') == big and not probs and 'B:\\>cd\nB:\\\n' in scr, (scr[-200:], probs))
+        else:
+            f = fatcheck.read_files(bytes(first.img)); probs = fatcheck.check(bytes(first.img))[0]
+            check('... the first disk back (mounted again in task 0) before task 1 runs: task 1\'s B:\\SUB found '
+                  'again by name, NEW.TXT there, the other disk untouched', f.get('A:\\SUB\\NEW.TXT') == b'hello\r\n'
+                  and not probs and bytes(other.img) == d2 and 'B:\\SUB>cd\nB:\\SUB\n' in scr, (scr[-200:], probs))
+
 if __name__ == '__main__':
     t0 = time.time()
     A.build()
@@ -7948,7 +7997,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

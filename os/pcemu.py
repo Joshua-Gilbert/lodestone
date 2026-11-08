@@ -1063,7 +1063,7 @@ class PC:
         if ah == 0x08:
             s.w('bx', d.kind); s.w('cx', ((d.cyls - 1) << 8) | d.spt); s.w('dx', 0x0100 | (2 if s.drives[1] else 1))
             s.w('ax', 0); s.cf(0); return
-        if ah == 0x15: s.w('ax', 0x0200); s.cf(0); return
+        if ah == 0x15: s.w('ax', 0x0100 if d.no_changeline else 0x0200); s.cf(0); return   # (1: no change line)
         if ah == 0x16:
             if d.changed or d.no_changeline: d.changed = False; s.w('ax', 0x0600); s.cf(1)
             else: s.w('ax', 0); s.cf(0)

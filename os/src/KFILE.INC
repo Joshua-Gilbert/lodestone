@@ -169,8 +169,8 @@ sft_busy:
         mov     cx, NSFT
 .l:     cmp     byte [bx+S_REF], 0
         je      .n
-        test    byte [bx+S_FLAGS], SF_DEV
-        jnz     .n
+        test    byte [bx+S_FLAGS], SF_DEV | SF_LOST     ; (another mount's
+        jnz     .n                      ;  are SF_LOST: unmount, rule 9)
         mov     al, [act]
         cmp     [bx+S_DRV], al
         jne     .n
@@ -648,9 +648,11 @@ sft_commit:
 
 ; SFT SI (a file) still on the disk it was opened on?  A floppy's drive
 ; is looked at first (drv_ready: its change line; another disk with this
-; one's files open is INT 24h's "Invalid disk change", KDISK.INC rule 4).
-; Another mount's file, or one SF_LOST: SF_LOST, CF, AX = 5 (rule 9).  CF:
-; AX = drv_ready's error otherwise.  SI kept
+; one's files open is INT 24h's "Invalid disk change", KDISK.INC rule 4);
+; one without a change line only if not used for ~2 s (MS-DOS's rule: the
+; BIOS says "changed" every time, and each look reads the disk; path calls
+; look every time).  Another mount's file, or one SF_LOST: SF_LOST, CF,
+; AX = 5 (rule 9).  CF: AX = drv_ready's error otherwise.  SI kept
 sft_chk:
         test    byte [si+S_FLAGS], SF_LOST
         jnz     .lost
@@ -659,8 +661,10 @@ sft_chk:
         jae     .ok
         push    si
         push    es
+        call    cl_fresh
+        jnc     .f
         call    drv_ready
-        pop     es
+.f:     pop     es
         pop     si
         pushf
         push    ax
@@ -678,6 +682,36 @@ sft_chk:
         ret
 .ok:    clc
         ret
+
+; floppy AL without a change line (D_PRES 3), no look due (D_CHK), its
+; last use by a handle call less than 2 s ago (36 ticks)?  NC if so.  Its
+; last use: now.  All kept
+cl_fresh:
+        pusha
+        push    es
+        xor     bx, bx
+        mov     es, bx
+        mov     bl, al
+        mov     di, bx
+        add     di, di
+        mov     ax, [es:46Ch]
+        mov     dx, ax
+        xchg    dx, [cl_tick+di]
+        sub     ax, dx                  ; ticks since
+        shl     bx, 5                   ; (DRVSZ)
+        cmp     byte [drvtab+bx+D_PRES], 3
+        jb      .x                      ; (a change line: CF, looked at)
+        cmp     byte [drvtab+bx+D_CHK], 0
+        stc                             ; (a look due: D_CHK)
+        jne     .x
+        cmp     ax, 36
+        cmc
+.x:     pop     es
+        popa
+        ret
+%if DRVSZ != 32
+%error "cl_fresh: DRVSZ"
+%endif
 
 ; use_drive for AL keeping SI
 use_drive_si:
