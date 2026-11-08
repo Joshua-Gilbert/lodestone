@@ -319,7 +319,6 @@ unwind: cmp     byte [rdepth], 0
         cmp     bx, 20
         jb      .hc
 .x:     ret
-        db      90h                     ; (the hot labels after at their parity)
 
 ; Ctrl-C: a program of ours ends; our own command is abandoned
 ctrlc:  cmp     byte [cs:sv_busy], 0    ; (the Executive's saver: on)
@@ -366,7 +365,10 @@ crit:   sti
         xor     ch, ch
         cmp     cl, 0Ch
         jbe     .k
-        mov     cl, 0Ch
+        cmp     cl, 0Fh                 ; (0Fh: the one after 0Ch's; the
+        mov     cl, 0Dh                 ;  rest, none in DOS 3.30: 0Ch's)
+        je      .k
+        dec     cx
 .k:     call    ce_msg
         call    bputs
         mov     si, s_reading
@@ -437,7 +439,7 @@ bputc:  push    ax
         pop     ax
         ret
 
-; INT 24h's message for code CX (0-12) -> SI: CX + 1 NULs on from the one
+; INT 24h's message for code CX (0-12; 13: 0Fh's) -> SI: CX + 1 NULs on from the one
 ; before ce0
 ce_msg: inc     cx
         mov     si, ce0 - 1
@@ -581,9 +583,7 @@ do_pipe:
 .del:   mov     di, in_name
         call    pipe_name
         mov     dx, in_name
-        mov     ah, 41h
-        int     21h
-        ret
+        jmp     ..@fdel
 
 ; AL = '1' or '2', DI = 80 bytes -> this level's pipe file's name there:
 ; %TEMP%\PIPEx1.$$n (no TEMP: %TMP%; neither: \PIPEx1.$$n, the
@@ -705,9 +705,7 @@ parse_redir:
 redir_do:
         cmp     byte [in_name], 0
         je      .o
-        mov     dx, in_name
-        mov     ax, 3D00h
-        int     21h
+        call    open1
         jnc     .io
         jmp     err_notfound
 .io:    mov     bx, ax
@@ -752,8 +750,7 @@ swap_handle:
         push    ax
         mov     ah, 46h
         int     21h
-        mov     ah, 3Eh
-        int     21h
+        call    fclose
         pop     ax
 .x:     ret
 
@@ -1213,8 +1210,8 @@ bat_start:
         mov     si, e_batch
         jmp     err
 .op:    xchg    bx, ax                  ; there: closed again.  Each line
-        mov     ah, 3Eh                 ;  opens it by its whole name, as
-        int     21h                     ;  COMMAND's, so that no file of
+        call    fclose                  ;  opens it by its whole name, as
+                                        ;  COMMAND's, so that no file of
         mov     [bat_echo], dl          ;  it stays open on a disk the
         mov     byte [bat_on], 1        ;  batch has the user change
         xor     ax, ax
@@ -1237,7 +1234,6 @@ bat_start:
         call    strcpy
         mov     si, [argp]
         jmp     strcpy
-        db      90h                     ; (bat_read.f and what follows even)
 
 ; the batch file's next line into bat_raw (NUL-terminated), counted in
 ; bat_line.  CF at its end
@@ -1286,8 +1282,11 @@ bat_read:
 .cr:    mov     byte [si], 0
         inc     dx
         cmp     dx, cx
-        jae     .back
-        cmp     byte [si+1], 10
+        mov     al, [si+1]
+        jb      .crn
+        call    .b1                     ; (the read's last: an LF after it,
+        jc      .back                   ;  read now, is this line's too)
+.crn:   cmp     al, 10
         jne     .back
         inc     dx
         jmp     .back
@@ -1299,20 +1298,22 @@ bat_read:
         dec     si                      ;  its LF, as COMMAND's)
 .eo:    mov     byte [si], 0
         jb      .back
-.sk:    mov     dx, bat_raw + LBUF + 1
-        mov     cx, 1
-        mov     ah, 3Fh
-        int     21h
-        jc      .at
-        dec     ax
-        jnz     .at                     ; (the file's end)
-        mov     al, [bat_raw + LBUF + 1]
+.sk:    call    .b1
+        jc      .at                     ; (the file's end)
         cmp     al, 1Ah
         je      .eof
         cmp     al, 10
-        jne     .sk
-.at:    xor     cx, cx                  ; the next line's place: here
-        xor     dx, dx
+        je      .at
+        cmp     al, 13                  ; (a CR ends it too, and an LF
+        jne     .sk                     ;  after that CR)
+        call    .b1
+        jc      .at
+        cmp     al, 10
+        je      .at
+        mov     cx, -1                  ; (not an LF: the next line's first,
+        db      0A9h                    ;  one back; TEST AX, imm16: skips
+.at:    xor     cx, cx                  ;  the next) the next line's place:
+        mov     dx, cx                  ;  here
         mov     ax, 4201h
         int     21h
         mov     [bat_pos], ax
@@ -1320,14 +1321,23 @@ bat_read:
         jmp     short .got
 .back:  add     [bat_pos], dx           ; (the next line's place)
         adc     word [bat_pos + 2], 0
-.got:   mov     ah, 3Eh
-        int     21h
+.got:   call    fclose
         clc
         ret
-.ce:    mov     ah, 3Eh
-        int     21h
+.ce:    call    fclose
 .end:   stc
         ret
+; the file's next byte -> AL; CF at its end.  CX changed
+.b1:    push    dx
+        mov     dx, bat_raw + LBUF + 1
+        mov     cx, 1
+        mov     ah, 3Fh
+        int     21h
+        pop     dx
+        jc      .b1x
+        cmp     ax, cx                  ; (0 read: CF)
+        mov     al, [bat_raw + LBUF + 1]
+.b1x:   ret
 
 ; the batch file won't open (AX the error): not there (2, 3) on a
 ; removable disk: asked for ("Insert disk with batch file", a key; CF
@@ -3158,9 +3168,7 @@ do_type:
         call    getarg1
         jne     .o
         jmp     err_param
-.o:     mov     dx, path1
-        mov     ax, 3D00h
-        int     21h
+.o:     call    open1
         jnc     .r
         jmp     err_notfound
 .r:     mov     [fh1], ax
@@ -3316,14 +3324,11 @@ do_copy:
         cmp     byte [pmode], 0         ; (pairs: the first one not there)
         jne     .nfm
         ; a device (COPY CON FILE)?
-        mov     dx, path1
-        mov     ax, 3D00h
-        int     21h
+        call    open1
         jc      .nf
         xchg    bx, ax
         call    isdev
-        mov     ah, 3Eh
-        int     21h
+        call    fclose
         or      dl, dl
         jz      .nf
         mov     di, src
@@ -3680,11 +3685,7 @@ zend:   call    d_ascii
         call    isdev
         jnz     .x
         mov     byte [kwr], 1
-        mov     byte [zbyte], 1Ah
-        mov     dx, zbyte
-        mov     cx, 1
-        mov     ah, 40h
-        int     21h
+        call    wrz
         call    ax5
         mov     si, e_full
         jc      .r
@@ -3730,8 +3731,7 @@ cat_end:
         call    ax5
         mov     si, e_wfail
         jc      .f
-.cl:    mov     ah, 3Eh                 ; closed whole: counted
-        int     21h
+.cl:    call    fclose                  ; closed whole: counted
         call    ax5
         mov     si, e_wfail
         jc      .fc
@@ -3754,7 +3754,9 @@ cat_end:
         cmp     al, 3                   ; the user's: opened again, put back
         je      kput.r
         ret
-.fd:    mov     ah, 41h                 ; one made: deleted
+.fd:                                    ; one made: deleted
+..@fdel:
+        mov     ah, 41h                 ; (DX)
         int     21h
 .fx:    ret
 .kept:  mov     dx, dst
@@ -3799,9 +3801,7 @@ cat_end:
         call    zend
         jnc     .cl
 .tf:    call    err
-        mov     bx, [fh2]
-        mov     ah, 3Eh
-        int     21h
+        call    cl2
         jmp     .x
 .tw:    mov     si, e_wfail
         jmp     short .tf
@@ -3830,14 +3830,11 @@ cat_fail:
         jne     .d
 .k:     mov     [dstate], al
         jmp     cat_end
-.d:     mov     ah, 3Eh
-        int     21h
+.d:     call    fclose
         cmp     byte [dchg], 0          ; (the disk changed: not by name)
         jne     dchg_said
         mov     dx, dst
-        mov     ah, 41h
-        int     21h
-        ret
+        jmp     ..@fdel
 ; the disk changed under it ("Invalid disk change"): nothing more done by
 ; name, which would be done to the disk in now; said
 dchg_said:
@@ -3862,17 +3859,13 @@ kput:   cmp     byte [dchg], 0          ; the disk changed: closed only (a
         jne     .c                      ;  put-back would go to the other)
         cmp     byte [kwr], 0           ; nothing written in it: closed as
         jne     .p                      ;  it is (no cut, no date: nothing
-        mov     ah, 3Eh                 ;  asked of a disk refusing writes)
-        int     21h
-        ret
-.c:     mov     ah, 3Eh
-        int     21h
+        jmp     fclose                  ;  asked of a disk refusing writes)
+.c:     call    fclose
         jmp     dchg_said
 .p:     call    krest
         pushf
         call    kdate
-        mov     ah, 3Eh
-        int     21h
+        call    fclose
         popf
         jnc     .x
 .r:     cmp     byte [dchg], 0
@@ -3896,12 +3889,10 @@ kput:   cmp     byte [dchg], 0          ; the disk changed: closed only (a
         call    krest
         pushf
         call    kdate
-        mov     ah, 3Eh
-        int     21h
+        call    fclose
         popf
         jnc     .x
-.o:     mov     ah, 3Eh                 ; (not it: closed, untouched)
-        int     21h
+.o:     call    fclose                  ; (not it: closed, untouched)
 .n:     mov     si, e_nrest
         jmp     err
 .x:     cmp     byte [kmoved], 0        ; cut at its ^Z: said, when there
@@ -3938,11 +3929,7 @@ krest:  mov     dx, [kpos]
         mov     cx, [zpos + 2]
         call    trunc
         jc      .x
-        mov     byte [zbyte], 1Ah
-        mov     dx, zbyte
-        mov     cx, 1
-        mov     ah, 40h
-        int     21h
+        call    wrz
         jc      .x
         dec     ax
         jz      .x
@@ -3977,10 +3964,8 @@ kmove:  mov     ax, [kpos]
         or      ax, ax
         jz      .e
         push    ax
-        mov     dx, [mwr]               ; ... to mwr (below it: what it
-        mov     cx, [mwr + 2]           ;  writes over, read already)
-        mov     ax, 4200h
-        int     21h
+        call    mseek                   ; ... to mwr (below it: what it
+                                        ;  writes over, read already)
         pop     cx
         mov     byte [kmoved], 1
         mov     si, e_wfail
@@ -3998,10 +3983,7 @@ kmove:  mov     ax, [kpos]
         add     [mwr], ax
         adc     word [mwr + 2], 0
         jmp     .l
-.e:     mov     dx, [mwr]
-        mov     cx, [mwr + 2]
-        mov     ax, 4200h
-        int     21h
+.e:     call    mseek
 .x:     ret
 
 ; copy src (BX: its name part) to its destination.  CF to stop (the
@@ -4119,8 +4101,7 @@ copy_one:
         jc      .loop
         xchg    bx, ax
         call    isdev
-        mov     ah, 3Eh
-        int     21h
+        call    fclose
         or      dl, dl
         jz      .loop
         mov     byte [pnow], 1
@@ -4145,9 +4126,7 @@ copy_one:
         jnc     .loop
         call    err                     ; (nothing written in it: closed)
         call    close2
-        mov     byte [dstate], 0
-        stc
-        ret
+        jmp     .dz
 .loop:  mov     bx, [fh1]               ; a device's text ends at a ^Z, and
         call    isdev                   ;  in ASCII a file's
         call    s_ascii
@@ -4175,9 +4154,8 @@ copy_one:
         mov     bx, [fh2]
         mov     ax, 5701h
         int     21h
-.cl:    mov     bx, [fh2]               ; (its close refused: as a write
-        mov     ah, 3Eh                 ;  error, deleted)
-        int     21h
+.cl:    call    cl2                     ; (its close refused: as a write
+                                        ;  error, deleted)
         call    ax5
         pushf
         call    close1
@@ -4215,9 +4193,7 @@ copy_one:
         call    close1                  ;  delete ask again: a Retry there
         cmp     byte [dstate], 1        ;  leaves no lost clusters; one not
         jne     .dz                     ;  made yet: nothing to delete)
-        mov     bx, [fh2]
-        mov     ah, 3Eh
-        int     21h
+        call    cl2
         cmp     byte [dchg], 0          ; (the disk changed: not by name)
         jne     .ddc
         mov     dx, dst
@@ -4378,11 +4354,29 @@ seek:   mov     ah, 42h
         int     21h
         ret
 
-close2: mov     bx, [fh2]               ; COPY's and TYPE's files closed
-        mov     ah, 3Eh
-        int     21h
+close2: call    cl2                     ; COPY's and TYPE's files closed
 close1: mov     bx, [fh1]
-        mov     ah, 3Eh
+fclose: mov     ah, 3Eh                 ; (BX)
+        int     21h
+        ret
+cl2:    mov     bx, [fh2]
+        jmp     fclose
+; path1 (in_name) opened to read -> AX, CF
+open1:  mov     dx, in_name
+        mov     ax, 3D00h
+        int     21h
+        ret
+; BX's file: a ^Z written at its pointer
+wrz:    mov     byte [zbyte], 1Ah
+        mov     dx, zbyte
+        mov     cx, 1
+        mov     ah, 40h
+        int     21h
+        ret
+; BX's pointer to mwr (kmove)
+mseek:  mov     dx, [mwr]
+        mov     cx, [mwr + 2]
+        mov     ax, 4200h
         int     21h
         ret
 
@@ -5838,6 +5832,7 @@ ce9         db 'Printer out of paper', 0
 ceA         db 'Write fault', 0
 ceB         db 'Read fault', 0
 ceC         db 'General failure', 0
+ceF         db 'Invalid disk change', 0     ; (0Fh)
             times -(ce0 - e_deep != 16) db 0
 s_reading   db ' reading drive ', 0
 s_writing   db ' writing drive ', 0
@@ -5967,16 +5962,16 @@ tail        equ pat                 ; (130 bytes: a program's command tail
                                     ;  together)
             resb 16                 ; (for canon2)
 src         resb 80                 ; (a name found: 79 characters, checked)
-; COPY's two names checked, in prog..src, which COPY doesn't use otherwise.
-; Neither getarg nor canon has a bound: path2 (a line's last word, up to
-; LBUF-6 characters) runs on into prog, so canon1 starts past that, with
-; room for any real file's name (X:\, 63 characters of directory, \, 8.3)
-; before canon2, and canon2 (that directory, then path2 and a name) ends
-; before src
-canon1      equ prog + 46
-canon2      equ canon1 + 82
-        times   -(prog != out_name + 80 || canon1 - prog < LBUF - 6 + 1 - 80) resb 1
-        times   -(canon2 - canon1 < 3 + 65 + 1 + 12 + 1) resb 1
+; COPY's two names checked, which it doesn't use otherwise.  Neither getarg
+; nor canon has a bound.  canon1, src's (X:\, 63 characters of directory,
+; \, its 79), in bat_raw and cword (a batch line read and expanded already,
+; the command's word looked up); canon2 in prog..src: path2 (a line's last
+; word, up to LBUF-6 characters) runs on into prog, so it starts past that,
+; and canon2 (that directory, then path2 and a name) ends before src
+canon1      equ bat_raw
+canon2      equ prog + 46
+        times   -(cword != bat_raw + LBUF + 2 || in_name - canon1 < 3 + 63 + 1 + 79 + 1) resb 1
+        times   -(prog != out_name + 80 || canon2 - prog < LBUF - 6 + 1 - 80) resb 1
         times   -(src - canon2 < 3 + 65 + 1 + (LBUF - 6) + 13 + 1) resb 1
 dst         resb 80
 ; DIR's canon (pat's directory part, 79 characters at most, after the
@@ -5984,7 +5979,7 @@ dst         resb 80
 ; which DIR doesn't use; never into dst
         times   -(dst - pat_dir < 3 + 65 + 1 + 79 + 1) resb 1
 setbuf      equ src                 ; (PATH, PROMPT, COMSPEC: no COPY then)
-setbuf2     resb 80
+setbuf2     resb 80                 ; (and the end of a long dst's: COPY's)
 failed      resb 1                  ; the command didn't work
 aborted     resb 1                  ; (Ctrl-C: unwind closes what was open)
 sv_busy     resb 1                  ; (the saver: Ctrl-C does nothing)
