@@ -17,6 +17,7 @@ S_SIZE  equ 12                  ; dword
 S_DLBA  equ 16                  ; directory entry: sector,
 S_DOFF  equ 18                  ;   offset (as d_lba, d_off)
 S_NAME  equ 20                  ; 11
+S_GEN   equ 31                  ; its floppy's mount (mgen: KDISK.INC rule 9)
 S_POS   equ 32                  ; dword
 S_CCL   equ 36                  ; cached cluster (0 = none)
 S_CIX   equ 38                  ;   and its index in the chain
@@ -29,7 +30,8 @@ SF_DIRTY equ 40h                ; written: update the directory at close
 SF_RAW  equ 20h                 ; device in raw (binary) mode
 SF_STAMP equ 10h                ; time/date set by the program
 SF_LOST equ 08h                 ; its drive's changed FAT dropped (fat_drop,
-                                ;  KDISK.INC rule 4): no more writes, its
+                                ;  KDISK.INC rule 4), or another mount's
+                                ;  (rule 9): no more reads or writes, its
                                 ;  entry left as the disk has it
 DEV_CON equ 0
 DEV_NUL equ 1
@@ -197,6 +199,10 @@ sft_fill:
         mov     byte [si+S_REF], 1
         mov     al, [act]
         mov     [si+S_DRV], al
+        push    ax
+        call    gen_of
+        mov     [si+S_GEN], ah
+        pop     ax
         mov     al, [de+11]
         mov     [si+S_ATTR], al
         push    si
@@ -580,9 +586,12 @@ sft_release:
 sft_commit:
         test    byte [si+S_FLAGS], SF_DIRTY
         jz      .ok
-        test    byte [si+S_FLAGS], SF_LOST
-        jnz     .lost
-        push    bx
+        call    sft_chk                 ; (the disk it was opened on still)
+        jnc     .go
+        cmp     ax, 5
+        je      .lost
+        ret
+.go:    push    bx
         push    dx
         push    di
         mov     al, [si+S_DRV]
@@ -636,6 +645,39 @@ sft_commit:
         stc                             ;  chain its changes named is gone)
         ret
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
+
+; SFT SI (a file) still on the disk it was opened on?  A floppy's drive
+; is looked at first (drv_ready: its change line; another disk with this
+; one's files open is INT 24h's "Invalid disk change", KDISK.INC rule 4).
+; Another mount's file, or one SF_LOST: SF_LOST, CF, AX = 5 (rule 9).  CF:
+; AX = drv_ready's error otherwise.  SI kept
+sft_chk:
+        test    byte [si+S_FLAGS], SF_LOST
+        jnz     .lost
+        mov     al, [si+S_DRV]
+        cmp     al, NFLOP
+        jae     .ok
+        push    si
+        push    es
+        call    drv_ready
+        pop     es
+        pop     si
+        pushf
+        push    ax
+        mov     al, [si+S_DRV]
+        call    gen_of
+        cmp     ah, [si+S_GEN]
+        pop     ax
+        je      .k
+        popf
+        or      byte [si+S_FLAGS], SF_LOST
+.lost:  mov     ax, 5
+        stc
+        ret
+.k:     popf
+        ret
+.ok:    clc
+        ret
 
 ; use_drive for AL keeping SI
 use_drive_si:
@@ -692,6 +734,10 @@ f_40:   mov     bx, [bp+F_BX]           ; WRITE
 ; as segment + offset < 16 in rw_seg / rw_off; the file's drive, with
 ; its FAT.  CF: AX = error
 rw_start:
+        push    cx
+        call    sft_chk
+        pop     cx
+        jc      .x
         mov     [rw_sft], si
         mov     [rw_left], cx
         mov     word [rw_done], 0
@@ -706,6 +752,7 @@ rw_start:
         mov     al, [si+S_DRV]          ; its drive, and that drive's FAT
         call    use_drive_si
         jmp     fat_load
+.x:     ret
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; advance by AX bytes
 rw_step:
@@ -1033,15 +1080,14 @@ rw_t0       resb 1              ; sector in the track a write run starts at
             alignb 2
 rw_a1       resw 1              ; the first cluster this write took (0: none),
 rw_ap       resw 1              ;   linked after this one (0: the first)
-rw_sz0      resw 2              ; the file's size as the write began
+rw_sz0      resw 2              ; the file's size as the write began,
+rw_p0       resw 2              ;  its position,
+rw_f0       resb 1              ;  and its flags
 section .text
 
 file_write:
-        test    byte [si+S_FLAGS], SF_LOST      ; (fat_drop: no more: the
-        mov     ax, 5                           ;  chain it had is gone)
-        jnz     .ex
-        call    rw_start
-        jc      .ex
+        call    rw_start                ; (refused if SF_LOST: the chain it
+        jc      .ex                     ;  had is gone; rw_start's sft_chk)
         call    fat_keep                ; (what a failed write gives back:
         xor     ax, ax                  ;  the clusters it took, and the
         mov     [rw_a1], ax             ;  FAT's changed state, KDISK.INC
@@ -1049,6 +1095,12 @@ file_write:
         mov     [rw_sz0], ax
         mov     ax, [si+S_SIZE+2]
         mov     [rw_sz0+2], ax
+        mov     ax, [si+S_POS]
+        mov     [rw_p0], ax
+        mov     ax, [si+S_POS+2]
+        mov     [rw_p0+2], ax
+        mov     al, [si+S_FLAGS]
+        mov     [rw_f0], al
         or      byte [si+S_FLAGS], SF_DIRTY
         or      cx, cx
         jnz     .loop
@@ -1243,7 +1295,17 @@ file_write:
         mov     ax, [rw_sz0+2]
         mov     [si+S_SIZE+2], ax
         mov     word [si+S_CCL], 0
-.ee:    pop     ax
+.ee:    mov     ax, [rw_p0]             ; the position it had (the write
+        mov     [si+S_POS], ax          ;  failed), and with nothing written
+        mov     ax, [rw_p0+2]           ;  its flags: no entry change to go
+        mov     [si+S_POS+2], ax
+        cmp     word [rw_done], 0
+        jne     .ed
+        mov     al, [rw_f0]
+        xor     al, [si+S_FLAGS]
+        and     al, SF_DIRTY
+        xor     [si+S_FLAGS], al
+.ed:    pop     ax
 .ex:    stc
         ret
 ; the file grew?
@@ -1315,7 +1377,8 @@ file_write:
         or      ax, [si+S_POS]
         jnz     .tc
         mov     [si+S_CLU], ax
-.tc:    call    sft_commit
+.tc:    call    sft_commit.go           ; (rw_start looked at the disk: no
+                                        ;  second look to drop the FAT cache)
         jc      .tb
         add     sp, 6
         ret
