@@ -549,11 +549,13 @@ fat_flush:
         call    use_drive
         pop     es
         popa
-        push    ax
-        mov     al, [fat_drv]           ; (what it holds can't go out now)
-        call    fat_drop
-        pop     ax
-        mov     al, [io_err]
+        mov     al, [io_err]            ; (still changed: its sectors go out
+                                        ;  at the next flush.  It holds only
+                                        ;  clusters taken, and frees whose
+                                        ;  entry is on the disk already: the
+                                        ;  kernel writes a chain before the
+                                        ;  entry that names it, and an entry
+                                        ;  before the frees it lets go of)
         xor     ah, ah
         stc
         ret
@@ -588,38 +590,6 @@ fat_back:
         mov     [fat_dmask], ax
         pop     ax
         ret
-
-; a write to drive AL failed (Fail, or Abort's close): the cached FAT's
-; changes, if it is that drive's, are dropped, and the disk keeps its own,
-; which its directory matches (the chain goes out before the entry that
-; names it).  Else a later flush, once the disk took writes again (a
-; write-protect tab taken off), carried a truncation's or a create-over's
-; freed clusters while their entries still named them.  Each open file of
-; the drive with changes pending is marked SF_LOST: written no more, its
-; entry not updated (KFILE.INC).  (C:'s FAT is KHD.INC's, kept apart.)
-; All kept
-fat_drop:
-        cmp     al, [fat_drv]
-        jne     .x
-        cmp     byte [fat_dirty], 0
-        je      .x
-        call    fat_forget
-        push    bx
-        push    cx
-        mov     bx, sft
-        mov     cx, NSFT
-.l:     cmp     byte [bx+S_REF], 0
-        je      .n
-        cmp     [bx+S_DRV], al
-        jne     .n
-        test    byte [bx+S_FLAGS], SF_DIRTY
-        jz      .n
-        or      byte [bx+S_FLAGS], SF_LOST
-.n:     add     bx, SFT_SZ
-        loop    .l
-        pop     cx
-        pop     bx
-.x:     ret
 
 ; drive AL's FAT to disk, if it is the one cached (KHD.INC: and C:'s)
 fat_flush_drv:
@@ -947,12 +917,7 @@ buf_put:
         call    disk_io
         pop     bx
         jnc     .ok
-        push    ax
-        mov     al, [buf_drv+bx]        ; (and the cached FAT's changes:
-        call    fat_drop                ;  fat_drop)
-        pop     ax
-        mov     byte [buf_drv+bx], 0FFh
-        stc
+        mov     byte [buf_drv+bx], 0FFh ; (CF stays set: not the disk's now)
 .ok:    pop     es
         pop     dx
         pop     cx
@@ -1675,7 +1640,14 @@ crit_disk:
 .fail:  mov     al, 3
 .x:     ret
         db      90h                     ; (parity: f_36.l and on as they were)
-.abort: cmp     byte [indos], 0         ; (outside INT 21h the place holds
+.abort: cmp     byte [io_op], 3         ; a write: the drive's buffers are
+        jne     .ab                     ;  the disk's no more (the one it
+        mov     al, [io_drv]            ;  wrote never returns to buf_put):
+        call    buf_inval               ;  read again (write-through: none
+.ab:    cmp     byte [term_now], 0      ;  holds anything else).  In a
+        jne     .fail                   ;  terminate's closes: Fail (else
+        cmp     byte [indos], 0         ;  each Abort terminated again)
+                                        ; (outside INT 21h the place holds
         je      .t                      ;  the last call's, maybe another
         cmp     byte [kstack_top - F_SIZE + F_AX + 1], 4Bh      ; task's)
         je      .fail

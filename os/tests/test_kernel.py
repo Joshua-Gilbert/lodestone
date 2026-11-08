@@ -2100,11 +2100,14 @@ def t_spacenames():
 
 def t_wpfail():
     """A write-protected floppy, each kind of call that changes the FAT or a directory refused, F at INT 24h
-    (Fail): nothing of it reaches the disk once the tab is off.  The cached FAT's changes were kept and the
-    next write carried them: COPY N.TXT K.TXT (a create over K: its chain freed before its entry, which the
-    disk refused) left K with 1 cluster of its 10 and Z.TXT, written next, cross-linked with it.  Now a
-    failed write drops them (fat_drop), and a file held open across it writes no more (SF_LOST).  Retry,
-    with the tab off by then, still works."""
+    (Fail): nothing of it reaches the disk once the tab is off.  The cached FAT's changes went out with the
+    next write: COPY N.TXT K.TXT (a create over K: its chain freed before its entry, which the disk refused)
+    left K with 1 cluster of its 10 and Z.TXT, written next, cross-linked with it.  Now the kernel writes a
+    chain before the entry that names it and an entry before the frees it lets go of, so a cached change is
+    always right to write later; a buffer whose write failed (Fail or Abort) is read again.  Also: a FAT
+    flush failing on its second run, Abort at a create over K (with the program's own INT 24h, and at the
+    shell's prompt: one prompt, then terminate's closes Fail), another open file's writes kept across a
+    failed one.  Retry, with the tab off by then, still works."""
     com = os.path.join(OUT, 'WPFAIL.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'WPFAIL.ASM')], check=True)
     big = b'keep-me\x1a' + b'T' * 5000
@@ -2138,8 +2141,7 @@ def t_wpfail():
               'consistent' % cmd.upper(), 'Fail?' in o and f.get('A:\\K.TXT') == big and not probs
               and f.get('A:\\Z.TXT') == b'hello\r\n' and f.get('A:\\C3.TXT') == b'c' * 1500, (o, probs, len(f.get('A:\\K.TXT') or b'')))
     # a file held open across the failed write (100 bytes: through a sector buffer): written again after the tab
-    # is off, then closed.  Empty, its first cluster was taken in the cached FAT, which the failure dropped: written
-    # on, it named a cluster the disk had free (SF_LOST: no more writes, its entry left as it was)
+    # is off, then closed: the second write whole, the cluster the first took in the cached FAT written with it
     for kdata in (big, b''):
         k = ktest.KPC(image('wpf.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'K.TXT=' + mkf('wpk2', kdata),
                             'WPFAIL.COM=' + com)); k.start()
@@ -2156,11 +2158,102 @@ def t_wpfail():
         sh.run('echo hello> z.txt'); sh.run('echo hello2> z2.txt')
         f = fs(k); probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
         kk = f.get('A:\\K.TXT')
-        check('a file held open (%d bytes): its write refused (Fail), the tab off, written again and closed: the disk '
-              'consistent, K.TXT as it was or with the second write whole%s' % (len(kdata), '' if kdata else
-              ' (empty: "W2 err 05", its first cluster gone with the dropped FAT)'),
-              'W1 err' in o and not probs and kk in (kdata, kdata + b'w' * 100) and f.get('A:\\Z.TXT') == b'hello\r\n'
-              and (kdata or 'W2 err 05' in o), (o, probs, len(kk or b'')))
+        check('a file held open (%d bytes): its write refused (Fail), the tab off, written again and closed: the '
+              'disk consistent, K.TXT with the second write whole' % len(kdata),
+              'W1 err' in o and 'W2 ok' in o and 'C ok' in o and not probs and kk == kdata + b'w' * 100
+              and f.get('A:\\Z.TXT') == b'hello\r\n', (o, probs, len(kk or b'')))
+    def probe(name):
+        c = os.path.join(OUT, name + '.COM')
+        subprocess.run(['nasm', '-f', 'bin', '-o', c, os.path.join(HERE, name + '.ASM')], check=True)
+        return name + '.COM=' + c
+    # a FAT flush failing on its second run (FAT sector 3 refuses, the first run gone out): the cache kept
+    # changed, so the next flush (terminate's, R at the shell's prompt) writes it whole.  K's entry, refused at
+    # its close, still says 1000 bytes: its chain the longer, nothing cross-linked
+    k = ktest.KPC(image('wpp.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'K.TXT=' + mkf('wpk3', b'k' * 1000),
+                        'FILLER.BIN=' + mkf('wpfill', b'f' * 420000), probe('WPAPPK'))); k.start()
+    sh = Shell(k); pc = k.pc; d = pc.drives[0]
+    class Bad:                                          # (writes to LBA 3 refused while on)
+        on = False
+        def __bool__(s):
+            if not s.on: return False
+            cx, dx, al = pc.r('cx'), pc.r('dx'), pc.r('ax') & 0xFF
+            lba = (((cx >> 8) | ((cx & 0xC0) << 2)) * d.heads + (dx >> 8)) * d.spt + (cx & 63) - 1
+            return lba <= 3 < lba + al
+    bad = Bad(); d.wp = bad; bad.on = True
+    o = answer(k, 'wpappk', 'r')
+    bad.on = False
+    sh.run('echo hello> z.txt'); sh.run('copy k.txt k2.txt')
+    f = fs(k); probs = fatcheck.check(bytes(d.img))[0]
+    check('a FAT flush failing on its second run (WPAPPK, Fail), then R at terminate\'s flush: no cluster free in a '
+          'chain, none cross-linked (K.TXT\'s refused entry: its chain the longer, at worst), K.TXT\'s 1000 bytes kept',
+          'Fail?' in o and all('K.TXT' in p and 'chain has' in p for p in probs) and f.get('A:\\K.TXT') == b'k' * 1000
+          and f.get('A:\\Z.TXT') == b'hello\r\n' and f.get('A:\\K2.TXT') == b'k' * 1000, (o, probs))
+    # Abort at a create over K: the directory buffer it wrote read again (it was left as written, and the next
+    # write to that sector took K's new entry, size 0, out: K emptied, its chain lost); terminate's closes
+    # and flush Fail an Abort (each one terminated again, the prompt back)
+    for name, keys, what in (('WPCROVA', '', 'its own INT 24h'), ('WPCROV', 'a', 'A at the shell\'s prompt')):
+        k = ktest.KPC(image('wpa.img', os.path.join(GOS, 'src', 'LCMD.COM'), *files, probe(name))); k.start()
+        sh = Shell(k)
+        k.pc.drives[0].wp = True
+        o = answer(k, name.lower(), keys or 'f')
+        k.pc.drives[0].wp = False
+        sh.run('echo hello> z.txt'); sh.run('copy c.txt c3.txt')
+        f = fs(k); probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
+        check('a create over K.TXT on a write-protected A:, Abort (%s): one prompt at most; the tab off, two files '
+              'written: K.TXT as it was, the disk consistent' % what, o.count('Fail?') == (1 if keys else 0)
+              and f.get('A:\\K.TXT') == big and not probs and f.get('A:\\Z.TXT') == b'hello\r\n', (o, probs))
+    # a cut (a write of 0 bytes at 100) on the write-protected disk, Fail: its entry, the new size, goes first,
+    # and only then the clusters past it are freed; refused, nothing is freed (they went out later while K's
+    # entry, refused too, still named them: cross-linked with the next file written)
+    k = ktest.KPC(image('wpt.img', os.path.join(GOS, 'src', 'LCMD.COM'), *files, probe('WPTRUNC'))); k.start()
+    sh = Shell(k)
+    k.pc.drives[0].wp = True
+    o = answer(k, 'wptrunc', 'f')
+    k.pc.drives[0].wp = False
+    sh.run('echo hello> z.txt'); sh.run('copy c.txt c3.txt')
+    f = fs(k); probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
+    check('K.TXT cut at 100 bytes on a write-protected A: (a write of 0 bytes), Fail: refused ("T-"); the tab off, '
+          'two files written: K.TXT as it was, the disk consistent', 'T-' in o and f.get('A:\\K.TXT') == big
+          and not probs and f.get('A:\\C3.TXT') == b'c' * 1500, (o, probs))
+    # an append onto a whole cluster (a cluster taken, the FAT changed, before its write fails) with its own
+    # INT 24h answering Abort always: terminate's closes (that handler still) and its flush (the shell's: A)
+    # Fail an Abort (each one terminated again, and asked again, for ever)
+    kw = b'k' * 5120
+    k = ktest.KPC(image('wpt.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'K.TXT=' + mkf('wpk5', kw),
+                        probe('WPAPPA'))); k.start()
+    sh = Shell(k)
+    k.pc.drives[0].wp = True
+    o = answer(k, 'wpappa', 'a')
+    k.pc.drives[0].wp = False
+    back = sh.run('ver')
+    sh.run('echo hello> z.txt')
+    f = fs(k); probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
+    check('an append refused on a write-protected A: (Abort, its own INT 24h), A at the shell\'s prompt (%d): '
+          'terminate\'s closes and flush Fail an Abort, the prompt back; the tab off: K.TXT as it was, the disk '
+          'consistent but for the cluster the append took (its chain the longer: lost at worst)' % o.count('Fail?'),
+          o.count('Fail?') == 1 and 'Lodestone' in back and f.get('A:\\K.TXT') == kw
+          and all('K.TXT' in p and 'chain has' in p for p in probs), (o, probs))
+    # another file open and written, then a failed create (Fail), then written again: none of it lost
+    kd = b'keep-me' + b'T' * 1000
+    k = ktest.KPC(image('wpc.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'K.TXT=' + mkf('wpk4', kd), probe('WPCOLL')))
+    k.start()
+    sh = Shell(k); pc = k.pc
+    k.key('cls'); k.key(ktest.ENTER)
+    n0 = len(pc.tty)
+    k.key('wpcoll'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'A' in ''.join(pc.tty)[n0 + 6:] or pc.crash, 15); k.settle()
+    pc.drives[0].wp = True
+    k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Z' in ''.join(pc.tty)[n0 + 6:] or pc.crash, 15); k.settle()
+    pc.drives[0].wp = False
+    k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'C' in ''.join(pc.tty)[n0 + 6:].replace('WPCOLL', '') or pc.crash, 15); k.settle()
+    o = ''.join(pc.tty)[n0:]
+    f = fs(k); probs = fatcheck.check(bytes(pc.drives[0].img))[0]
+    check('K.TXT open, 600 bytes written, a create on the write-protected disk refused (Fail), the tab off, 600 '
+          'more and closed: K.TXT with both, its writes and close accepted, the disk consistent',
+          'A+' in o and 'Z-' in o and 'B+' in o and 'C+' in o and f.get('A:\\K.TXT') == kd + b'w' * 1200 and not probs,
+          (o, probs, len(f.get('A:\\K.TXT') or b'')))
     # Retry with the tab off by then: done after all
     k = ktest.KPC(image('wpf.img', os.path.join(GOS, 'src', 'LCMD.COM'), *files)); k.start()
     sh = Shell(k)
