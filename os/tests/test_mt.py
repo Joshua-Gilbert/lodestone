@@ -64,10 +64,14 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (6 bytes after 4359h on
-# 2026-11-08, with a failed write's rules), and a change past it moves image_end and bss_end.  The UI's pads,
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (4 bytes after 457Bh on
+# 2026-11-08, with a floppy's mount rules), and a change past it moves image_end and bss_end.  The UI's pads,
 # UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4360, 'bss_end': 0x7760, 'ui_keep_end': 0x6804}  # (4170h/7570h before a failed write's rules:
+OFF_MAP ={'image_end': 0x4580, 'bss_end': 0x79A0, 'ui_keep_end': 0x6804}  # (4360h/7760h before a floppy's mount
+                                        #  rules: a file's mount number, "Invalid disk change" while
+                                        #  files are open, the current directory found again by name,
+                                        #  broken links past the disk's end, 2026-11-08;
+                                        #  4170h/7570h before a failed write's rules:
                                         #  each disk's FAT its own, the clusters a failed write took given
                                         #  back, chain walks that stop on a free entry, and "Invalid disk
                                         #  change" while the old disk has changes to go, 2026-11-08;
@@ -7068,7 +7072,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 579.8 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '579.8', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 579.2 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '579.2', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)

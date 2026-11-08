@@ -252,7 +252,10 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '563.7', 88: '579.8'}   # (a failed write's rules: each disk's FAT its own, the clusters a failed
+MEM_044 = {0: '563.1', 88: '579.2'}   # (a floppy's mount rules: a file's mount number, "Invalid disk change"
+                                      #  while files are open, the current directory found again by name, broken
+                                      #  links past the disk's end: 576 bytes, 0.6 KB less, 2026-11-08;
+                                      #  a failed write's rules: each disk's FAT its own, the clusters a failed
                                       #  write took given back, chain walks that stop on a free entry, "Invalid disk
                                       #  change": 496 bytes, 0.5 KB less, 0.4 KB with EMS, 2026-11-08;
                                       #  fat_drop and SF_LOST out, the writes in order (an entry before the frees

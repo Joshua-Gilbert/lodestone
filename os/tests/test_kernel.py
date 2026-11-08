@@ -2801,24 +2801,210 @@ def t_wpfail():
                     if img[root + i:root + i + 11] == name)
     files2 = [os.path.join(GOS, 'src', 'LCMD.COM'), 'K.TXT=' + mkf('wpb1', b'k' * 3000), 'SUB\\'] + \
              ['SUB\\F%02d.TXT=%s' % (i, mkf('wpb_f%d' % i, b'x' * 10)) for i in range(14)]
-    for what, name, cmd in (('an append to K.TXT', b'K       TXT', 'echo hi>> k.txt'),
-                            ('a file made in the full SUB', b'SUB        ', 'echo hi> sub\\new.txt')):
+    # (also its first entry bad, FF7h, or reserved, FF0h: once taken for its end; and SUB's chain looping on
+    # itself: once walked for ever)
+    for what, name, cmd, v in (('an append to K.TXT', b'K       TXT', 'echo hi>> k.txt', 0),
+                               ('a file made in the full SUB', b'SUB        ', 'echo hi> sub\\new.txt', 0),
+                               ('an append to K.TXT (bad: FF7h)', b'K       TXT', 'echo hi>> k.txt', 0xFF7),
+                               ('an append to K.TXT (reserved: FF0h)', b'K       TXT', 'echo hi>> k.txt', 0xFF0),
+                               ('a file made in the full SUB (a loop)', b'SUB        ', 'echo hi> sub\\new.txt', None)):
         p = image('wpb.img', *files2)
         img = bytearray(open(p, 'rb').read())
         b = fatcheck.bpb(img)
-        fat12(img, first(img, name), 0)
+        fat12(img, first(img, name), first(img, name) if v is None else v)
         f2 = (b['res'] + b['spf']) * 512
         img[f2:f2 + b['spf'] * 512] = img[b['res'] * 512:(b['res'] + b['spf']) * 512]
         open(p, 'wb').write(img)
         h0 = bytes(img[b['res'] * 512:(b['res'] + b['nfat'] * b['spf']) * 512])
         k = ktest.KPC(p); k.start(); sh = Shell(k)
         o = sh.run(cmd)
-        o2 = sh.run('dir sub')
+        o2 = sh.run('dir sub' if v is not None else 'dir sub\\f13.txt')
         img = bytes(k.pc.drives[0].img)
         h1 = img[b['res'] * 512:(b['res'] + b['nfat'] * b['spf']) * 512]
-        check('%s, its chain broken (its first entry free): refused, the FAT as it was (no cluster taken, none '
+        check('%s, its chain broken (its first entry free unless said): refused, the FAT as it was (no cluster taken, none '
               'linked from entry 0), SUB\'s entries all there' % what, h1 == h0 and 'F13      TXT' in o2, (o, o2[-60:], h0[:3].hex(), h1[:3].hex(),
               sum(1 for i in range(len(h0)) if h0[i] != h1[i])))
+
+def t_mount():
+    """A floppy's mounts (KDISK.INC rules 1, 4, 7, 9): another disk in B: while a file is open on the old one,
+    with changes to go or none, and with the FAT cache moved to A: (each floppy's own FAT sector 0 sum): "Invalid
+    disk change", Fail: the file's later calls refused, the other disk untouched.  INT 21h 0Dh, then a program
+    rewriting the FAT (as CHKDSK /F, DEFRAG): the current directory kept.  A chain leading past the disk's end, or
+    into a bad or reserved entry, or a directory looping on itself: a broken chain, nothing written past the FAT."""
+    def mkf(n, b):
+        t = os.path.join(OUT, 'mnt_' + n.replace('\\', '_')); open(t, 'wb').write(b); return n + '=' + t
+    def probe(name, defs=()):
+        c = os.path.join(OUT, name + ''.join('_' + d for d in defs) + '.COM')
+        subprocess.run(['nasm', '-f', 'bin'] + ['-D' + d for d in defs] + ['-o', c, os.path.join(HERE, name + '.ASM')],
+                       check=True)
+        return name + '.COM=' + c
+    lcmd = os.path.join(GOS, 'src', 'LCMD.COM')
+    def run_swap(k, name, swap, keys):
+        pc = k.pc
+        k.key('cls'); k.key(ktest.ENTER)
+        n0 = len(pc.tty)
+        k.key(name); k.key(ktest.ENTER, settle=False)
+        pc.run_until(lambda: 'R' in ''.join(pc.tty)[n0 + len(name):] or pc.crash, 15); k.settle()
+        swap()
+        k.key(ktest.ENTER, settle=False)
+        for i, key in enumerate(keys):
+            pc.run_until(lambda: ''.join(pc.tty)[n0:].count('Fail?') > i or 'C' in ''.join(pc.tty)[n0 + len(name):]
+                         or pc.crash, 15)
+            if ''.join(pc.tty)[n0:].count('Fail?') <= i: break
+            pc.keys.append(ord(key))
+        pc.run_until(lambda: 'C' in ''.join(pc.tty)[n0 + len(name):] or pc.crash, 15); k.settle()
+        return ''.join(pc.tty)[n0 + len(name):]
+    kk = b'k' * 3000
+    b1 = image('mnt_b1.img', mkf('K.TXT', kk), mkf('X1.TXT', b'x' * 3000))
+    b2 = image('mnt_b2.img', mkf('P1.TXT', b'P' * 9000), mkf('P2.TXT', b'Q' * 9000), mkf('P3.TXT', b'R' * 900))
+    d1 = open(b1, 'rb').read(); d2 = bytearray(open(b2, 'rb').read()); d2[0:512] = d1[0:512]; d2 = bytes(d2)
+    for defs, what in (((), 'B:OUT.DAT written, the FAT cache moved to A:'),
+                       (('OPENK',), 'B:K.TXT open, nothing written'),
+                       (('OPENK', 'NOA'), 'B:K.TXT open, nothing written, the FAT cache B:\'s')):
+        k = ktest.KPC(image('mnt_a.img', lcmd, probe('MNTSWB', defs)), b=b1); k.start()
+        sh = Shell(k); pc = k.pc
+        first = pc.drives[1]; other = pcemu.Floppy(bytearray(d2)); other.change_err = True
+        def swap():
+            other.changed = True; pc.drives[1] = other
+        o = run_swap(k, 'mntswb', swap, 'f')
+        first.changed = True; pc.drives[1] = first
+        o2 = sh.run('dir b:') + sh.run('echo x> b:zz.txt')
+        img = bytes(first.img); probs = fatcheck.check(img)[0]; f = fatcheck.read_files(img)
+        check('%s, another disk (the same boot sector) in B:: "Invalid disk change" asked, Fail: the write refused '
+              '(B-5), %s; the other disk untouched; the first back: K.TXT as it was, the disk consistent'
+              % (what, 'its close too (C-5)' if not defs else 'its close lets it go (C+)'),
+              'Fail?' in o and 'B-5' in o and ('C-5' if not defs else 'C+') in o and bytes(other.img) == d2
+              and f.get('A:\\K.TXT') == kk and not [p for p in probs if 'lost clusters' not in p]
+              and f.get('A:\\ZZ.TXT') == b'x\r\n', (o, o2[-200:], probs))
+    # a file open on B: (nothing to go), another disk in B:, Retry with it still there: asked again
+    k = ktest.KPC(image('mnt_a.img', lcmd, probe('MNTSWB', ('OPENK',))), b=b1); k.start()
+    sh = Shell(k); pc = k.pc
+    first = pc.drives[1]; other = pcemu.Floppy(bytearray(d2)); other.change_err = True
+    def swap2():
+        other.changed = True; pc.drives[1] = other
+    o = run_swap(k, 'mntswb', swap2, 'rf')
+    check('... Retry with the other disk still in: asked again, then Fail: the write refused, nothing written to it',
+          o.count('Fail?') == 2 and 'B-5' in o and bytes(other.img) == d2, (o,))
+    # INT 21h 0Dh, then a program rewrites A:'s FAT sector 0 through INT 13h, INT 21h 0Dh: the current directory
+    # kept (found again by its name), its files listed
+    k = ktest.KPC(image('mnt_w.img', lcmd, probe('MNTFATW'), 'SUB\\', mkf('SUB\\A.TXT', b'a' * 100))); k.start()
+    sh = Shell(k)
+    sh.run('cd sub')
+    o = sh.run('mntfatw') + sh.run('cd') + sh.run('dir /w')
+    check('CD SUB, then MNTFATW (INT 21h 0Dh, the FAT rewritten through INT 13h, 0Dh): still A:\\SUB, A.TXT listed',
+          'Directory of  A:\\SUB' in o and 'A        TXT' in o and 'A:\\>' not in o, o[-300:])
+    # another disk in B: with nothing of the old one's open: mounted, B:'s current directory found on it by its
+    # name (MS-DOS's), else the root
+    s1 = image('mnt_s1.img', 'SUB\\', mkf('SUB\\ONE.TXT', b'1'))
+    s2 = image('mnt_s2.img', mkf('PAD.TXT', b'p' * 5000), 'SUB\\', mkf('SUB\\TWO.TXT', b'2'))
+    s3 = image('mnt_s3.img', mkf('THREE.TXT', b'3'))
+    k = ktest.KPC(image('mnt_sa.img', lcmd), b=s1); k.start()
+    sh = Shell(k); pc = k.pc
+    o1 = sh.run('cd b:sub') + sh.run('dir b:')
+    pc.drives[1] = pcemu.Floppy(s2); pc.drives[1].changed = True
+    o2 = sh.run('dir b:') + sh.run('cd b:')
+    pc.drives[1] = pcemu.Floppy(s3); pc.drives[1].changed = True
+    o3 = sh.run('dir b:') + sh.run('cd b:')
+    check('CD B:SUB, another disk with a SUB of its own (another cluster) in B:: its SUB\'s files, B:\\SUB; one '
+          'without: the root\'s, B:\\', 'ONE      TXT' in o1 and 'TWO      TXT' in o2 and '>B:\\SUB\n' in o2
+          and 'THREE    TXT' in o3 and '>B:\\\n' in o3, (o1[-150:], o2[-150:], o3[-150:]))
+    # ... from a batch file on A: (open while MNTFATW runs: the rewritten disk is still the same disk, its FAT
+    # sector 0 sum forgotten at 0Dh with nothing to go, not "Invalid disk change" for the rest of it)
+    k = ktest.KPC(image('mnt_w.img', lcmd, probe('MNTFATW'), 'SUB\\', mkf('SUB\\A.TXT', b'a' * 100),
+                        mkf('T.BAT', b'cd sub\r\nmntfatw\r\ncd\r\ndir /w\r\n'))); k.start()
+    sh = Shell(k)
+    o = sh.run('t')
+    check('... from a batch file on A:: no question asked, the batch file read on, still A:\\SUB, A.TXT listed',
+          'Fail?' not in o and 'Directory of  A:\\SUB' in o and 'A        TXT' in o, o[-300:])
+    # a write's INT 13h failing 06h (another disk put in B: after the call looked at the drive): not tried again
+    # on that disk; the next call sees the change ("Invalid disk change", Fail: the close refused)
+    k = ktest.KPC(image('mnt_a.img', lcmd, probe('MNTSWB', ('NOA',))), b=b1); k.start()
+    sh = Shell(k); pc = k.pc
+    first = pc.drives[1]; other = pcemu.Floppy(bytearray(d2)); other.change_err = True
+    st = {'arm': False}
+    dio = 0x600 + k.Y['disk_io']
+    def at_dio(pc):
+        if st['arm'] and k.addr == dio and pc.r('ax') & 0xFF == 1 and pc.r('ax') >> 8 == 3:
+            st['arm'] = False; other.changed = True; pc.drives[1] = other
+    k.hooks.append(at_dio)
+    o = run_swap(k, 'mntswb', lambda: st.update(arm=True), 'f')
+    first.changed = True; pc.drives[1] = first
+    o2 = sh.run('dir b:')
+    img = bytes(first.img); probs = fatcheck.check(img)[0]
+    check('a write\'s INT 13h failing 06h (another disk put in under it): refused (B-), the other disk untouched; '
+          'the close asks "Invalid disk change", Fail: refused (C-5); the first back: consistent but for lost '
+          'clusters', not st['arm'] and 'B-' in o and 'B+' not in o and 'C-5' in o and bytes(other.img) == d2
+          and not [p for p in probs if 'lost clusters' not in p], (o, probs))
+    # a file open on B: (nothing to go), the change line set and B:'s boot sector failing to read once: INT 24h
+    # for that read (Retry: the same disk, the file goes on), not "Invalid disk change"
+    k = ktest.KPC(image('mnt_a.img', lcmd, probe('MNTSWB', ('OPENK',))), b=b1); k.start()
+    sh = Shell(k); pc = k.pc; first = pc.drives[1]
+    def badboot():
+        first.bad = {0}; first.changed = True
+    k.key('cls'); k.key(ktest.ENTER)
+    n0 = len(pc.tty)
+    k.key('mntswb'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'R' in ''.join(pc.tty)[n0 + 6:] or pc.crash, 15); k.settle()
+    badboot(); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Fail?' in ''.join(pc.tty)[n0:] or 'C' in ''.join(pc.tty)[n0 + 6:] or pc.crash, 15); k.settle()
+    first.bad = set(); pc.keys.append(ord('r'))
+    pc.run_until(lambda: 'C' in ''.join(pc.tty)[n0 + 6:] or pc.crash, 15); k.settle()
+    o = ''.join(pc.tty)[n0:]
+    check('B:K.TXT open, B:\'s boot sector unreadable at the change line\'s look: "reading drive B" asked (not '
+          '"Invalid disk change"), Retry: the write goes on (B+), closed (C+)', 'reading drive B' in o
+          and 'General failure' not in o and 'B+' in o and 'C+' in o, o[-300:])
+    # rule 7: a chain leading past the disk's end (B:, 720 KB: cluster 500h).  fat_get read the cache past B:'s
+    # FAT (A:'s entries, an end), DEL's fat_set marked a sector past it, and the flush wrote B:'s root with it
+    def fat12(img, off, n, v=None):
+        o = off + n * 3 // 2; w = struct.unpack_from('<H', img, o)[0]
+        if v is None: return (w >> 4) if n & 1 else (w & 0xFFF)
+        struct.pack_into('<H', img, o, ((w & 0x000F) | (v << 4)) if n & 1 else ((w & 0xF000) | v))
+    def ent(img, off, n, name):
+        return next(struct.unpack_from('<H', img, off + i + 26)[0] for i in range(0, n * 32, 32)
+                    if img[off + i:off + i + 11] == name)
+    bp = mkimg.build(os.path.join(OUT, 'mnt_oor.img'), ['SUB\\', mkf('SUB\\K.TXT', b'k' * 2048), mkf('M.TXT', b'm' * 3000)],
+                     size=720)
+    b = bytearray(open(bp, 'rb').read()); B = fatcheck.bpb(b)
+    root = (B['res'] + B['nfat'] * B['spf']) * 512
+    so = (B['res'] + B['nfat'] * B['spf'] + 7 + (ent(b, root, 112, b'SUB        ') - 2) * 2) * 512
+    kcl = ent(b, so, 32, b'K       TXT')
+    for c in range(B['nfat']): fat12(b, (B['res'] + c * B['spf']) * 512, kcl, 0x500)
+    open(bp, 'wb').write(b); b0 = bytes(b)
+    def safe_files(img):
+        try: return fatcheck.read_files(img)
+        except struct.error: return {}
+    # a file starting past the disk's end (B:Q.TXT at 500h), the cache past B:'s FAT holding A:'s entry for it, a
+    # link to 3 (A:'s FAT made so): an append walked into B:'s cluster 3's chain and linked onto it
+    bq = mkimg.build(os.path.join(OUT, 'mnt_q.img'), [mkf('X.TXT', b'x' * 5000), mkf('Q.TXT', b'q' * 3000)], size=720)
+    b = bytearray(open(bq, 'rb').read()); B = fatcheck.bpb(b)
+    root = (B['res'] + B['nfat'] * B['spf']) * 512
+    i = next(i for i in range(0, 112 * 32, 32) if b[root + i:root + i + 11] == b'Q       TXT')
+    struct.pack_into('<H', b, root + i + 26, 0x500); open(bq, 'wb').write(b)
+    pa = image('mnt_qa.img', lcmd, mkf('FILL.BIN', b'f' * 1400 * 512))
+    a = bytearray(open(pa, 'rb').read()); fat12(a, 512, 0x500, 3); open(pa, 'wb').write(a)
+    k = ktest.KPC(pa, b=bq); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('dir a:fill.bin')
+    data = root + 7 * 512
+    f0 = bytes(pc.drives[1].img[512:root]); x0 = bytes(pc.drives[1].img[data:data + 5 * 1024])
+    o = sh.run('echo hi>> b:q.txt')
+    check('B:Q.TXT starting past the disk\'s end, an append: refused, B:\'s FATs and X.TXT as they were (no stale '
+          'entry of A:\'s followed)', bytes(pc.drives[1].img[512:root]) == f0
+          and bytes(pc.drives[1].img[data:data + 5 * 1024]) == x0, o[-200:])
+    # (A:'s FILL.BIN takes cluster 500h and on: the cache past B:'s FAT, A:'s entries, links them)
+    k = ktest.KPC(image('mnt_oa.img', lcmd, mkf('FILL.BIN', b'f' * 1400 * 512)), b=bp); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('dir a:fill.bin')
+    o0 = sh.run('type b:sub\\k.txt')
+    check('B:SUB\\K.TXT\'s chain leading past the disk\'s end, TYPE: its first cluster, then the end (no sector '
+          'past the disk read)', 'Fail?' not in o0 and o0.count('k') >= 1024, o0[-200:])
+    o = sh.run('del b:sub\\k.txt') + sh.run('dir b:')
+    x = bytes(pc.drives[1].img)
+    check('B:SUB\\K.TXT\'s chain leading past the disk\'s end, DEL: B:\'s root and the FATs past it as they were, '
+          'M.TXT whole', x[root:root + 7 * 512] == b0[root:root + 7 * 512]
+          and x[B['res'] * 512:(B['res'] + B['spf']) * 512] == x[(B['res'] + B['spf']) * 512:root]
+          and safe_files(x).get('A:\\M.TXT') == b'm' * 3000,
+          (o[-200:], fatcheck.check(x)[0][:4]))
 
 def t_newname():
     """new_name: CREATE, CREATE NEW, MKDIR and RENAME onto a name with no last part (A:\\, \\, A:, ., A.B\\.: 5;
@@ -4042,7 +4228,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

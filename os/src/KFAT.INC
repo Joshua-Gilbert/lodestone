@@ -284,7 +284,8 @@ resolve_si:
         times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; entry BX of directory AX -> SI (in a sector buffer), d_lba, d_off.
-; CF: past the end of the directory (AX = 18) or a disk error
+; CF: past the end of the directory (AX = 18), a disk error, or AX = 5 (a
+; chain longer than the disk: a loop)
 dir_entry:
         push    bx
         push    cx
@@ -340,6 +341,8 @@ dir_entry:
         add     cl, 4
         mov     dx, bx
         shr     dx, cl                  ; cluster number in the chain
+        cmp     dx, [di+D_NCL]          ; (more than the disk has: a loop,
+        jae     .brk                    ;  rule 7)
         cmp     ax, [it_dir]
         jne     .walk0
         cmp     dx, [it_ci]
@@ -394,6 +397,9 @@ dir_entry:
         mov     [d_off], bx
         clc
         jmp     .x
+.brk:   mov     ax, 5
+        stc
+        jmp     short .x
 .end0:  mov     word [it_dir], 0
 .end:   mov     ax, 18
         stc
