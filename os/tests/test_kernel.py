@@ -2245,6 +2245,85 @@ def t_copycat():
     f = F()
     check('pairs, a partner\'s name of 79 characters (.\\ 36 times, X12.REF): in; of 80 (.\\ 37 times, X1.REF): passed over',
           f.get('A:\\X12.DAT') == b'x12r12\x1a' and f.get('A:\\X1.DAT') == b'x1\x1a', (o, f.get('A:\\X12.DAT'), f.get('A:\\X1.DAT')))
+    # pairs: one pair's destination not made (A.CAT read-only): the pairs stop there (MS-DOS's COPERR), and no
+    # pair's data reach another's destination (B.CAT got A's)
+    pimg = image('catr14.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'A.TXT=' + mkf('rp14a', b'aaa'), 'A.REF=' + mkf('rp14b', b'AAA'),
+                 'B.TXT=' + mkf('rp14c', b'bbb'), 'B.REF=' + mkf('rp14d', b'BBB'), 'A.CAT=' + mkf('rp14e', b'RO-A-CAT'))
+    praw = bytearray(open(pimg, 'rb').read()); i = praw.find(b'A       CAT', 19 * 512); praw[i + 11] |= 1; open(pimg, 'wb').write(praw)
+    k = ktest.KPC(pimg); k.start(); sh = Shell(k); F = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    o = sh.run('copy *.txt+*.ref *.cat') + sh.run('copy /b *.txt+*.ref *.cat')
+    f = F()
+    check('pairs, a destination not made (A.CAT read-only): "File creation error", the pairs stopped, 0 counted; B.CAT '
+          'not made with A\'s data', o.count('File creation error') == 2 and o.count('0 File(s) copied') == 2
+          and 'A:\\B.CAT' not in f and f.get('A:\\A.CAT') == b'RO-A-CAT', (o, sorted(f)))
+    # pairs onto the user's own files: pair 1's write refused (F, the tab off after): B.TXT, pair 2's kept file, as it was
+    k, sh, F = fresh('catr15.img', 'A.TXT=' + mkf('rp15a', b'aaa\x1a'), 'A.REF=' + mkf('rp15b', b'A' * 700),
+                     'B.TXT=' + mkf('rp15c', b'bbb-user\x1a'), 'B.REF=' + mkf('rp15d', b'BBB'))
+    e0 = {n: ent(n) for n in (b'A       TXT', b'B       TXT')}
+    o = wp_at(k, 'copy *.txt+*.ref', 1)
+    f = F(); img = bytes(k.pc.drives[0].img)
+    check('pairs onto the user\'s files, pair 1\'s write refused: the pairs stop; A.TXT and B.TXT as they were (bytes, '
+          'date and time), 0 counted', f.get('A:\\A.TXT') == b'aaa\x1a' and f.get('A:\\B.TXT') == b'bbb-user\x1a'
+          and all(ent(n) == e0[n] for n in e0) and '0 File(s) copied' in o
+          and not fatcheck.check(img)[0], (o, f.get('A:\\A.TXT'), f.get('A:\\B.TXT')))
+    # put back after its close was refused, nothing after its ^Z: no "without what followed its ^Z"
+    k, sh, F = fresh('catr16.img', 'K.TXT=' + mkf('rp16k', b'keep-me\r\n\x1a'), 'X1.TXT=' + mkf('rp16x', b'x' * 3000),
+                     'X2.TXT=' + mkf('rp16y', b'y' * 3000))
+    o = wp_at(k, 'copy k.txt+x1.txt+x2.txt', 3, ah=0x3E)
+    f = F()
+    check('the user\'s close refused (the tab off before F): put back exactly; nothing followed its ^Z, so no "without '
+          'what followed its ^Z"', f.get('A:\\K.TXT') == b'keep-me\r\n\x1a' and 'what followed' not in o
+          and '0 File(s) copied' in o, (o, f.get('A:\\K.TXT')))
+    # Ctrl-C before anything went out, the disk write-protected: nothing asked of it (no cut, no date), all as it was
+    k, sh, F = fresh('catr17.img', 'K.TXT=' + mkf('rp17k', b'keep-me\r\n\x1a'), 'OUT.DAT=' + mkf('rp17o', b'USER-OUT'),
+                     'X.TXT=' + mkf('rp17x', b'xx'))
+    d = k.pc.drives[0]; img0 = bytes(d.img)
+    outs = []
+    for cmd in ('copy k.txt+con', 'copy x.txt+con out.dat'):
+        k.key('cls'); k.key(ktest.ENTER); d.wp = True
+        k.key(cmd); k.key(ktest.ENTER); k.key('typed line'); k.key(ktest.ENTER); k.key('\x03', settle=False)
+        k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen(), 5)
+        if 'Fail?' in k.pc.text_screen(): k.pc.keys.append(ord('f'))
+        k.settle(); d.wp = False
+        outs.append(k.pc.text_screen())
+    check('Ctrl-C into CON before anything went out, the disk write-protected: no "Write protect" asked; K.TXT and '
+          'OUT.DAT as they were', not any('Write protect' in o for o in outs) and bytes(d.img) == img0, outs)
+    # delimiters before a "+" (MS-DOS's skips them)
+    k, sh, F = fresh('catr18.img', 'A.TXT=' + mkf('rp18a', b'aaa'), 'B.TXT=' + mkf('rp18b', b'bbb'), 'OUT.DAT=' + mkf('rp18o', b'OLD'))
+    o = sh.run('copy a.txt ;+b.txt out.dat')
+    o2 = sh.run('copy a.txt, +b.txt out2.dat')
+    f = F()
+    check('COPY A.TXT ;+B.TXT OUT.DAT and A.TXT, +B.TXT: the delimiters before the "+" skipped, A and B in one',
+          f.get('A:\\OUT.DAT') == b'aaabbb\x1a' and f.get('A:\\OUT2.DAT') == b'aaabbb\x1a', (o, o2))
+    # the disk changed mid-COPY (B: another disk at X2's open), the user's K.TXT on B: written to (past 64 KB):
+    # the kernel's "Invalid disk change", F: nothing done by name on the disk now in (its own K.TXT untouched)
+    b1 = mkimg.build(os.path.join(OUT, 'catdc1.img'), ['BIG.TXT=' + mkf('rpdcb', b'B' * 70000),
+                     'K.TXT=' + mkf('rpdck', b'keep-me\r\n\x1a'), 'X2.TXT=' + mkf('rpdcx', b'y' * 3000)])
+    b2 = mkimg.build(os.path.join(OUT, 'catdc2.img'), ['K.TXT=' + mkf('rpdck2', b'OTHER-DISK-K' * 300),
+                     'P1.TXT=' + mkf('rpdcp', b'P1' * 3000), 'X2.TXT=' + mkf('rpdcz', b'z' * 3000)])
+    raw2 = bytearray(open(b2, 'rb').read())
+    for at in (raw2.find(b'LODESTONE  ', 19 * 512), raw2.find(b'LODESTONE  ', 0, 512)):
+        if at > 0: raw2[at:at + 11] = b'OTHERDISK  '
+    raw2[0x27:0x2B] = b'\x12\x34\x56\x78'
+    two0 = bytes(raw2)
+    k = ktest.KPC(image('catdca.img', os.path.join(GOS, 'src', 'LCMD.COM')), b=b1); k.start(); Shell(k)
+    other = pcemu.Floppy(bytearray(raw2)); st = {'n': 0}
+    def swap(a, pc):
+        if a == 0x3D and pc.r('bx') != 1:
+            st['n'] += 1
+            if st['n'] == 3: other.changed = True; k.pc.drives[1] = other
+    h = lcmd21(k, swap)
+    pc = k.pc; k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
+    k.key('copy b:k.txt+b:big.txt+b:x2.txt b:k.txt'); k.key(ktest.ENTER, settle=False)
+    for i in range(6):
+        pc.run_until(lambda: ''.join(pc.tty)[n0:].count('Fail?') > i or 'copied' in ''.join(pc.tty)[n0:], 30)
+        if ''.join(pc.tty)[n0:].count('Fail?') <= i: break
+        pc.keys.append(ord('f'))
+    k.settle(); k.hooks.remove(h)
+    o = pc.text_screen()
+    check('the disk changed mid-COPY ("Invalid disk change", F): the disk in now untouched (its own K.TXT, P1.TXT), '
+          '"Disk changed: the destination not touched", 0 counted', bytes(other.img) == two0
+          and 'Disk changed: the destination not touched' in o and '0 File(s) copied' in o, o)
 
 def t_spacenames():
     """Names with a space inside (another system's, or a program's: MS-DOS takes them) through LCMD's COPY

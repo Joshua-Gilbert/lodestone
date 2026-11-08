@@ -357,7 +357,11 @@ crit:   sti
         push    es
         push    cs
         pop     ds
-        cmp     byte [crit_q], 0        ; (Tab looking: Fail, no prompt in
+        mov     bx, di                  ; ("Invalid disk change": COPY then
+        cmp     bl, 0Fh                 ;  touches nothing by name, the disk
+        jne     .q                      ;  in being another)
+        mov     byte [dchg], 1
+.q:     cmp     byte [crit_q], 0        ; (Tab looking: Fail, no prompt in
         je      .ask                    ;  the line being edited)
         mov     al, 3
         jmp     .x
@@ -3110,7 +3114,7 @@ do_type:
 ; source up to its first ^Z, one ^Z at the end, none to a device) and
 ; "1 File(s) copied"; one where nothing came is not made (one there of its
 ; name left as it was), 0.  "+" parts are split at MS-DOS's delimiters
-; too (",", ";", "=").  The
+; too (",", ";", "="), and those before a "+" are skipped.  The
 ; destination as the first source is kept and the rest appended, in ASCII
 ; from its first ^Z; met again, or after the copy made it, "Content of
 ; destination lost before copy" and the rest go on.  "+" to no
@@ -3148,11 +3152,20 @@ do_type:
 ;     kept, what was after the ^Z lost, as MS-DOS's cut would; said:
 ;     "Destination put back without what followed its ^Z"); a put-back
 ;     refused is said ("Destination not put back as it was"), and the
-;     put-back and a delete ask at INT 24h again;
+;     put-back and a delete ask at INT 24h again; nothing was written in
+;     it (Ctrl-C before anything went out): closed, nothing asked of it;
 ;   - one this copy made is deleted after an error writing it (or Ctrl-C),
 ;     as MS-DOS's COPERR, and closed and counted after a source's error
-;     (its ENDCOPY: what was read is kept).
-; The count is of destinations closed whole.
+;     (its ENDCOPY: what was read is kept);
+;   - a pair that fails stops the pairs (COPERR), and none's data goes on
+;     into another's destination.
+; After an "Invalid disk change" at INT 24h (0Fh), or a write or close of
+; the destination refused with 5 (the kernel's answer for a handle whose
+; disk was changed), nothing is done by name (no put-back, no delete: the
+; disk in now is another): said, "Disk changed: the destination not
+; touched".  A put-back opens the file again only if it is still the
+; user's (its date and time, its old size).  The count is of
+; destinations closed whole.
 do_copy:
         xor     ax, ax
         mov     [copied], ax
@@ -3307,6 +3320,8 @@ pair:   mov     al, [dst_dir]
 .d:     xor     ax, ax
         mov     [dst_dir], al
         mov     [dstate], al
+        mov     [cbfill], ax            ; (none of the pair before's data)
+        mov     [kwr], al
         pop     bx
         call    copy_one
         jc      .x
@@ -3343,7 +3358,11 @@ pair:   mov     al, [dst_dir]
         jc      .x
 .n:     mov     si, [pnext]
         jmp     .l
-.e:     call    cat_end
+.e:     mov     byte [cerr], 0
+        call    cat_end
+        cmp     byte [cerr], 0          ; (it failed: the pairs stop, as
+        stc                             ;  MS-DOS's COPERR)
+        jne     .x
         mov     byte [smode], 0         ; the first source again, for its
         mov     si, plist               ;  search
         call    next_src
@@ -3526,26 +3545,30 @@ plus_join:
         mov     di, si
         mov     dx, si
 .l:     lodsb
-        call    is_blank
+        call    is_delim
         je      .sp
 .st:    stosb
         or      al, al
         jnz     .l
         pop     si
         ret
-.sp:    mov     bx, si                  ; past the blanks: a "+" next?
-.sk:    cmp     byte [bx], ' '
-        je      .sn
-        cmp     byte [bx], 9
+.sp:    mov     bx, si                  ; past the delimiters (blanks, ",",
+        mov     ah, al                  ;  ";", "="): a "+" next?  (MS-DOS's
+.sk:    mov     al, [bx]                ;  skips them before it)
+        call    is_delim
         jne     .se
-.sn:    inc     bx
+        inc     bx
         jmp     .sk
-.se:    cmp     byte [bx], '+'
+.se:    mov     al, ah
+        cmp     byte [bx], '+'
         je      .dr
-        cmp     di, dx                  ; or one just before them?
+        call    is_blank                ; a blank just after a "+": dropped
+        jne     .st                     ;  (not "+,,"'s commas)
+        cmp     di, dx
         je      .st
         cmp     byte [di-1], '+'
         jne     .st
+        jmp     .l
 .dr:    mov     si, bx
         jmp     .l
 
@@ -3578,11 +3601,13 @@ zend:   call    d_ascii
         mov     bx, [fh2]
         call    isdev
         jnz     .x
+        mov     byte [kwr], 1
         mov     byte [zbyte], 1Ah
         mov     dx, zbyte
         mov     cx, 1
         mov     ah, 40h
         int     21h
+        call    ax5
         mov     si, e_full
         jc      .r
         dec     ax
@@ -3624,10 +3649,12 @@ cat_end:
 .z:     xor     cx, cx                  ; (cut there: what was past it, gone,
         mov     ah, 40h                 ;  as MS-DOS's)
         int     21h
+        call    ax5
         mov     si, e_wfail
         jc      .f
 .cl:    mov     ah, 3Eh                 ; closed whole: counted
         int     21h
+        call    ax5
         mov     si, e_wfail
         jc      .fc
         inc     word [copied]
@@ -3638,8 +3665,11 @@ cat_end:
         jmp     cat_fail
 .fc:    call    err                     ; the close refused (its entry not
         mov     byte [crit_q], 0        ;  written; the put-back and the
-        mov     al, [dstate]            ;  delete ask again)
+        mov     byte [cerr], 2          ;  delete ask again)
+        mov     al, [dstate]
         mov     byte [dstate], 0
+        cmp     byte [dchg], 0          ; (the disk changed: nothing by name)
+        jne     dchg_said
         mov     dx, dst
         cmp     al, 1
         je      .fd
@@ -3724,28 +3754,67 @@ cat_fail:
         jmp     cat_end
 .d:     mov     ah, 3Eh
         int     21h
+        cmp     byte [dchg], 0          ; (the disk changed: not by name)
+        jne     dchg_said
         mov     dx, dst
         mov     ah, 41h
         int     21h
         ret
+; the disk changed under it ("Invalid disk change"): nothing more done by
+; name, which would be done to the disk in now; said
+dchg_said:
+        mov     si, e_dchg
+        jmp     err
+; after a write or close of the destination (CF, AX): refused with 5, the
+; kernel's answer for a handle whose disk was changed (it never gives 5 to
+; a write of a file opened for it otherwise): dchg.  CF kept
+ax5:    jnc     .x
+        cmp     ax, 5
+        jne     .s
+        mov     byte [dchg], 1
+.s:     stc
+.x:     ret
 
 ; the user's file at BX put back (krest), its date and time as they were,
 ; and closed; refused, once more on a handle of its own (kput.r: from
 ; there; also the way back after its close was refused, its entry not
 ; written).  Refused still: said, never silent.  Cut at its first ^Z (a
 ; failure after the move began): said too
-kput:   call    krest
+kput:   cmp     byte [dchg], 0          ; the disk changed: closed only (a
+        jne     .c                      ;  put-back would go to the other)
+        cmp     byte [kwr], 0           ; nothing written in it: closed as
+        jne     .p                      ;  it is (no cut, no date: nothing
+        mov     ah, 3Eh                 ;  asked of a disk refusing writes)
+        int     21h
+        ret
+.c:     mov     ah, 3Eh
+        int     21h
+        jmp     dchg_said
+.p:     call    krest
         pushf
         call    kdate
         mov     ah, 3Eh
         int     21h
         popf
         jnc     .x
-.r:     mov     dx, dst
+.r:     cmp     byte [dchg], 0
+        jne     dchg_said
+        mov     dx, dst
         mov     ax, 3D02h
         int     21h
         jc      .n
         xchg    bx, ax
+        mov     ax, 5700h               ; the user's file still (its date
+        int     21h                     ;  and time, its old size), not one
+        cmp     cx, [kdt]               ;  of its name on another disk
+        jne     .o
+        cmp     dx, [kdt + 2]
+        jne     .o
+        call    seek_end
+        cmp     ax, [kpos]
+        jne     .o
+        cmp     dx, [kpos + 2]
+        jne     .o
         call    krest
         pushf
         call    kdate
@@ -3753,11 +3822,22 @@ kput:   call    krest
         int     21h
         popf
         jnc     .x
+.o:     mov     ah, 3Eh                 ; (not it: closed, untouched)
+        int     21h
 .n:     mov     si, e_nrest
         jmp     err
-.x:     cmp     byte [kmoved], 0
-        je      .y
-        mov     si, e_zcut
+.x:     cmp     byte [kmoved], 0        ; cut at its ^Z: said, when there
+        je      .y                      ;  was something after it (zpos + 1
+        mov     ax, [zpos]              ;  below kpos)
+        mov     dx, [zpos + 2]
+        add     ax, 1
+        adc     dx, 0
+        cmp     dx, [kpos + 2]
+        jb      .m
+        ja      .y
+        cmp     ax, [kpos]
+        jae     .y
+.m:     mov     si, e_zcut
         jmp     puts_nl
 .y:     ret
 ; BX's date and time: the kept one's as it was (kdt)
@@ -3829,6 +3909,7 @@ kmove:  mov     ax, [kpos]
         mov     ah, 40h
         push    cx
         call    cb_io
+        call    ax5
         pop     cx
         jc      .x
         cmp     ax, cx
@@ -4010,6 +4091,7 @@ copy_one:
 .cl:    mov     bx, [fh2]               ; (its close refused: as a write
         mov     ah, 3Eh                 ;  error, deleted)
         int     21h
+        call    ax5
         pushf
         call    close1
         popf
@@ -4021,10 +4103,15 @@ copy_one:
         ret
 .clf:   call    err
         mov     byte [crit_q], 0        ; (its delete asks again)
+        mov     byte [dstate], 0
+        cmp     byte [dchg], 0          ; (the disk changed: not by name)
+        jne     .dch
         mov     dx, dst
         mov     ah, 41h
         int     21h
-        mov     byte [dstate], 0
+        stc
+        ret
+.dch:   call    dchg_said
         stc
         ret
 .perr:  mov     byte [cerr], 1          ; a source not read (SI = e_read),
@@ -4044,12 +4131,16 @@ copy_one:
         mov     bx, [fh2]
         mov     ah, 3Eh
         int     21h
+        cmp     byte [dchg], 0          ; (the disk changed: not by name)
+        jne     .ddc
         mov     dx, dst
         mov     ah, 41h
         int     21h
 .dz:    mov     byte [dstate], 0
         stc
         ret
+.ddc:   mov     byte [dstate], 0
+        jmp     .dch
 
 ; the user's file at fh2, kept, at its start: this command writes past its
 ; end (kpos), so that its entry keeps its size on the disk until the copy
@@ -4134,9 +4225,11 @@ dflush: cmp     byte [dstate], 4
 .w:     mov     cx, [cbfill]
         or      cx, cx                  ; (none: CF clear)
         jz      .r
+        mov     byte [kwr], 1           ; (written to: for kput)
         mov     bx, [fh2]
         mov     ah, 40h
         call    cb_io
+        call    ax5
         mov     si, e_full
         jc      .r
         cmp     ax, cx
@@ -5627,6 +5720,7 @@ e_read      db 'Read error', 0
 e_wfail     db 'Write error', 0
 e_nrest     db 'Destination not put back as it was', 0
 e_zcut      db 'Destination put back without what followed its ^Z', 0
+e_dchg      db 'Disk changed: the destination not touched', 0
 e_nomem     db 'Insufficient memory', 0
 e_batch     db 'Batch file missing', 0
 e_envfull   db 'Out of environment space', 0
@@ -5726,6 +5820,8 @@ pfnd        resb 1                  ;  named from the first source found
 cerr        resb 1                  ;  its error: 1 a source's, 2 its own
 pnow        resb 1                  ;  each read out at once (a device; TYPE)
 cbfill      resw 1                  ;  what the buffer holds, to go out
+dchg        resb 1                  ;  an INT 24h "Invalid disk change" (0Fh)
+kwr         resb 1                  ;  the kept one written to
 touch       resb 1                  ;  "+,,"
 kdt         resw 2                  ;  the kept one's time and date
 zbyte       resb 1
