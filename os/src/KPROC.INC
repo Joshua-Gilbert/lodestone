@@ -553,13 +553,8 @@ section .text
 full_name:
         mov     si, path_buf
         mov     di, ex_name
-        mov     al, [cur_drv]
-        cmp     byte [si+1], ':'
-        jne     .d
-        mov     al, [si]
-        sub     al, 'A'
-        add     si, 2
-.d:     push    ax
+        call    path_drv
+        push    ax
         add     al, 'A'
         mov     ah, ':'
         stosw
