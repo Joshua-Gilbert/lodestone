@@ -1174,7 +1174,6 @@ f_F0:   mov     al, [bp+F_AX]
         mov     [bp+F_ES], cs
         mov     word [bp+F_BX], hd_idn
         jmp     ok
-        db      90h                     ; (what follows keeps its parity)
 ; AL=4: the UI segment has moved to BX (where the root process restarts)
 .useg:  mov     ax, [bp+F_BX]
         mov     [ui_seg], ax
@@ -1416,12 +1415,8 @@ f_29:   mov     ds, [bp+F_DS]
         inc     si
         cmp     al, '*'
         je      .star
-        cmp     al, 'a'
-        jb      .up
-        cmp     al, 'z'
-        ja      .up
-        sub     al, 20h
-.up:    cmp     al, '?'
+        call    up_al
+        cmp     al, '?'
         jne     .put
         or      dl, 1
 .put:   jcxz    .fl

@@ -170,7 +170,7 @@ sft_busy:
 .l:     cmp     byte [bx+S_REF], 0
         je      .n
         test    byte [bx+S_FLAGS], SF_DEV | SF_LOST     ; (another mount's
-        jnz     .n                      ;  are SF_LOST: unmount, rule 9)
+        jnz     .n                      ;  are SF_LOST: the mount's, rule 9)
         mov     al, [act]
         cmp     [bx+S_DRV], al
         jne     .n
@@ -693,11 +693,18 @@ cl_fresh:
         mov     es, bx
         mov     bl, al
         mov     di, bx
-        add     di, di
+        shl     di, 2
         mov     ax, [es:46Ch]
         mov     dx, ax
         xchg    dx, [cl_tick+di]
-        sub     ax, dx                  ; ticks since
+        sub     ax, dx                  ; ticks since (all 32 bits: an hour
+        mov     cx, [es:46Eh]           ;  later isn't 0 ticks later, nor
+        mov     dx, cx                  ;  is a day's end)
+        xchg    dx, [cl_tick+di+2]
+        sbb     cx, dx
+        neg     cx                      ; (the high part not 0: FFFFh)
+        sbb     dx, dx
+        or      ax, dx
         shl     bx, 5                   ; (DRVSZ)
         cmp     byte [drvtab+bx+D_PRES], 3
         jb      .x                      ; (a change line: CF, looked at)
@@ -978,11 +985,7 @@ file_read:
         cmp     word [rw_left], 512
         jb      .part
         ; whole sectors straight into memory, across touching clusters
-        mov     di, [actp]
-        mov     al, [di+D_SPC]
-        xor     ah, ah
-        sub     ax, cx                  ; sectors left in this cluster
-        mov     [rw_run], ax
+        call    rw_run0
         mov     ax, [rw_left]
         shr     ax, 9
         mov     [rw_want], ax
@@ -997,11 +1000,7 @@ file_read:
         inc     dx
         cmp     ax, dx
         jne     .go
-        mov     [rw_cl], ax
-        inc     word [rw_cix]
-        mov     al, [di+D_SPC]
-        xor     ah, ah
-        add     [rw_run], ax
+        call    rw_adv
         jmp     .ext
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .go:    mov     ax, [rw_cl]             ; the next lookup starts from here
@@ -1043,12 +1042,8 @@ file_read:
         pop     si
         pop     dx
         jc      .err
-        mov     cx, 512
-        sub     cx, dx
-        cmp     cx, [rw_left]
-        jbe     .c
-        mov     cx, [rw_left]
-.c:     push    si
+        call    rw_part
+        push    si
         push    cx
         mov     si, bx
         add     si, dx
@@ -1073,6 +1068,30 @@ sec_of: shr     ax, 9
         shl     dx, 7
         or      ax, dx
         ret
+; file_read's and file_write's: DI = the drive's entry, [rw_run] = the
+; sectors left in the cluster from sector CX
+rw_run0:
+        mov     di, [actp]
+        mov     al, [di+D_SPC]
+        xor     ah, ah
+        sub     ax, cx
+        mov     [rw_run], ax
+        ret
+; the run goes on into cluster AX
+rw_adv: mov     [rw_cl], ax
+        inc     word [rw_cix]
+        mov     al, [di+D_SPC]
+        xor     ah, ah
+        add     [rw_run], ax
+        ret
+; CX = the bytes of this sector from offset DX, [rw_left] at most
+rw_part:
+        mov     cx, 512
+        sub     cx, dx
+        cmp     cx, [rw_left]
+        jbe     .x
+        mov     cx, [rw_left]
+.x:     ret
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; AX = the sector of the file the position of SFT SI is in
 pos_sec:
@@ -1164,11 +1183,7 @@ file_write:
         ; decides whether the next sector is caught or a turn is lost.
         mov     [rw_cix], bx
         mov     word [rw_new], 0
-        mov     di, [actp]
-        mov     al, [di+D_SPC]
-        xor     ah, ah
-        sub     ax, cx                  ; sectors left in this cluster
-        mov     [rw_run], ax
+        call    rw_run0
         mov     ax, [rw_lba]
         mov     dx, [lba_hi]
         div     word [di+D_SPT]
@@ -1192,11 +1207,7 @@ file_write:
         inc     dx
         cmp     ax, dx
         jne     .wgo                    ; not next to it: another run
-        mov     [rw_cl], ax
-        inc     word [rw_cix]
-        mov     al, [di+D_SPC]
-        xor     ah, ah
-        add     [rw_run], ax
+        call    rw_adv
         jmp     .wext
 .wend:  mov     ax, [rw_want]           ; the chain ends: free ones after it
         sub     ax, [rw_run]            ; (sectors still wanted
@@ -1278,12 +1289,8 @@ file_write:
         pop     si
         pop     dx
         jc      .err
-        mov     cx, 512
-        sub     cx, dx
-        cmp     cx, [rw_left]
-        jbe     .c
-        mov     cx, [rw_left]
-.c:     push    si
+        call    rw_part
+        push    si
         push    ds
         push    cx
         push    cs
@@ -1353,6 +1360,11 @@ file_write:
 .gs:    mov     [si+S_SIZE], ax
         mov     [si+S_SIZE+2], dx
 .gx:    ret
+; the size is the position (the chain looked up afresh).  DX:AX = it
+.psz:   mov     word [si+S_CCL], 0
+        mov     ax, [si+S_POS]
+        mov     dx, [si+S_POS+2]
+        jmp     .gs
 ; a zero-byte write: the file ends (or grows to) here
 .setsz: mov     ax, [si+S_POS]
         or      ax, [si+S_POS+2]
@@ -1403,14 +1415,10 @@ file_write:
         push    word [si+S_CLU]
         push    word [si+S_SIZE+2]
         push    word [si+S_SIZE]
-        mov     word [si+S_CCL], 0
-        mov     ax, [si+S_POS]
-        mov     [si+S_SIZE], ax
-        mov     ax, [si+S_POS+2]
-        mov     [si+S_SIZE+2], ax
-        or      ax, [si+S_POS]
+        call    .psz
+        or      dx, ax
         jnz     .tc
-        mov     [si+S_CLU], ax
+        mov     [si+S_CLU], dx
 .tc:    call    sft_commit.go           ; (rw_start looked at the disk: no
                                         ;  second look to drop the FAT cache)
         jc      .tb
@@ -1420,11 +1428,7 @@ file_write:
         pop     word [si+S_SIZE+2]
         pop     word [si+S_CLU]
         ret
-.sz:    mov     word [si+S_CCL], 0
-        mov     ax, [si+S_POS]
-        mov     [si+S_SIZE], ax
-        mov     ax, [si+S_POS+2]
-        mov     [si+S_SIZE+2], ax
+.sz:    call    .psz
         jmp     .done
 
 ; ---------------------------------------------------------------------
@@ -1969,11 +1973,7 @@ f_12:   call    fcb_ptr                 ; its search -> FCB_D, as 4Eh's DTA
         pop     di
         pop     cx
         je      .bad
-        cmp     al, 'a'
-        jb      .p
-        cmp     al, 'z'
-        ja      .p
-        sub     al, 20h
+        call    up_al
 .p:     mov     [si], al
         inc     si
         cmp     si, FCB_D + 12

@@ -36,6 +36,14 @@ it_cl       resw 1
 it_ci       resw 1
 section .text
 
+; AL: a small letter (a-z) made a capital.  Flags changed
+up_al:  cmp     al, 'a'
+        jb      .x
+        cmp     al, 'z'
+        ja      .x
+        sub     al, 20h
+.x:     ret
+
 ; copy the caller's ASCIIZ path DS:DX (frame) to path_buf (uppercase,
 ; '/' -> '\').  CF: AX = 3 if empty or too long
 get_path:
@@ -45,11 +53,7 @@ gpath:  push    ds
         mov     ds, [bp+F_DS]
         mov     cx, 128
 .l:     lodsb
-        cmp     al, 'a'
-        jb      .n
-        cmp     al, 'z'
-        ja      .n
-        sub     al, 20h
+        call    up_al
 .n:     cmp     al, '/'
         jne     .s
         mov     al, '\'
@@ -191,6 +195,17 @@ new_name:                               ; (the same after a resolve; one that
 .f:     stc
         ret
 
+; the drive of the path at SI (get_path's: capitals) -> AL, SI past its
+; "X:" (none: the current drive)
+path_drv:
+        mov     al, [cur_drv]
+        cmp     byte [si+1], ':'
+        jne     .x
+        mov     al, [si]
+        sub     al, 'A'
+        add     si, 2
+.x:     ret
+
 ; resolve path_buf (or SI) -> r_drv, r_dir, r_name, r_wild.
 ; Gets the drive ready and its FAT loaded.  CF: AX = error (3 or 15)
 resolve:
@@ -200,13 +215,8 @@ resolve_si:
         mov     [it_dir], ax
         mov     [r_wild], al            ; (before the drive: nf_last and
         mov     [r_name], al            ;  RMDIR read them)
-        mov     al, [cur_drv]
-        cmp     byte [si+1], ':'
-        jne     .d
-        mov     al, [si]
-        sub     al, 'A'
-        add     si, 2
-.d:     push    si
+        call    path_drv
+        push    si
         call    drv_ready
         mov     bx, si
         pop     si

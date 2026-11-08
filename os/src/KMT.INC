@@ -1450,7 +1450,7 @@ mt_vsave:
         mov     si, bx
         shl     si, 4                   ; (DRVSZ / 2)
         cmp     byte [drvtab+si+D_CHK], 2
-        jne     .g1
+        jb      .g1                     ; (3: unmount's, rule 9)
         not     ax
 .g1:    mov     [es:TX_MG+bx], ax
         dec     bx
@@ -1473,7 +1473,7 @@ mt_vload:
         je      .g1
         mov     si, bx
         shl     si, 4
-        mov     byte [drvtab+si+D_CHK], 2
+        or      byte [drvtab+si+D_CHK], 2   ; (3 kept: rule 9)
 .g1:    dec     bx
         dec     bx
         jns     .g
