@@ -6903,7 +6903,7 @@ def t_srq():
     check('... IRQ 5 in MT\'s own code as a switch to MTSPIN ends (mt_load\'s STI / RET: not a point to switch from): '
           'MTSRQ runs at the next tick (%s ms; %s), the wake kept, not lost' % r,
           isinstance(r[0], float) and 3 < r[0] <= 70 and 'pick' in r[1], r)
-    r = lat(q, lambda: cur() == nq)
+    r = lat(q, own(nq))                                 # (its own code, interrupts on: not MT's switch to it)
     check('... while MTSRQ itself runs (in its HLT): seen at once (%s ms)' % r[0], isinstance(r[0], float) and r[0] <= 3.0, r)
     k.run_for(0.3)
     check('... its fourth SRQ: it ends; its wake with it (mt_wkt FFh)', srq_progs(k) == [] and wkt() == 0xFF,

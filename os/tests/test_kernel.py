@@ -2953,9 +2953,9 @@ def t_mount():
         other.changed = True; pc.drives[1] = other
     o = run_swap(k, 'mntswb', swap3, 'f')
     f3 = fatcheck.read_files(bytes(other.img))
-    check('B:K.TXT open, another disk with its own K.TXT in the same slot: DEL B:K.TXT asked, Fail (34); DEL '
+    check('B:K.TXT open, another disk with its own K.TXT in the same slot: DEL B:K.TXT asked, Fail (3, as resolve answers a drive it can\'t ready); DEL '
           'again: the new disk\'s K.TXT deleted (the old file\'s SFT not taken for it), the first disk untouched',
-          o.count('Fail?') == 1 and 'D-R' in o and 'E+' in o and 'A:\\K.TXT' not in f3
+          o.count('Fail?') == 1 and 'D-3' in o and 'E+' in o and 'A:\\K.TXT' not in f3
           and not fatcheck.check(bytes(other.img))[0] and bytes(first.img) == d1, (o, sorted(f3)))
     # INT 21h 0Dh, then a program rewrites A:'s FAT sector 0 through INT 13h, INT 21h 0Dh: the current directory
     # kept (found again by its name), its files listed
