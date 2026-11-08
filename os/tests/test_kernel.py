@@ -3519,16 +3519,26 @@ def t_batswap():
           -1 not in at and at == sorted(at), o[-300:])
     # a line longer than 127: cut, the rest passed over up to its end (not run as a line of its own); one of 127
     # and CR LF read whole (no empty line after it): each line's number as counted (an error says it)
-    for nl in (b'\r\n', b'\n'):
-        lines = (b'@echo off\r\nrem ' + b'r' * 123 + b'\r\necho ' + b'y' * 200 + b'Q.BAT' + nl + b'echo ' + b'z' * 300 + nl
-                 + b'nosuch\r\necho done\r\n')
+    for nl in (b'\r\n', b'\n', b'\r'):
+        e = nl if nl == b'\r' else b'\r\n'          # (a file of CRs only: each a line's end, MS-DOS's)
+        lines = (b'@echo off' + e + b'rem ' + b'r' * 123 + e + b'echo ' + b'y' * 200 + b'Q.BAT' + nl + b'echo '
+                 + b'z' * 300 + nl + b'nosuch' + e + b'echo done' + e)
         k = ktest.KPC(image('bsw_l.img', lcmd, mkf('L.BAT', lines))); k.start()
         o = Shell(k).run('l')
         check('lines of 210 and 305 characters (%s): each cut, its rest never run, the next line its own; '
               '"L line 5: Bad command or file name" (the 127-character line one line), then done'
-              % ('CR LF' if nl == b'\r\n' else 'LF'), 100 < o.count('y') < 124 and 'Q.BAT' not in o
+              % {b'\r\n': 'CR LF', b'\n': 'LF', b'\r': 'CR only'}[nl], 100 < o.count('y') < 124 and 'Q.BAT' not in o
               and o.count('z') == o.count('y')
               and o.count('Bad command') == 1 and 'L line 5: Bad command or file name' in o and 'done' in o, o[-700:])
+    # a line of 128 characters then CR LF (the read's 129th byte its CR, the LF after it not yet read): one line,
+    # the LF its end, not an empty line of its own; CR only the same
+    for nl in (b'\r\n', b'\r'):
+        lines = b'@echo off' + nl + b'rem ' + b'r' * 124 + nl + b'nosuch' + nl + b'echo done' + nl
+        k = ktest.KPC(image('bsw_l.img', lcmd, mkf('L.BAT', lines))); k.start()
+        o = Shell(k).run('l')
+        check('a line of 128 characters and %s: one line, "L line 3: Bad command or file name", then done'
+              % ('CR LF' if nl == b'\r\n' else 'CR'), 'L line 3: Bad command or file name' in o
+              and o.count('Bad command') == 1 and 'done' in o, o[-300:])
     # ... a ^Z in a long line's rest: the file's end there
     k = ktest.KPC(image('bsw_l.img', lcmd, mkf('L.BAT', b'@echo off\r\necho ' + b'y' * 200 + b'\x1a\r\necho never\r\n')))
     k.start()
@@ -4213,9 +4223,9 @@ def t_cmdshare():
         p = os.path.join(OUT, name)
         open(p, 'wb').write(('\r\n'.join(lines) + '\r\n').encode())
         return name + '=' + p
-    src = os.path.join(OUT, 'CRITALL.ASM')        # INT 24h for each code, 0-13, writing drive A
+    src = os.path.join(OUT, 'CRITALL.ASM')        # INT 24h for each code, 0-16, writing drive A
     open(src, 'w').write('org 100h\n xor di,di\nl: mov ax,0100h\n push di\n int 24h\n pop di\n inc di\n'
-                         ' cmp di,14\n jb l\n mov ax,4C00h\n int 21h\n')
+                         ' cmp di,17\n jb l\n mov ax,4C00h\n int 21h\n')
     subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(OUT, 'CRITALL.COM'), src], check=True)
     img = image('share.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(HERE, 'UPPER.COM'), os.path.join(GOS, 'src', 'CALC.COM'),
                 os.path.join(OUT, 'CRITALL.COM'), 'T.COM=' + os.path.join(HERE, 'UPPER.COM'), 'SUB\\',
@@ -4236,14 +4246,15 @@ def t_cmdshare():
     check('... COPY into a directory with its output redirected (path1/path2 share in_name/out_name)', 'A:\\SUB\\A.TXT' in f, sorted(f))
     k.key('cls'); k.key(ktest.ENTER); k.key('critall'); k.key(ktest.ENTER)
     seen = []
-    for i in range(14):
+    for i in range(17):
         L = k.pc.text_screen().rstrip().split('\n')
         seen.append(tuple(x.rstrip() for x in L[-3:]))
         k.key('f')
     msgs = ['Write protect error', 'Unknown unit error', 'Not ready error', 'Unknown command error', 'Data error', 'Bad request error',
             'Seek error', 'Unknown media type', 'Sector not found', 'Printer out of paper', 'Write fault', 'Read fault', 'General failure',
-            'General failure']
-    check("INT 24h: each code's message (over 12: General failure), a new line before it", seen ==
+            'General failure', 'General failure', 'Invalid disk change', 'General failure']
+    check("INT 24h: each code's message (15: Invalid disk change; 13, 14 and over 15: General failure), a new line "
+          "before it", seen ==
           [('', m + ' writing drive A', 'Abort, Retry, Fail?') for m in msgs], seen)
     sh.run('dir a:')
     o = sh.run('dir')
@@ -4292,12 +4303,17 @@ def t_cmdshare():
     sh.run('echo hi > x.txt'); sh.run('echo DECOY > t')
     outs = [sh.run(c) for c in ('copy x.txt longname.txt', 'copy x.txt longname.tx', 'copy x*.txt *.bak')]
     o = sh.run('copy longname.txt longname.txt')
+    sh.run('md s1234567'); sh.run('md s1234567\\s2345678'); sh.run('echo deep > s1234567\\s2345678\\big.dat')
+    o3 = sh.run('copy s1234567\\s2345678\\big.dat s1234567\\s2345678\\..\\s2345678\\big.dat')
     sh.run('cd \\')
     f = fs()
     check("COPY from a 64-character directory (the deepest): COPY's two names checked (72-80 bytes) don't reach its source name",
           [f.get('A:' + deep + n) for n in ('\\LONGNAME.TXT', '\\LONGNAME.TX', '\\X.BAK')] == [b'hi \r\n'] * 3
           and all('1 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith('A:\\A'))))
     check("... and a file there copied onto itself (a 79-character name): refused as such", 'cannot be copied onto itself' in o, o)
+    check("... and one two directories below it, named another way (its whole name 94 characters, past the 82 its check "
+          "once had): refused as such, the file as it was", 'cannot be copied onto itself' in o3
+          and f.get('A:' + deep + '\\S1234567\\S2345678\\BIG.DAT') == b'deep \r\n', (o3, f.get('A:' + deep + '\\S1234567\\S2345678\\BIG.DAT')))
     sh.run('cd ' + deep[:-3]); sh.run('md HHHHHHHH')
     o = sh.run('cd HHHHHHHH') + sh.run('cd')                       # 70 characters: refused (was cut to ...\HHH)
     sh.run('echo one > y1.txt')
