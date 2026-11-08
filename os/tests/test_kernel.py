@@ -1743,8 +1743,12 @@ def t_copycat():
     no destination (the first source's), a directory or a wildcard name (made once); the destination as the
     first source kept, cut at its first ^Z, and appended to; met later, "Content of destination lost before
     copy"; a "+" part not there passed over; an empty result deleted; "COPY A+" onto itself, "+,," the date of
-    now.  And the user's file safe: an append that fails (a read error, the disk full) cuts the destination
-    back and keeps it; lists past 79 characters; a word past the destination refused."""
+    now (in ASCII cut at its first ^Z); ",," ends the list; a first source with wildcards and "+" to no
+    destination, a directory or a wildcard name pairs names (MS-DOS's).  And the user's file safe: a
+    concatenation that fails (a source not read, or found and not opened; the disk full, at its ^Z too) leaves
+    the user's file exactly as it was (more after its first ^Z included), deletes one it made after its own
+    write error, keeps and counts it after a source's; no handle left open; lists past 79 characters; a word
+    past the destination refused."""
     def mkf(n, b):
         t = os.path.join(OUT, n); open(t, 'wb').write(b); return t
     fl = ['F%02d.TXT=' % i + mkf('cf%02d' % i, b'f%02d' % i) for i in range(14)]
@@ -1752,7 +1756,8 @@ def t_copycat():
               'B.TXT=' + mkf('cb', b'bbb\x1a'), 'C.REF=' + mkf('cc', b'ccc'), 'D.REF=' + mkf('cd2', b'ddd'),
               'BIN1.DAT=' + mkf('cd', b'x\x1ay'), 'G.TXT=' + mkf('cg2', b'ggg\x1a\x1a'), 'B.BAK=' + mkf('cbk', b'KEEP-ME'),
               'E0.LST=' + mkf('ce0', b''), 'E1.LST=' + mkf('ce1', b'\x1a'), 'T.TXT=' + mkf('ct', b'touch'),
-              'Q.TXT=' + mkf('cq', b'q-old'), 'R.TXT=' + mkf('cr', b'r-new'),
+              'Q.TXT=' + mkf('cq', b'q-old'), 'R.TXT=' + mkf('cr', b'r-new'), 'P.REF=' + mkf('cpp', b'ppp'),
+              'S.REF=' + mkf('css', b'sss'), 'CC.REF=' + mkf('ccc2', b'cc-old'), 'U.REF=' + mkf('cu', b'u\x1aTAIL'),
               'D\\', 'D\\M1.TXT=' + mkf('ce', b'm1'), 'D\\ZZ.TXT=' + mkf('cf', b'zz-old'),
               'E\\', 'E\\AA.TXT=' + mkf('cg', b'aa\x1a'), 'E\\BB.TXT=' + mkf('ch', b'bb'), 'L\\', *['L\\' + f for f in fl])
     k = ktest.KPC(p); k.start()
@@ -1782,9 +1787,34 @@ def t_copycat():
           'the sources ASCII, no ^Z added', f.get('A:\\AC.DAT') == b'aaaccc\x1a' and f.get('A:\\AC2.DAT') == b'aaaccc\x1a'
           and f.get('A:\\AC3.DAT') == b'cccaaa' and o.count('1 File(s) copied') == 3,
           (o, f.get('A:\\AC.DAT'), f.get('A:\\AC2.DAT'), f.get('A:\\AC3.DAT')))
-    o = sh.run('copy /b bin1.dat + c.ref /a mix.dat')
-    check('/A and /B by position: COPY /B BIN1.DAT + C.REF /A MIX.DAT: BIN1.DAT whole (a later /A doesn\'t cut it), '
+    o = sh.run('copy /b bin1.dat + c.ref/a mix.dat')
+    check('/A and /B by position: COPY /B BIN1.DAT + C.REF/A MIX.DAT: BIN1.DAT whole (a later /A doesn\'t cut it), '
           'C.REF and the destination ASCII', fs().get('A:\\MIX.DAT') == b'x\x1ayccc\x1a', (o, fs().get('A:\\MIX.DAT')))
+    o = sh.run('copy c.ref+bin1.dat /b nb.dat') + sh.run('copy /b bin1.dat + c.ref /a mix2.dat')
+    f = fs()
+    check('a switch after the last source but before the destination is for nothing (MS-DOS): C.REF+BIN1.DAT /B '
+          'NB.DAT all ASCII, /B BIN1.DAT + C.REF /A MIX2.DAT all binary', f.get('A:\\NB.DAT') == b'cccx\x1a'
+          and f.get('A:\\MIX2.DAT') == b'x\x1ayccc', (o, f.get('A:\\NB.DAT'), f.get('A:\\MIX2.DAT')))
+    o = sh.run('copy bin1.dat /b /a bin6.dat') + sh.run('copy bin1.dat bin7.dat /b /a') + sh.run('copy bin1.dat /b /a+c.ref m3.dat')
+    f = fs()
+    check('/B and /A on one name, the source\'s or the destination\'s: both for nothing (MS-DOS\'s SETASC): a binary '
+          'single copy; in a concatenation its ASCII', f.get('A:\\BIN6.DAT') == b'x\x1ay' and f.get('A:\\BIN7.DAT') == b'x\x1ay'
+          and f.get('A:\\M3.DAT') == b'xccc\x1a', (o, f.get('A:\\BIN6.DAT'), f.get('A:\\BIN7.DAT'), f.get('A:\\M3.DAT')))
+    o = sh.run('copy s.ref/+c.ref sc.dat')
+    check('"/" then "+" is no switch (COPY S.REF/+C.REF SC.DAT): the two, in one', fs().get('A:\\SC.DAT') == b'sssccc\x1a',
+          (o, fs().get('A:\\SC.DAT')))
+    o = sh.run('copy s.ref+,, cc.ref')
+    f = fs()
+    check('",," after a "+" ends the list (MS-DOS\'s CPARSE): COPY S.REF+,, CC.REF: CC.REF the destination, S.REF\'s '
+          '(ASCII), S.REF as it was', f.get('A:\\CC.REF') == b'sss\x1a' and f.get('A:\\S.REF') == b'sss',
+          (o, f.get('A:\\CC.REF')))
+    o = sh.run('copy p.ref+s.ref+p.ref')
+    check('COPY P.REF+S.REF+P.REF: P.REF kept, S.REF after it; P.REF met again: "Content of destination lost before '
+          'copy", passed over', fs().get('A:\\P.REF') == b'pppsss\x1a' and 'Content of destination lost before copy' in o,
+          (o, fs().get('A:\\P.REF')))
+    o = sh.run('copy u.ref+,,')
+    check('COPY U.REF+,, (ASCII): cut at its first ^Z, as MS-DOS (U.REF was u^ZTAIL)', fs().get('A:\\U.REF') == b'u\x1a',
+          (o, fs().get('A:\\U.REF')))
     c0 = fs().get('A:\\C.REF'), fs().get('A:\\D.REF')
     o = sh.run('copy a.txt + /b c.ref out.dat') + sh.run('copy a.txt+/a d.ref out2.dat') + sh.run('copy a.txt/b+c.ref cat2.dat')
     f = fs()
@@ -1823,6 +1853,12 @@ def t_copycat():
     k.key('copy con+c.ref cona.dat'); k.key(ktest.ENTER); k.key('typed'); k.key(ktest.ENTER); k.key('\x1a'); k.key(ktest.ENTER)
     check('a device in a list (COPY CON+C.REF CONA.DAT): what was typed, then C.REF, one ^Z',
           fs().get('A:\\CONA.DAT') == b'typed\r\nccc\x1a', (k.pc.text_screen(), fs().get('A:\\CONA.DAT')))
+    k.key('cls'); k.key(ktest.ENTER); k.pc.tty.clear()
+    k.key('copy con+c.ref'); k.key(ktest.ENTER); k.key('hi'); k.key(ktest.ENTER); k.key('\x1a'); k.key(ktest.ENTER)
+    t = ''.join(k.pc.tty)
+    check('COPY CON+C.REF (no destination: CON, the first source\'s, a device): to the screen, no "onto itself", '
+          'no file made', 'ccc' in t and 'onto itself' not in t and '1 File(s) copied' in t
+          and not any(n.startswith('A:\\CON') and n != 'A:\\CONA.DAT' for n in fs()), repr(t[-200:]))
     o = el('copy nosuch.ref+a.txt+nosuch2.ref+c.ref anc.dat')
     check('"+" parts not there (first and in the middle): passed over without a word, ERRORLEVEL 0, the rest copied',
           fs().get('A:\\ANC.DAT') == b'aaaccc\x1a' and 'File not found' not in o and o.endswith('E0'), (o, fs().get('A:\\ANC.DAT')))
@@ -1851,8 +1887,6 @@ def t_copycat():
     o = sh.run('copy e\\*.txt e\\aa.txt')
     check('COPY E\\*.TXT E\\AA.TXT, AA.TXT the first found: kept, BB.TXT appended (over its ^Z), not "onto itself"',
           fs().get('A:\\E\\AA.TXT') == b'aabb\x1a' and 'onto itself' not in o and '1 File(s) copied' in o, (o, fs().get('A:\\E\\AA.TXT')))
-    o = sh.run('copy *.txt+*.ref')
-    check('COPY *.TXT+*.REF (MS-DOS pairs such names; not here): "Syntax error", nothing made', 'Syntax error' in o, o)
     # dates: a binary single copy keeps its source's; a concatenation, /A and "+,," get the clock's
     src_d = ent(b'BIN1    DAT')
     sh.run('copy bin1.dat bdate.dat'); sh.run('copy bin1.dat+c.ref cdate.dat')
@@ -1878,6 +1912,7 @@ def t_copycat():
             else: break
         return k.pc.text_screen()
     p = image('catbad.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'A.TXT=' + mkf('xa', b'original'),
+              'U.TXT=' + mkf('xu', b'u\x1aTAIL'),
               'BAD.TXT=' + mkf('xb', bytes(range(32, 127)) * 20), 'N.TXT=' + mkf('xn', b'new'),
               'BAD.BAK=' + mkf('xbk', b'keep-bak'))
     k = ktest.KPC(p); k.start()
@@ -1889,16 +1924,23 @@ def t_copycat():
     cl = struct.unpack_from('<H', r, i + 26)[0]
     k.pc.drives[0].bad = {data + (cl - 2) * b['spc'] + 1}
     o = fail_ans(k, 'copy a.txt+bad.txt')
-    check('COPY A.TXT+BAD.TXT, BAD.TXT\'s second sector unreadable (Fail): A.TXT kept, what it held there (its ^Z '
-          'after), "0 File(s) copied"', fatcheck.read_files(raw()).get('A:\\A.TXT') in (b'original', b'original\x1a')
+    check('COPY A.TXT+BAD.TXT, BAD.TXT\'s second sector unreadable (Fail): A.TXT exactly as it was (no ^Z added), '
+          '"0 File(s) copied"', fatcheck.read_files(raw()).get('A:\\A.TXT') == b'original'
           and '0 File(s) copied' in o, (o, fatcheck.read_files(raw()).get('A:\\A.TXT')))
+    o = fail_ans(k, 'copy u.txt+bad.txt') + fail_ans(k, 'copy n.txt+u.txt+bad.txt')
+    f = fatcheck.read_files(raw())
+    check('... COPY U.TXT+BAD.TXT and N.TXT+U.TXT+BAD.TXT (U.TXT u^ZTAIL, N.TXT appended first): each exactly as it '
+          'was, TAIL and all', f.get('A:\\U.TXT') == b'u\x1aTAIL' and f.get('A:\\N.TXT') == b'new', (o, f.get('A:\\U.TXT'), f.get('A:\\N.TXT')))
     o = fail_ans(k, 'copy n.txt+bad.txt nb.dat')
-    check('COPY N.TXT+BAD.TXT NB.DAT (made by this copy): deleted, "0 File(s) copied", the disk consistent',
-          'A:\\NB.DAT' not in fatcheck.read_files(raw()) and '0 File(s) copied' in o and not fatcheck.check(raw())[0], o)
+    f = fatcheck.read_files(raw())
+    check('COPY N.TXT+BAD.TXT NB.DAT (made by this copy), a source not read: kept, what was read and its ^Z, '
+          '"1 File(s) copied" (MS-DOS\'s ENDCOPY), the disk consistent', (f.get('A:\\NB.DAT') or b'').startswith(b'new')
+          and f.get('A:\\NB.DAT', b'').endswith(b'\x1a') and '1 File(s) copied' in o and not fatcheck.check(raw())[0], (o, f.get('A:\\NB.DAT')))
     o = fail_ans(k, 'copy n.txt+bad.txt *.bak')
     f = fatcheck.read_files(raw())
-    check('COPY N.TXT+BAD.TXT *.BAK failing: N.BAK (the one destination) deleted, BAD.BAK (there before; what the '
-          'second source\'s name would map to) untouched', 'A:\\N.BAK' not in f and f.get('A:\\BAD.BAK') == b'keep-bak', (o, sorted(f)))
+    check('COPY N.TXT+BAD.TXT *.BAK failing so: N.BAK (the one destination) kept, BAD.BAK (there before; what the '
+          'second source\'s name would map to) untouched', (f.get('A:\\N.BAK') or b'').startswith(b'new')
+          and f.get('A:\\BAD.BAK') == b'keep-bak', (o, sorted(f)))
     k.pc.drives[0].bad = set()
     pf = image('catfull.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'A.TXT=' + mkf('fa', b'original'),
                'BIG.TXT=' + mkf('fb', b'B' * 30000))
@@ -1911,13 +1953,91 @@ def t_copycat():
     k = ktest.KPC(pf); k.start()
     sh = Shell(k)
     o = sh.run('copy a.txt+big.txt')
-    check('COPY A.TXT+BIG.TXT, the disk full on the way: A.TXT kept as it was (its ^Z after), "Insufficient disk '
-          'space", "0 File(s) copied"', fatcheck.read_files(raw()).get('A:\\A.TXT') in (b'original', b'original\x1a')
+    check('COPY A.TXT+BIG.TXT, the disk full on the way: A.TXT exactly as it was, "Insufficient disk '
+          'space", "0 File(s) copied"', fatcheck.read_files(raw()).get('A:\\A.TXT') == b'original'
           and 'Insufficient disk space' in o and '0 File(s) copied' in o and not fatcheck.check(raw())[0],
           (o, fatcheck.read_files(raw()).get('A:\\A.TXT')))
     o = sh.run('copy a.txt+big.txt ab.dat')
     check('... COPY A.TXT+BIG.TXT AB.DAT (made by it): deleted, "0 File(s) copied", the disk consistent',
           'A:\\AB.DAT' not in fatcheck.read_files(raw()) and '0 File(s) copied' in o and not fatcheck.check(raw())[0], o)
+    # the disk full for the last ^Z only, and over several sources (the earlier ones not left appended)
+    def full(name, files, left):
+        pf = image(name, os.path.join(GOS, 'src', 'LCMD.COM'), *files)
+        r = open(pf, 'rb').read(); b = fatcheck.bpb(r)
+        data = b['res'] + b['nfat'] * b['spf'] + (b['nroot'] * 32 + 511) // 512
+        fat = r[b['res'] * 512:(b['res'] + b['spf']) * 512]
+        get = lambda n: (struct.unpack_from('<H', fat, n * 3 // 2)[0] >> 4) if n & 1 else (struct.unpack_from('<H', fat, n * 3 // 2)[0] & 0xFFF)
+        free = sum(1 for n in range(2, (b['tot'] - data) // b['spc'] + 2) if get(n) == 0) * b['spc'] * 512
+        subprocess.run(['mcopy', '-i', pf, mkf('ffill2', b'F' * (free - left)), '::FILL.DAT'], check=True)
+        k = ktest.KPC(pf); k.start()
+        return k, Shell(k)
+    x12 = ('X1.TXT=' + mkf('fx1', b'x' * 256), 'X2.TXT=' + mkf('fx2', b'y' * 256), 'K.TXT=' + mkf('fk', b'k' * 1024))
+    k, sh = full('catz.img', x12, 512)
+    o = sh.run('copy x1.txt+x2.txt out.dat')
+    check('the disk full for the last ^Z only (COPY X1.TXT+X2.TXT OUT.DAT, 512 bytes free): OUT.DAT, made by it, '
+          'deleted, "0 File(s) copied", the disk consistent', 'A:\\OUT.DAT' not in fatcheck.read_files(raw())
+          and '0 File(s) copied' in o and not fatcheck.check(raw())[0], (o, sorted(fatcheck.read_files(raw()))))
+    k, sh = full('catz2.img', x12, 512)
+    o = sh.run('copy k.txt+x1.txt+x2.txt')
+    check('... COPY K.TXT+X1.TXT+X2.TXT so (K.TXT the user\'s): K.TXT exactly as it was, X1 and X2 not left in it, '
+          '"0 File(s) copied"', fatcheck.read_files(raw()).get('A:\\K.TXT') == b'k' * 1024 and '0 File(s) copied' in o
+          and not fatcheck.check(raw())[0], (o, len(fatcheck.read_files(raw()).get('A:\\K.TXT') or b'')))
+    k, sh = full('catm.img', ('X1.TXT=' + mkf('mx1', b'x' * 300), 'BIG.TXT=' + mkf('mbg', b'B' * 20000),
+                              'K.TXT=' + mkf('mk', b'orig\x1a')), 4096)
+    o = sh.run('copy k.txt+x1.txt+big.txt')
+    check('the disk full in a third source (COPY K.TXT+X1.TXT+BIG.TXT): K.TXT exactly as it was (X1.TXT not left in it)',
+          fatcheck.read_files(raw()).get('A:\\K.TXT') == b'orig\x1a' and '0 File(s) copied' in o, (o, fatcheck.read_files(raw()).get('A:\\K.TXT', b'')[:40]))
+    sh.run('del fill.dat')
+    o = sh.run('copy k.txt+x1.txt+big.txt')
+    check('... room made, the same again: whole, X1.TXT in it once', fatcheck.read_files(raw()).get('A:\\K.TXT')
+          == b'orig' + b'x' * 300 + b'B' * 20000 + b'\x1a' and '1 File(s) copied' in o, o)
+    # a source found but not opened (another system's name, "A+B.TXT"): the destination closed, its handle with
+    # it, 20 times over; the user's (more after its ^Z) exactly as it was; one made kept and counted (a source's error)
+    big = b'keep-me\x1a' + b'T' * 5000
+    p = image('catopen.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'K.TXT=' + mkf('ok', big), 'C.TXT=' + mkf('oc', b'c' * 1500),
+              'AXB.TXT=' + mkf('ob', b'bbb'), 'N.TXT=' + mkf('on', b'nnn'))
+    img = bytearray(open(p, 'rb').read()); i = img.find(b'AXB     TXT'); img[i:i + 11] = b'A+B     TXT'; open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    sh = Shell(k)
+    o = ''
+    for _ in range(20): o = sh.run('copy *.txt k.txt')
+    o2 = sh.run('copy n.txt n2.txt')
+    f = fatcheck.read_files(raw())
+    check('a source found but not opened (A+B.TXT), COPY *.TXT K.TXT 20 times: K.TXT (more after its ^Z) exactly as '
+          'it was each time, "0 File(s) copied"; then COPY N.TXT N2.TXT still copies (no handle left open)',
+          f.get('A:\\K.TXT') == big and '0 File(s) copied' in o and '1 File(s) copied' in o2 and f.get('A:\\N2.TXT') == b'nnn'
+          and not fatcheck.check(raw())[0], (o, o2, len(f.get('A:\\K.TXT') or b'')))
+    o = sh.run('copy *.txt all.dat')
+    f = fatcheck.read_files(raw())
+    check('... COPY *.TXT ALL.DAT (made by it): K.TXT and C.TXT in it and its ^Z, then the one not opened: kept, '
+          '"1 File(s) copied"', f.get('A:\\ALL.DAT') == b'keep-me' + b'c' * 1500 + b'\x1a' and '1 File(s) copied' in o
+          and not fatcheck.check(raw())[0], (o, (f.get('A:\\ALL.DAT') or b'')[:20]))
+    o = sh.run('copy k.txt+n.txt')
+    check('the user\'s with more after its first ^Z, appended to: what came moved down over the ^Z, the rest gone '
+          '(as MS-DOS)', fatcheck.read_files(raw()).get('A:\\K.TXT') == b'keep-menn' + b'n\x1a' and '1 File(s) copied' in o,
+          (o, fatcheck.read_files(raw()).get('A:\\K.TXT', b'')[:30]))
+    # pairs (MS-DOS's): a first source with wildcards and "+" to a wildcard name, here, a directory
+    p = image('catpair.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'X1.TXT=' + mkf('px1', b'x1'), 'X1.REF=' + mkf('pr1', b'r1'),
+              'X2.TXT=' + mkf('px2', b'x2\x1a'), 'X2.REF=' + mkf('pr2', b'r2'), 'X3.TXT=' + mkf('px3', b'x3'),
+              'X2.LST=' + mkf('pl2', b'l2'), 'D2\\')
+    k = ktest.KPC(p); k.start()
+    sh = Shell(k)
+    o = sh.run('copy *.txt+*.ref+*.lst *.dat')
+    f = fatcheck.read_files(raw())
+    check('COPY *.TXT+*.REF+*.LST *.DAT: each .TXT with its .REF and .LST (one not there passed over) into its .DAT, '
+          '"3 File(s) copied"', f.get('A:\\X1.DAT') == b'x1r1\x1a' and f.get('A:\\X2.DAT') == b'x2r2l2\x1a'
+          and f.get('A:\\X3.DAT') == b'x3\x1a' and '3 File(s) copied' in o, (o, {n: v for n, v in f.items() if n.endswith('.DAT')}))
+    o = sh.run('copy *.txt+*.ref d2')
+    f = fatcheck.read_files(raw())
+    check('COPY *.TXT+*.REF D2: into the directory, of their names', f.get('A:\\D2\\X1.TXT') == b'x1r1\x1a'
+          and f.get('A:\\D2\\X2.TXT') == b'x2r2\x1a' and f.get('A:\\D2\\X3.TXT') == b'x3\x1a' and '3 File(s) copied' in o,
+          (o, sorted(f)))
+    o = sh.run('copy *.txt+*.ref')
+    f = fatcheck.read_files(raw())
+    check('COPY *.TXT+*.REF (no destination): each .REF appended to its .TXT (over its ^Z); X3.TXT, no partner, as it '
+          'was and not counted, nothing said; "2 File(s) copied"', f.get('A:\\X1.TXT') == b'x1r1\x1a'
+          and f.get('A:\\X2.TXT') == b'x2r2\x1a' and f.get('A:\\X3.TXT') == b'x3' and '2 File(s) copied' in o
+          and 'onto itself' not in o and not fatcheck.check(raw())[0], (o, f.get('A:\\X3.TXT')))
 
 def t_spacenames():
     """Names with a space inside (another system's, or a program's: MS-DOS takes them) through LCMD's COPY
