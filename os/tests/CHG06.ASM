@@ -28,6 +28,10 @@ org 100h
         cmp     di, buf + 128
         jne     .r
         push    bx
+%ifdef ZD
+        mov     ah, 0Dh                 ; (ZD: INT 21h 0Dh first, and 0.3 s)
+        int     21h
+%endif
         mov     dl, 'a'
         mov     ah, 2
         int     21h
@@ -36,7 +40,11 @@ org 100h
         mov     bx, [es:46Ch]
 .w:     mov     ax, [es:46Ch]
         sub     ax, bx
+%ifdef ZD
+        cmp     ax, 6
+%else
         cmp     ax, 55
+%endif
         jb      .w
         push    cs
         pop     es

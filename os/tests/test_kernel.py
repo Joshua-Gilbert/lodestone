@@ -3188,8 +3188,9 @@ def t_chg06():
     check('... the 06h met in read-ahead (one try, no INT 24h) and in plain reads both', kinds == {0, 1}, kinds)
     # a drive without a change line: 128-byte reads of B:BIG.TXT (each a handle call) don't read its boot sector
     # each; after a pause of 3 s the next one looks, and sees the disk swapped meanwhile
-    for wait in (False, True):
-        k = ktest.KPC(image('c6_a.img', lcmd, probe(('SMALL', 'WAIT') if wait else ('SMALL',))), b=b1)
+    for wait in (False, True, 'zd'):
+        k = ktest.KPC(image('c6_a.img', lcmd, probe(('SMALL', 'WAIT', 'ZD') if wait == 'zd' else ('SMALL', 'WAIT')
+                                                   if wait else ('SMALL',))), b=b1)
         k.pc.drives[1].no_changeline = True; k.start()
         sh = Shell(k); pc = k.pc; first = pc.drives[1]
         orig = pc.int13; st = {'b0': 0}
@@ -3218,7 +3219,41 @@ def t_chg06():
             pc.int13 = orig
             o = ''.join(pc.tty)[n0 + 5:]
             check('... the disk swapped in a 3 s pause: the next 128-byte read looks, "Invalid disk change", Fail: '
-                  'refused, the other disk untouched', '[P]' in o and 'R-' in o and bytes(other.img) == b2, o[-100:])
+                  'refused, the other disk untouched' if wait is True else '... INT 21h 0Dh, the disk swapped 0.3 s '
+                  'before the next 128-byte read: a look due (D_CHK), so it looks despite the 2 s, "Invalid disk '
+                  'change", Fail: refused', '[P]' in o and 'R-' in o and bytes(other.img) == b2, o[-100:])
+    # INT 21h 0Dh (the root's sectors forgotten), then a CREATE on B:, the disk swapped under the root's read-ahead
+    # (root_pre, whose errors are left to the reads after it): Fail at "Invalid disk change", and none of the
+    # call's later transfers go to the disk in (dio: none to an unmounted floppy), so it is untouched
+    z0d = os.path.join(OUT, 'Z0D.COM')
+    open(os.path.join(OUT, 'Z0D.ASM'), 'w').write('org 100h\n mov ah, 0Dh\n int 21h\n mov ax, 4C00h\n int 21h\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', z0d, os.path.join(OUT, 'Z0D.ASM')], check=True)
+    many = [mkf('F%02d.TXT' % i, b'f' * 100) for i in range(20)]       # (a root past its first sector)
+    z1 = image('c6_z1.img', *many); dz1 = open(z1, 'rb').read()
+    z2 = bytearray(open(image('c6_z2.img', *many[:18]), 'rb').read()); z2[0x27:0x2B] = b'\x12\x34\x56\x78'
+    z2 = bytes(z2)
+    k = ktest.KPC(image('c6_z.img', lcmd, 'Z0D.COM=' + z0d), b=z1); k.start()
+    sh = Shell(k); pc = k.pc
+    first = pc.drives[1]; other = pcemu.Floppy(bytearray(z2)); other.change_err = True
+    sh.run('dir b:'); sh.run('z0d')
+    rp, st, orig = 0x600 + k.Y['root_pre'], {'arm': False, 'done': False}, pc.int13
+    def at_rp(pc):
+        if k.addr == rp and not st['done']: st['arm'] = True
+    def int13():
+        if st['arm'] and pc.r('ah') == 2 and pc.r('dl') == 1:
+            st['arm'] = False; st['done'] = True; other.changed = True; pc.drives[1] = other
+        return orig()
+    k.hooks.append(at_rp); pc.int13 = int13
+    k.key('cls'); k.key(ktest.ENTER)
+    n0 = len(pc.tty)
+    k.key('echo x>b:new.txt'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Fail?' in ''.join(pc.tty)[n0:] or pc.crash, 20)
+    k.key('f')
+    pc.int13 = orig
+    o = ''.join(pc.tty)[n0:]
+    check('... 0Dh, then ECHO > B:NEW.TXT, another disk in under the root\'s read-ahead: "Invalid disk change" '
+          'asked, Fail: nothing written to the disk in, nor to the first', st['done'] and 'Fail?' in o
+          and bytes(other.img) == z2 and bytes(first.img) == dz1, (st, o[-200:]))
 
 def t_cwdfind():
     """A floppy's current directory after another disk (KDISK.INC rule 1, cwd_find): B:\\SUB current, INT 21h 0Dh
