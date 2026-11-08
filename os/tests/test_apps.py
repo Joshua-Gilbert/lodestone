@@ -292,9 +292,9 @@ def t_core():
             (83, 4): 'Disk error (unknown command)', (83, 5): 'Disk error (data)', (83, 6): 'Disk error (bad request)',
             (83, 7): 'Disk error (seek)', (83, 8): 'Not a DOS disk', (83, 9): 'Disk error (sector not found)',
             (83, 10): 'Printer out of paper', (83, 11): 'Disk error (write)', (83, 12): 'Disk error (read)',
-            (83, 13): 'Disk error', (83, 14): 'error 14', (83, 0): 'Disk error', (20, 0): 'Unknown drive',
+            (83, 13): 'Disk error', (83, 14): 'error 14', (83, 16): 'Invalid disk change', (83, 0): 'Disk error', (20, 0): 'Unknown drive',
             (22, 0): 'Disk error (unknown command)', (24, 0): 'Disk error (bad request)', (28, 0): 'Printer out of paper',
-            (32, 0): 'error 32'}
+            (32, 0): 'error 32', (34, 0): 'Invalid disk change'}
     got = {}
     for c in want:
         case.append(c); k.key(CODE['E'])
