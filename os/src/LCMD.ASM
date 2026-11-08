@@ -31,6 +31,7 @@ cpu 286
 org 100h
 
 LBUF    equ 128
+PATHMAX equ 128                     ; the kernel's longest path, its NUL in
 FB_DTA  equ 0                       ; FOR's block (L4): its DTA, its set
 FB_BUF  equ 44                      ;  and command (each ending in 0),
 FB_ZERO equ FB_BUF + LBUF + 2       ;  and a 0 (the name a plain item adds)
@@ -345,8 +346,6 @@ ctrlc:  cmp     byte [cs:sv_busy], 0    ; (the Executive's saver: on)
         mov     ah, 4Ch
         int     21h
 .p:     jmp     prompt_loop
-        db      90h                     ; (the odd bytes of the put-back
-                                        ;  above: what follows its parity)
 
 ; INT 24h: "Not ready reading drive A / Abort, Retry, Fail?"
 crit:   sti
@@ -355,11 +354,7 @@ crit:   sti
         push    es
         push    cs
         pop     ds
-        mov     bx, di                  ; ("Invalid disk change": COPY then
-        cmp     bl, 0Fh                 ;  touches nothing by name, the disk
-        jne     .q                      ;  in being another)
-        mov     byte [dchg], 1
-.q:     cmp     byte [crit_q], 0        ; (Tab looking: Fail, no prompt in
+        cmp     byte [crit_q], 0        ; (Tab looking: Fail, no prompt in
         je      .ask                    ;  the line being edited)
         mov     al, 3
         jmp     .x
@@ -412,9 +407,16 @@ crit:   sti
         je      .x                      ;  again (one question, not one
         mov     al, 3                   ;  for each call it makes)
         mov     [crit_q], al
-.x:     mov     bp, sp                  ; the answer into pusha's AX
-        mov     [bp+4+14], al           ;  (past ES and DS)
-        pop     es
+.x:     mov     bp, sp
+        cmp     al, 1
+        xchg    [bp+4+14], al           ; the answer into pusha's AX (past ES
+        je      .y                      ;  and DS); AL: the drive.  "Invalid
+        cmp     byte [bp+4], 0Fh        ;  disk change" not retried, on COPY's
+        jne     .y                      ;  destination's drive: COPY then
+        cmp     al, [ddrv]              ;  touches nothing by name, the disk
+        jne     .y                      ;  in being another (Retry with the
+        mov     byte [dchg], 1          ;  right one: it goes on)
+.y:     pop     es
         pop     ds
         popa
         iret
@@ -1196,10 +1198,15 @@ bat_start:
         mov     byte [bat_on], 0        ; one batch runs another: replaced
         mov     dl, [bat_echo]          ;  (ECHO at the end as the first
 .new:   push    dx                      ;  one found it)
-        mov     dx, prog
+        mov     si, prog                ; its whole name (one the kernel
+        mov     di, bat_path            ;  would refuse as too long: missing)
+        mov     bp, bat_path + PATHMAX - 1
+        call    canonl
+        mov     dx, bat_path
+        jc      .no
         mov     ax, 3D80h               ; (not inherited: a task START's keeps none)
         int     21h
-        pop     dx
+.no:    pop     dx
         jnc     .op
         mov     [echo], dl
         mov     byte [errlvl], 1
@@ -1215,9 +1222,6 @@ bat_start:
         mov     [bat_last], al
         mov     [bat_pos], ax
         mov     [bat_pos + 2], ax
-        mov     si, prog
-        mov     di, bat_path
-        call    canon
         mov     si, cword               ; its name, for errors
         call    name_part
         mov     di, bat_name
@@ -1247,14 +1251,13 @@ bat_read:
         call    bat_gone                ; (CF: it ended the batch file)
         jnc     .o
         ret
-.h:     mov     byte [bat_ask], 0
-        xchg    bx, ax
+.h:     xchg    bx, ax
         mov     dx, [bat_pos]
         mov     cx, [bat_pos + 2]
         mov     ax, 4200h
         int     21h
         mov     dx, bat_raw
-        mov     cx, LBUF
+        mov     cx, LBUF + 1            ; (127 and CR LF: whole)
         mov     ah, 3Fh
         int     21h
         jc      .ce
@@ -1291,7 +1294,30 @@ bat_read:
 .lf:    mov     byte [si], 0
         inc     dx
         jmp     .back
-.eol:   mov     byte [si], 0
+.eol:   cmp     cx, LBUF + 1            ; (all read, no end in it: cut, 128
+        jb      .eo                     ;  kept, the rest passed over up to
+        dec     si                      ;  its LF, as COMMAND's)
+.eo:    mov     byte [si], 0
+        jb      .back
+.sk:    mov     dx, bat_raw + LBUF + 1
+        mov     cx, 1
+        mov     ah, 3Fh
+        int     21h
+        jc      .at
+        dec     ax
+        jnz     .at                     ; (the file's end)
+        mov     al, [bat_raw + LBUF + 1]
+        cmp     al, 1Ah
+        je      .eof
+        cmp     al, 10
+        jne     .sk
+.at:    xor     cx, cx                  ; the next line's place: here
+        xor     dx, dx
+        mov     ax, 4201h
+        int     21h
+        mov     [bat_pos], ax
+        mov     [bat_pos + 2], dx
+        jmp     short .got
 .back:  add     [bat_pos], dx           ; (the next line's place)
         adc     word [bat_pos + 2], 0
 .got:   mov     ah, 3Eh
@@ -1303,27 +1329,35 @@ bat_read:
 .end:   stc
         ret
 
-; the batch file won't open: on a removable disk asked for once ("Insert
-; disk with batch file", a key; CF clear: tried again); else, or the
-; second time, "Batch file missing" and the batch ends (CF)
+; the batch file won't open (AX the error): not there (2, 3) on a
+; removable disk: asked for ("Insert disk with batch file", a key; CF
+; clear: tried again, and asked again till it opens, as COMMAND's; Ctrl-C
+; ends the batch); else "Batch file missing", or the error ("Access
+; denied", ...), and the batch ends (CF)
 bat_gone:
-        cmp     byte [bat_ask], 0
-        jne     .miss
+        mov     si, e_access
+        cmp     al, 5
+        je      .end
+        mov     si, e_toomany
+        cmp     al, 4
+        je      .end
+        mov     si, e_batch
+        sub     al, 2
+        cmp     al, 1
+        ja      .end
         mov     bl, [bat_path]
         sub     bl, 'A' - 1
         mov     ax, 4408h               ; (AX 0: removable)
         int     21h
-        jc      .miss
+        jc      .end
         or      ax, ax
-        jnz     .miss
-        inc     byte [bat_ask]
+        jnz     .end
         mov     si, s_insbat
         call    puts_nl
         call    do_pause                ; (Ctrl-C there: the batch ends)
         clc
         ret
-.miss:  call    bat_end
-        mov     si, e_batch
+.end:   call    bat_end
         jmp     err
 
 ; run the batch file's next line (or end it)
@@ -3023,8 +3057,11 @@ name_part:
 .x:     mov     si, bx
         ret
 
-; path SI -> DI as "X:\DIR\NAME", with . and .. worked out
-canon:  push    di
+; path SI -> DI as "X:\DIR\NAME", with . and .. worked out.  canonl: no
+; part begun past BP, nor the NUL put past it (CF then: too long; so it
+; writes up to BP + 13 at most, "\" and an 8.3); canon: no limit
+canon:  mov     bp, -1
+canonl: push    di
         push    bx
         call    drv_of
         mov     dl, al
@@ -3075,7 +3112,9 @@ canon:  push    di
         jae     .c
         inc     di
         jmp     .c
-.name:  cmp     di, [canon_root]
+.name:  cmp     bp, di
+        jb      .t
+        cmp     di, [canon_root]
         je      .n1
         mov     al, '\'
         stosb
@@ -3107,7 +3146,8 @@ canon:  push    di
 .done:  cmp     di, [canon_root]        ; "X:\" keeps its backslash
         ja      .t
         mov     di, [canon_root]
-.t:     mov     byte [di], 0
+.t:     cmp     bp, di                  ; (CF: past it)
+        mov     byte [di], 0
         pop     bx
         pop     ax
         ret
@@ -3210,7 +3250,10 @@ do_copy:
         call    cparse                  ; -> plist, plus, path2, dsw, touch
         jnc     .p1
         jmp     err
-.p1:    mov     si, plist
+.p1:    mov     si, path2               ; (its drive: crit's dchg)
+        call    drv_of
+        mov     [ddrv], al
+        mov     si, plist
         call    next_src
         cmp     byte [path1], 0         ; (no first source)
         jne     .p2
@@ -3962,9 +4005,18 @@ kmove:  mov     ax, [kpos]
 .x:     ret
 
 ; copy src (BX: its name part) to its destination.  CF to stop (the
-; files closed; in concatenation, the destination as said above)
+; files closed; in concatenation, the destination as said above).  The
+; disk changed (dchg, from a search refused that the list passed over):
+; nothing opened or made by name; said here, or by cat_fail for the one
+; open (dstate 1 or 3)
 copy_one:
-        mov     [srcname], bx
+        cmp     byte [dchg], 0
+        je      .c
+        test    byte [dstate], 1
+        jz      dchg_said
+        stc
+        ret
+.c:     mov     [srcname], bx
         cmp     byte [pfnd], 0          ; ("+" to here or a directory: named
         je      .nm                     ;  from this, the first found)
         mov     byte [pfnd], 0
@@ -4246,9 +4298,14 @@ pump:
 ; the buffer's [cbfill] bytes to the destination, made first (3Ch) when
 ; it is to be made (dstate 4: nothing is made or cut before data go out,
 ; as MS-DOS's, so a Ctrl-C while CON is typed into changes nothing).  CF:
-; SI (e_create, e_full)
+; SI (e_create, e_full; e_dchg: the disk changed, so not made by name on
+; the one in now)
 dflush: cmp     byte [dstate], 4
         jne     .w
+        mov     si, e_dchg
+        cmp     byte [dchg], 0
+        stc
+        jne     .r
         mov     dx, dst
         xor     cx, cx
         mov     ah, 3Ch
@@ -5758,6 +5815,7 @@ e_zcut      db 'Destination put back without what followed its ^Z', 0
 e_dchg      db 'Disk changed: the destination not touched', 0
 e_nomem     db 'Insufficient memory', 0
 e_batch     db 'Batch file missing', 0
+e_toomany   db 'Too many open files', 0
 s_insbat    db 'Insert disk with batch file', 0
 e_envfull   db 'Out of environment space', 0
 e_date      db 'Invalid date', 0
@@ -5857,12 +5915,14 @@ cerr        resb 1                  ;  its error: 1 a source's, 2 its own
 pnow        resb 1                  ;  each read out at once (a device; TYPE)
 cbfill      resw 1                  ;  what the buffer holds, to go out
 dchg        resb 1                  ;  an INT 24h "Invalid disk change" (0Fh)
+                                    ;  on ddrv, the destination's drive
 kwr         resb 1                  ;  the kept one written to
 touch       resb 1                  ;  "+,,"
 kdt         resw 2                  ;  the kept one's time and date
 zbyte       resb 1
 zhad        resb 1                  ;  the kept one has a ^Z (zpos)
 kmoved      resb 1                  ;  kmove has written
+ddrv        resb 1                  ;  the destination's drive (0: A:)
 pnext       resw 1                  ;  the list's next source
 kpos        resw 2                  ;  the kept one's old end
 zpos        resw 2                  ;  its first ^Z
@@ -5935,7 +5995,6 @@ rdepth      resb 1                  ; levels of redirection kept (rsave)
 tpre_on     resb 1                  ; pipe_name: tpre read at this level (0: none)
 tpre        resb 66                 ; pipe_name: %TEMP%, a '\' after (\: none)
 cdepth      resb 1                  ; CALLs (call_segs)
-bat_ask     resb 1                  ; the batch file's disk asked for
 ed_tab      resb 1
 ed_wrap     resb 1                      ; Tab: wrapped to the first once
 ed_len      resb 1                  ; (ed_len, ed_pos: a word)
@@ -5964,7 +6023,8 @@ call_segs   resw CMAX
 ; them in a block of its own while the other batch file runs
 bat_ctx:
 bat_pos     resw 2                  ; the next line's place in the file
-bat_path    resb 82                 ; its whole name (canon): opened each line
+bat_path    resb PATHMAX + 13       ; its whole name (canonl, PATHMAX at
+                                    ;  most): opened each line
 bat_line    resw 1
 bat_on      resb 1                  ; 1: a batch file runs (2: CALL starts one)
 bat_echo    resb 1
