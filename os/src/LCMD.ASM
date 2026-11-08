@@ -3089,18 +3089,28 @@ do_type:
         call    cbuf_get                ;  loses no more of the text)
         jc      .c
         mov     word [fh2], 1           ; to standard output (not closed),
-        mov     byte [zstop], 1         ;  up to a ^Z whatever the file
+        mov     byte [zstop], 1         ;  up to a ^Z whatever the file,
+        mov     byte [pnow], 1          ;  each read out at once
+        xor     ax, ax
+        mov     [cbfill], ax
+        mov     [dstate], al
         call    pump                    ; (an error ends it, unsaid)
         call    cbuf_free
 .c:     jmp     close1
 
 ; ---------------------------------------------------------------------
 ; COPY src[+src...] [dst] [/A] [/B]: wildcards; to a directory; several
-; files into one.  As MS-DOS's: one plain destination file and a source
+; files into one.  As MS-DOS's, what is read is held in the buffer and the
+; destination made only when the first of it goes out (the buffer full, or
+; the copy's end): so a Ctrl-C while CON is typed into, or before anything
+; went out, makes and changes nothing (a device as the destination is
+; written to as each read comes).  One plain destination file and a source
 ; with wildcards or a "+" list is concatenation: one destination, kept
 ; open through the list, each source's name shown, ASCII by default (each
 ; source up to its first ^Z, one ^Z at the end, none to a device) and
-; "1 File(s) copied"; one that came out empty is deleted, 0.  The
+; "1 File(s) copied"; one where nothing came is not made (one there of its
+; name left as it was), 0.  "+" parts are split at MS-DOS's delimiters
+; too (",", ";", "=").  The
 ; destination as the first source is kept and the rest appended, in ASCII
 ; from its first ^Z; met again, or after the copy made it, "Content of
 ; destination lost before copy" and the rest go on.  "+" to no
@@ -3130,11 +3140,15 @@ do_type:
 ; what came is moved down over its first ^Z only then.  A concatenation
 ; that fails (a source not read, or found and not opened; the disk full;
 ; its ^Z, the last cut or a close refused; Fail at INT 24h; Ctrl-C):
-;   - the user's file comes out of it exactly as it was: cut back to its
-;     old end, not counted.  The one exception, a failure while what came
-;     is moved down: cut at its first ^Z and the ^Z written again (its
-;     text kept, what was after the ^Z lost, as MS-DOS's cut would);
-;     a put-back refused is said ("Destination not put back as it was");
+;   - the user's file comes out of it exactly as it was, its date and
+;     time too: cut back to its old end, not counted.  The one exception,
+;     a failure once what came (its ^Z last, written past the old end
+;     with it) began to be moved down (the move itself, the last cut or
+;     the close): cut at its first ^Z and the ^Z written again (its text
+;     kept, what was after the ^Z lost, as MS-DOS's cut would; said:
+;     "Destination put back without what followed its ^Z"); a put-back
+;     refused is said ("Destination not put back as it was"), and the
+;     put-back and a delete ask at INT 24h again;
 ;   - one this copy made is deleted after an error writing it (or Ctrl-C),
 ;     as MS-DOS's COPERR, and closed and counted after a source's error
 ;     (its ENDCOPY: what was read is kept).
@@ -3355,7 +3369,7 @@ cparse: call    plus_join               ; ("a + b": "a+b")
         jz      .z
         call    is_blank
         je      .b
-        cmp     al, ','
+        call    .dl
         je      .b
         cmp     al, '/'
         je      .sw
@@ -3395,6 +3409,8 @@ cparse: call    plus_join               ; ("a + b": "a+b")
         jmp     .bl
 .b1:    call    is_blank
         je      .bl
+        call    .dl
+        je      .bl
         dec     si
         or      al, al                  ; the list goes on: none in it yet,
         jz      .z                      ;  a "+" last, or a switch next
@@ -3411,7 +3427,7 @@ cparse: call    plus_join               ; ("a + b": "a+b")
 .d:     lodsb
         cmp     al, ' '
         jbe     .de
-        cmp     al, ','
+        call    .dl
         je      .de
         cmp     al, '/'
         jne     .ds
@@ -3426,7 +3442,7 @@ cparse: call    plus_join               ; ("a + b": "a+b")
         jz      .ok
         call    is_blank
         je      .r
-        cmp     al, ','
+        call    .dl
         je      .r
         cmp     al, '/'
         jne     .many
@@ -3459,6 +3475,12 @@ cparse: call    plus_join               ; ("a + b": "a+b")
 .dx:    ret
 .dz:    dec     si
         ret
+.dl:    cmp     al, ','                 ; MS-DOS's other delimiters (DELIM)
+        je      .dlx
+        cmp     al, ';'
+        je      .dlx
+        cmp     al, '='
+.dlx:   ret
 
 ; the list's source at SI (up to a "+" or its end) -> path1; its /A or /B
 ; -> smode (both on it: neither, as MS-DOS's SETASC); [pnext] past it
@@ -3584,29 +3606,22 @@ cat_end:
         jz      .x
         cmp     al, 2
         je      .kept
-        mov     bx, [fh2]               ; made, or kept and appended to
-        cmp     al, 1
-        jne     .k
-        call    isdev                   ; (made: empty?  A device never)
-        jnz     .z
-        mov     al, 1
-        call    seek
-        or      ax, dx
-        jnz     .z
-        mov     ah, 3Eh
-        int     21h
-        mov     dx, dst
-        mov     ah, 41h
-        int     21h
-.x:     mov     byte [dstate], 0        ; (done: none open)
-        ret
-.k:     cmp     byte [zhad], 0
+        cmp     al, 4                   ; (to be made: nothing came, so none
+        jne     .o                      ;  made; one there of its name as it
+        cmp     word [cbfill], 0        ;  was; 0)
+        je      .x
+.o:     call    dflush                  ; the rest out (made now, if not yet)
+        jc      .f
+        call    zend                    ; its ^Z; the user's past its old end,
+        jc      .f                      ;  so moved down with what came
+        mov     bx, [fh2]
+        cmp     byte [dstate], 3
+        jne     .z
+        cmp     byte [zhad], 0
         je      .z
         call    kmove
         jc      .f
-.z:     call    zend
-        jc      .f
-        xor     cx, cx                  ; (cut there: what was past it, gone,
+.z:     xor     cx, cx                  ; (cut there: what was past it, gone,
         mov     ah, 40h                 ;  as MS-DOS's)
         int     21h
         mov     si, e_wfail
@@ -3616,12 +3631,14 @@ cat_end:
         mov     si, e_wfail
         jc      .fc
         inc     word [copied]
-        jmp     short .x
+.x:     mov     byte [dstate], 0        ; (done: none open)
+        ret
 .f:     call    err
         mov     byte [cerr], 2
         jmp     cat_fail
 .fc:    call    err                     ; the close refused (its entry not
-        mov     al, [dstate]            ;  written)
+        mov     byte [crit_q], 0        ;  written; the put-back and the
+        mov     al, [dstate]            ;  delete ask again)
         mov     byte [dstate], 0
         mov     dx, dst
         cmp     al, 1
@@ -3648,6 +3665,8 @@ cat_end:
         jz      .self
         cmp     al, '/'
         je      .self
+        cmp     al, '+'                 ; ("A+ +": still none)
+        je      .pm
         inc     word [copied]
         jmp     .x
 .self:  mov     si, e_self
@@ -3690,16 +3709,18 @@ cat_fail:
         mov     al, [dstate]            ;  Retry there leaves no lost
         mov     byte [dstate], 0        ;  clusters)
         mov     bx, [fh2]
-        cmp     al, 1
-        jb      .x
-        je      .m
         cmp     al, 3
-        jne     .x
-        jmp     kput
+        je      kput
+        cmp     al, 1
+        je      .m
+        cmp     al, 4                   ; (to be made: after a source's
+        jne     .x                      ;  error what came made and kept;
+        cmp     byte [cerr], 1          ;  else nothing made)
+        je      .k
 .x:     ret
 .m:     cmp     byte [cerr], 1
         jne     .d
-        mov     [dstate], al            ; (1)
+.k:     mov     [dstate], al
         jmp     cat_end
 .d:     mov     ah, 3Eh
         int     21h
@@ -3708,11 +3729,14 @@ cat_fail:
         int     21h
         ret
 
-; the user's file at BX put back (krest) and closed; refused on that handle
-; (a kernel that refuses a handle's writes after one failed), once more on
-; one of its own (kput.r: from there).  Refused still: said, never silent
+; the user's file at BX put back (krest), its date and time as they were,
+; and closed; refused, once more on a handle of its own (kput.r: from
+; there; also the way back after its close was refused, its entry not
+; written).  Refused still: said, never silent.  Cut at its first ^Z (a
+; failure after the move began): said too
 kput:   call    krest
         pushf
+        call    kdate
         mov     ah, 3Eh
         int     21h
         popf
@@ -3724,13 +3748,24 @@ kput:   call    krest
         xchg    bx, ax
         call    krest
         pushf
+        call    kdate
         mov     ah, 3Eh
         int     21h
         popf
         jnc     .x
 .n:     mov     si, e_nrest
         jmp     err
-.x:     ret
+.x:     cmp     byte [kmoved], 0
+        je      .y
+        mov     si, e_zcut
+        jmp     puts_nl
+.y:     ret
+; BX's date and time: the kept one's as it was (kdt)
+kdate:  mov     cx, [kdt]
+        mov     dx, [kdt + 2]
+        mov     ax, 5701h
+        int     21h
+        ret
 
 ; BX, the user's file, put back: nothing moved down yet, cut back to its
 ; old end (kpos: its ^Z and what follows never touched, nor its entry's
@@ -3890,10 +3925,13 @@ copy_one:
         int     21h
         jnc     .so
         mov     si, e_notfound          ; (found, not opened: with the
-        cmp     byte [cmode], 0         ;  destination open, a source's
-        je      .qe                     ;  error, cat_fail's)
-        test    byte [dstate], 1
+        cmp     byte [cmode], 0         ;  destination open or to be made,
+        je      .qe                     ;  a source's error, cat_fail's)
+        mov     al, [dstate]
+        or      al, al
         jz      .qe
+        cmp     al, 2
+        je      .qe
         mov     word [fh1], 0FFFFh
         mov     byte [cerr], 1
         jmp     .cerr
@@ -3906,24 +3944,35 @@ copy_one:
         je      .kopen
         or      al, al
         jnz     .loop
-.new:   mov     dx, dst
-        xor     cx, cx
-        mov     ah, 3Ch
+.new:   mov     byte [dstate], 4        ; made when the first data go out
+        mov     dx, dst                 ;  (dflush); a device now, and
+        mov     ax, 3D00h               ;  written to as each read comes
         int     21h
-        jc      .cfail
-        mov     [fh2], ax
-        cmp     byte [cmode], 0
-        je      .loop
-        mov     byte [dstate], 1
-        jmp     short .loop
+        jc      .loop
+        xchg    bx, ax
+        call    isdev
+        mov     ah, 3Eh
+        int     21h
+        or      dl, dl
+        jz      .loop
+        mov     byte [pnow], 1
+        call    dflush
+        jnc     .loop
+        call    close1
+        jmp     err_create
 .kopen: mov     dx, dst
         mov     ax, 3D02h
         int     21h
         jnc     .ko
-.cfail: call    close1                  ; (a kept one never made afresh)
+        call    close1                  ; (a kept one never made afresh)
         jmp     err_create
 .ko:    mov     [fh2], ax
         mov     byte [dstate], 3
+        xchg    bx, ax                  ; its date and time, for a put-back
+        mov     ax, 5700h
+        int     21h
+        mov     [kdt], cx
+        mov     [kdt + 2], dx
         call    zseek                   ; where this command writes in it
         jnc     .loop
         call    err                     ; (nothing written in it: closed)
@@ -3943,7 +3992,9 @@ copy_one:
         call    close1                  ; (concatenation: the destination
         clc                             ;  stays open)
         ret
-.one:   call    zend
+.one:   call    dflush                  ; (made now if not yet, empty too)
+        jc      .perr
+        call    zend
         jc      .perr
         cmp     byte [zstop], 0         ; keep the source's date and time
         jne     .cl                     ;  (a binary copy)
@@ -3964,13 +4015,16 @@ copy_one:
         popf
         mov     si, e_wfail
         jc      .clf
+        mov     byte [dstate], 0
         inc     word [copied]
         clc
         ret
 .clf:   call    err
+        mov     byte [crit_q], 0        ; (its delete asks again)
         mov     dx, dst
         mov     ah, 41h
         int     21h
+        mov     byte [dstate], 0
         stc
         ret
 .perr:  mov     byte [cerr], 1          ; a source not read (SI = e_read),
@@ -3984,10 +4038,16 @@ copy_one:
         stc
         ret
 .del:   mov     byte [crit_q], 0        ; (the partial copy's close and
-        call    close2                  ;  delete ask again: a Retry there
-        mov     dx, dst                 ;  leaves no lost clusters)
+        call    close1                  ;  delete ask again: a Retry there
+        cmp     byte [dstate], 1        ;  leaves no lost clusters; one not
+        jne     .dz                     ;  made yet: nothing to delete)
+        mov     bx, [fh2]
+        mov     ah, 3Eh
+        int     21h
+        mov     dx, dst
         mov     ah, 41h
         int     21h
+.dz:    mov     byte [dstate], 0
         stc
         ret
 
@@ -4026,57 +4086,95 @@ zseek:  xor     ax, ax
 ; end or, when [zstop], a ^Z (COPY from a device, TYPE).  CF: SI = what
 ; went wrong (a read failed; a write came short: the disk is full)
 pump:
-.l:     mov     bx, [fh1]
-        call    cb_read
+.l:     mov     dx, [cbfill]            ; (the buffer full: out first)
+        mov     cx, [cb_len]
+        sub     cx, dx
+        jnz     .r
+        call    dflush
+        jnc     .l
+        ret
+.r:     mov     bx, [fh1]
+        mov     si, e_read
+        mov     ah, 3Fh
+        call    cb_iox
         jc      .x
         or      ax, ax                  ; (CF clear)
         jz      .x
         mov     cx, ax
         mov     byte [tmpb], 0
         cmp     byte [zstop], 0
-        je      .w
-        call    cb_z
+        je      .a
+        mov     di, [cbfill]
+        call    cb_zd
+        jne     .a
+        inc     byte [tmpb]             ; (up to the ^Z: its last)
+.a:     add     [cbfill], cx
+        cmp     byte [pnow], 0
+        je      .k
+        call    dflush
+        jc      .x
+.k:     cmp     byte [tmpb], 0          ; (CF clear)
+        je      .l
+.x:     ret
+
+; the buffer's [cbfill] bytes to the destination, made first (3Ch) when
+; it is to be made (dstate 4: nothing is made or cut before data go out,
+; as MS-DOS's, so a Ctrl-C while CON is typed into changes nothing).  CF:
+; SI (e_create, e_full)
+dflush: cmp     byte [dstate], 4
         jne     .w
-        inc     byte [tmpb]             ; (up to the ^Z: the last write)
-.w:     push    cx
+        mov     dx, dst
+        xor     cx, cx
+        mov     ah, 3Ch
+        int     21h
+        mov     si, e_create
+        jc      .r
+        mov     [fh2], ax
+        mov     byte [dstate], 1
+.w:     mov     cx, [cbfill]
+        or      cx, cx                  ; (none: CF clear)
+        jz      .r
         mov     bx, [fh2]
         mov     ah, 40h
         call    cb_io
-        pop     cx
         mov     si, e_full
-        jc      .x
+        jc      .r
         cmp     ax, cx
-        jne     .short
-        cmp     byte [tmpb], 0          ; (CF clear: 0 or 1 less 0)
-        je      .l
-.x:     ret
-.short: stc
-        ret
+        stc
+        jne     .r
+        mov     word [cbfill], 0
+        clc
+.r:     ret
 
 ; BX's next [cb_len] bytes into the buffer -> AX (CF: SI = e_read)
 cb_read:
         mov     si, e_read
         mov     cx, [cb_len]
         mov     ah, 3Fh
-; INT 21h AH (3Fh, 40h) with the buffer, BX and CX
-cb_io:  push    ds
+; INT 21h AH (3Fh, 40h) with the buffer (cb_iox: from DX on), BX and CX
+cb_io:  xor     dx, dx
+cb_iox: push    ds
         mov     ds, [cb_seg]
-        xor     dx, dx
         int     21h
         pop     ds
         ret
-; the first ^Z in the buffer's first CX bytes: ZF, CX the bytes before it
-; (else CX kept)
-cb_z:   push    es
+; the first ^Z in the buffer's CX bytes from 0 (cb_zd: from DI): ZF, CX
+; the bytes before it (else CX kept)
+cb_z:   xor     di, di
+cb_zd:  push    es
         mov     es, [cb_seg]
-        xor     di, di
         mov     al, 1Ah
         push    cx
+        push    di
         repne   scasb
+        pop     ax
         pop     cx
         pop     es
         jne     .x
-        lea     cx, [di - 1]
+        dec     di
+        sub     di, ax
+        mov     cx, di
+        cmp     al, al
 .x:     ret
 
 ; DL = 80h, ZF clear, if BX is a device (else 0, ZF)
@@ -5528,6 +5626,7 @@ e_full      db 'Insufficient disk space', 0
 e_read      db 'Read error', 0
 e_wfail     db 'Write error', 0
 e_nrest     db 'Destination not put back as it was', 0
+e_zcut      db 'Destination put back without what followed its ^Z', 0
 e_nomem     db 'Insufficient memory', 0
 e_batch     db 'Batch file missing', 0
 e_envfull   db 'Out of environment space', 0
@@ -5612,9 +5711,10 @@ dir_lines   resb 1
 dir_n       resw 1
 pat_drv     resb 1
 dst_dir     resb 1
-dstate      resb 1                  ; COPY: concatenation's destination: 0 none
-                                    ;  yet, 1 made (open), 2 the first source
-                                    ;  (kept), 3 that, open
+dstate      resb 1                  ; COPY: the destination: 0 none yet, 1
+                                    ;  made (open), 2 the first source (kept),
+                                    ;  3 that, open, 4 to be made when the
+                                    ;  first data go out (dflush)
 cmode       resb 1                  ;  concatenation
 plus        resb 1                  ;  a "+" list
 smode       resb 1                  ;  the sources' /A or /B so far
@@ -5624,7 +5724,10 @@ sdev        resb 1                  ;  this source a device
 pmode       resb 1                  ;  pairs (pdst the destination's pattern)
 pfnd        resb 1                  ;  named from the first source found
 cerr        resb 1                  ;  its error: 1 a source's, 2 its own
+pnow        resb 1                  ;  each read out at once (a device; TYPE)
+cbfill      resw 1                  ;  what the buffer holds, to go out
 touch       resb 1                  ;  "+,,"
+kdt         resw 2                  ;  the kept one's time and date
 zbyte       resb 1
 zhad        resb 1                  ;  the kept one has a ^Z (zpos)
 kmoved      resb 1                  ;  kmove has written
