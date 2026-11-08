@@ -119,10 +119,13 @@ def t_stop():
           (code, status(k), W['n'], probs))
 
 def t_open_file():
-    # DEFRAG run from a batch file: the batch file is open, so map only
+    # DEFRAG run from a batch file: LCMD keeps no file of it open between its lines (it opens it by its whole
+    # name at its place for each, as COMMAND does), so DEFRAG does its whole work, the batch file moved
+    # with the rest; the batch then goes on from where it was, each line once
     img = D.fragmented(os.path.join(OUT, 'b.img'), OUT)
-    D.mcopy(img, b'DEFRAG /S\r\nECHO OK > DONE.TXT\r\n', 'RUN.BAT', OUT)
-    raw0 = open(img, 'rb').read()
+    bat = b'DEFRAG /S\r\nECHO OK >> DONE.TXT\r\nECHO TWO >> DONE.TXT\r\n'
+    D.mcopy(img, bat, 'RUN.BAT', OUT)
+    raw0 = open(img, 'rb').read(); files0 = files_of(raw0)
     k = ktest.KPC(img); k.start()
     k.key(ktest.CODE_P); k.key('run')
     f4c = 0x600 + k.Y['f_4C']; seen = []
@@ -132,9 +135,17 @@ def t_open_file():
     st = status(k); k.pc.watch = None
     for _ in range(10): k.settle(5)
     raw = bytes(k.pc.drives[0].img)
-    files = fatcheck.read_files(raw)
-    check('from a batch file (open): map only, and the batch file carries on',
-          'open' in st and files.get('A:\\DONE.TXT', b'').startswith(b'OK') and D.layout(raw)[0] == D.layout(raw0)[0], (st, files.get('A:\\DONE.TXT')))
+    files = files_of(raw); done = files.pop('A:\\DONE.TXT', None)
+    frag, runs, used = D.layout(raw)
+    probs, _ = fatcheck.check(raw)
+    code = k.pc.u16(0x60, k.Y['last_exit']) & 255
+    def start(r):
+        i = r.find(b'RUN     BAT', 19 * 512, 33 * 512); return r[i + 26] | r[i + 27] << 8
+    check('from a batch file: DEFRAG does its whole work (exit 0, every file in one piece and byte for byte, no '
+          'CHKDSK problems), and the batch file, moved, carries on: its next two lines once each',
+          code == 0 and 'open' not in st and not frag and files == files0 and not probs
+          and done == b'OK \r\nTWO \r\n', (code, st, frag, probs, done, sorted(set(files) ^ set(files0))))
+    check('... the batch file did move (cluster %d -> %d)' % (start(raw0), start(raw)), start(raw0) != start(raw))
 
 def t_root():
     # long names, leftovers and a second copy of an entry (as a power cut

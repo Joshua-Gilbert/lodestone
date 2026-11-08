@@ -412,13 +412,33 @@ def t_hd_no():
     o2 = shell(k, 'if errorlevel 3 echo LEVEL3')
     check('Esc while it reads the disk: "nothing written", exit code 3, the disk as it was',
           'nothing written' in o and 'LEVEL3' in o2 and bytes(ata.disk) == raw and not ata.writes, (o, o2))
-    ata = hdrive(hdisk(tree=[('F.BAT', 0x20, b'@format c: && echo FORMAT-OK || echo FORMAT-FAILED\r\n')]))
+    # from a batch file on C:: LCMD keeps none of it open between its lines (as COMMAND), so FORMAT asks as
+    # at the prompt.  N: nothing written, exit code 5, the batch goes on; Y: C: formatted, and the batch file,
+    # gone with the rest, is "Batch file missing" (a fixed disk: not asked for), the batch over
+    ata = hdrive(hdisk(tree=[('F.BAT', 0x20, b'@echo off\r\nformat c:\r\nif errorlevel 5 echo LEVEL5\r\necho AFTER\r\n')]))
     raw = bytes(ata.disk)
     k = boot(ata=ata)
-    cmd(k, 'c:\\f.bat'); k.settle(30)
+    cmd(k, 'c:\\f.bat')
+    asked = wait(k, 'Proceed with Format (Y/N)?', 30)
+    k.key('n'); k.key(ktest.ENTER, settle=False); k.settle(30)
     o = scr(k)
-    check('run from a batch file on C:: "Files are open on drive C:", exit code 4, nothing written',
-          'Files are open on drive C:' in o and said(o, 'FORMAT-FAILED') and bytes(ata.disk) == raw, o)
+    check('run from a batch file on C:: FORMAT\'s warning asked; N: nothing written, exit code 5, the batch goes on',
+          asked and 'Files are open' not in o and said(o, 'LEVEL5') and said(o, 'AFTER') and bytes(ata.disk) == raw
+          and not ata.writes, o)
+    ata = hdrive(hdisk(tree=[('F.BAT', 0x20, b'@format c: /v:newhd && echo FORMAT-OK || echo FORMAT-FAILED\r\n'
+                                             b'@echo AFTER\r\n')]))
+    k = boot(ata=ata)
+    cmd(k, 'c:\\f.bat')
+    asked = wait(k, 'Proceed with Format (Y/N)?', 30)
+    k.key('y'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: 'Batch file missing' in scr(k), 600); k.settle(20)
+    o = scr(k)
+    v = F.Volume(ata.disk, PLBA); files, probs = v.files()
+    o2 = shell(k, 'echo still')
+    check('... Y: C: formatted (exit code 0, no files, CHKDSK-clean), then "Batch file missing" (not asked for), its '
+          'next line not run, the prompt back', asked and said(o, 'FORMAT-OK') and 'Batch file missing' in o
+          and 'Insert disk' not in o and not said(o, 'AFTER') and files == {} and probs == [] and said(o2, 'still'),
+          (o, files, probs, o2))
     k = boot(ata=hdrive(hdisk()))
     for line in ('format c: /s', 'format c: /f:720', 'format c: /4', 'format c: /n:9 /t:80'):
         o = shell(k, line + ' && echo FORMAT-OK || echo FORMAT-FAILED')

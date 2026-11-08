@@ -2326,6 +2326,61 @@ def t_copycat():
     check('the disk changed mid-COPY ("Invalid disk change", F): the disk in now untouched (its own K.TXT, P1.TXT), '
           '"Disk changed: the destination not touched", 0 counted', bytes(other.img) == two0
           and 'Disk changed: the destination not touched' in o and '0 File(s) copied' in o, o)
+    # ... at the first source's second read, the destination still to be made (dstate 4, its data in the
+    # buffer): F or A, then "Read error": not made by name on the disk in now (its own OUT.DAT as it was), 0
+    # counted; R with the first disk back: the copy whole; the destination on A: (the change on B:): made as
+    # after any source's error (what came, counted).  Past 64 KB (the destination open), at the second source's
+    # search, F: the list passes it over, so the third is found by name on the disk in now: neither opened nor
+    # read, one "Disk changed" said
+    c1 = mkimg.build(os.path.join(OUT, 'catdd1.img'), ['BIG.TXT=' + mkf('rpddb', b'B' * 70000), 'K.TXT=' + mkf('rpddk', b'keep-me\r\n\x1a'),
+                     'X1.TXT=' + mkf('rpddx', b'x' * 3000), 'X2.TXT=' + mkf('rpddy', b'y' * 3000),
+                     'OUT.DAT=' + mkf('rpddo', b'OLD')])
+    c2 = bytearray(open(mkimg.build(os.path.join(OUT, 'catdd2.img'), ['OUT.DAT=' + mkf('rpddo2', b'OTHER-DISK-OUT' * 100),
+                   'X2.TXT=' + mkf('rpddz', b'z' * 3000)]), 'rb').read())
+    for at in (c2.find(b'LODESTONE  ', 19 * 512), c2.find(b'LODESTONE  ', 0, 512)):
+        if at > 0: c2[at:at + 11] = b'OTHERDISK  '
+    c2[0x27:0x2B] = b'\x12\x34\x56\x78'
+    one0 = open(c1, 'rb').read(); c2 = bytes(c2)
+    for cmd, fn, keys, back, dest in (('copy b:x1.txt+b:x2.txt b:out.dat', 0x3F, 'f', False, 'none'),
+                                      ('copy b:x1.txt+b:x2.txt b:out.dat', 0x3F, 'a', False, 'none'),
+                                      ('copy b:x1.txt+b:x2.txt b:out.dat', 0x3F, 'r', True, 'whole'),
+                                      ('copy b:k.txt+b:x1.txt', 0x3F, 'f', False, 'a'),
+                                      ('copy b:big.txt+b:x1.txt+b:x2.txt b:out.dat', 0x4E, 'f', False, 'open')):
+        k = ktest.KPC(image('catdda.img', os.path.join(GOS, 'src', 'LCMD.COM')), b=c1); k.start(); Shell(k)
+        first = k.pc.drives[1]; other = pcemu.Floppy(bytearray(c2)); st = {'n': 0}
+        def swap(a, pc):
+            if a == fn and pc.r('bx') != 1:
+                st['n'] += 1
+                if st['n'] == 2: other.changed = True; k.pc.drives[1] = other
+        h = lcmd21(k, swap)
+        pc = k.pc; k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
+        k.key(cmd); k.key(ktest.ENTER, settle=False)
+        for i in range(6):
+            pc.run_until(lambda: ''.join(pc.tty)[n0:].count('Fail?') > i or 'copied' in ''.join(pc.tty)[n0:], 30)
+            if ''.join(pc.tty)[n0:].count('Fail?') <= i: break
+            if back: first.changed = True; k.pc.drives[1] = first
+            pc.keys.append(ord(keys))
+        k.settle(); k.hooks.remove(h)
+        o = pc.text_screen(); f1 = fatcheck.read_files(bytes(first.img)); fa = fatcheck.read_files(bytes(k.pc.drives[0].img))
+        ok = bytes(other.img) == c2 and not fatcheck.check(bytes(first.img))[0]
+        if dest == 'none':
+            ok = ok and bytes(first.img) == one0 and 'Read error' in o and 'Disk changed: the destination not touched' in o \
+                 and '0 File(s) copied' in o
+            what = 'nothing made on either disk ("Read error", "Disk changed: the destination not touched", 0 counted)'
+        elif dest == 'whole':
+            ok = ok and f1.get('A:\\OUT.DAT') == b'x' * 3000 + b'y' * 3000 + b'\x1a' and 'Disk changed' not in o \
+                 and '1 File(s) copied' in o
+            what = 'OUT.DAT on the first disk, X1 and X2 whole, 1 counted'
+        elif dest == 'open':
+            ok = ok and 'X2.TXT' not in o and o.count('Disk changed: the destination not touched') == 1 \
+                 and 'Insufficient' not in o and '0 File(s) copied' in o
+            what = 'X2.TXT on it not opened, one "Disk changed: the destination not touched", 0 counted'
+        else:
+            ok = ok and bytes(first.img) == one0 and fa.get('A:\\K.TXT') == b'keep-me\r\n\x1a' and 'Disk changed' not in o \
+                 and '1 File(s) copied' in o
+            what = 'A:\\K.TXT made from what came, 1 counted, B: as it was'
+        check('... %s, another disk at the second %s, %s%s: %s; the other disk untouched'
+              % (cmd.upper(), 'search' if fn == 0x4E else 'read', keys.upper(), ' (the first disk back)' if back else '', what), ok, o)
 
 def t_spacenames():
     """Names with a space inside (another system's, or a program's: MS-DOS takes them) through LCMD's COPY
@@ -3051,15 +3106,27 @@ def t_batswap():
               'the first disk back and a key: it goes on (%s); both disks as they were' % (what, ', '.join(want)),
               'Fail?' not in o and -1 not in at and at == sorted(at) and bytes(other.img) == d2 and img == d1
               and not fatcheck.check(img)[0], o[-500:])
-    # deleted while it runs: asked for once (a removable disk), then "Batch file missing"
+    # deleted while it runs (a removable disk): asked for again after each key, as COMMAND's, till Ctrl-C
     k = ktest.KPC(image('bsw_d.img', lcmd, mkf('D.BAT', b'@echo off\r\ndel d.bat\r\necho after\r\n'))); k.start()
-    Shell(k)
-    k.key('cls'); k.key(ktest.ENTER)
+    sh = Shell(k); pc = k.pc
+    k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
     k.key('d'); k.key(ktest.ENTER, settle=False)
-    o = drive(k, (('Strike a key', key(k)),))
-    check('a batch file that deletes itself: "Insert disk with batch file" once, a key, then "Batch file missing", '
-          'the rest not run, the prompt back', 'Insert disk with batch file' in o and 'Batch file missing' in o
-          and 'after' not in o and o.rstrip().endswith('A:\\>'), o[-300:])
+    for i in range(1, 4):
+        pc.run_until(lambda: ''.join(pc.tty)[n0:].count('Strike a key') >= i or pc.crash, 20)
+        pc.keys.append(3 if i == 3 else ord(' '))
+    k.settle()
+    o = ''.join(pc.tty)[n0:].replace('\r', ''); o2 = sh.run('echo still')
+    check('a batch file that deletes itself: "Insert disk with batch file" again after each key (three times), '
+          'never "Batch file missing"; Ctrl-C there ends it, the rest not run, the prompt back',
+          o.count('Insert disk with batch file\nStrike a key') == 3 and 'Batch file missing' not in o and 'after' not in o
+          and o.rstrip().endswith('A:\\>') and o2.startswith('still'), (o[-400:], o2))
+    # ... a directory of its name made in its place: the open refused with 5: "Access denied", the batch ends
+    k = ktest.KPC(image('bsw_d.img', lcmd, mkf('D.BAT', b'@echo off\r\ndel d.bat && md d.bat\r\necho after\r\n')))
+    k.start()
+    o = Shell(k).run('d')
+    check('... a directory of its name in its place: "Access denied" (asked for not), the rest not run, the prompt back',
+          'Access denied' in o and 'Insert disk' not in o and 'Batch file missing' not in o and 'after' not in o
+          and o.rstrip().endswith('A:\\>'), o[-300:])
     k = ktest.KPC(image('bsw_d.img', lcmd, mkf('D.BAT', b'@echo off\r\ndel d.bat\r\necho after\r\n'))); k.start()
     sh = Shell(k)
     k.key('cls'); k.key(ktest.ENTER)
@@ -3077,6 +3144,54 @@ def t_batswap():
     at = [o.find(w) for w in ('at two', 'at one', 'done')]
     check('GOTO forward and back past a 200-character line: each line read from its place, in order',
           -1 not in at and at == sorted(at), o[-300:])
+    # a line longer than 127: cut, the rest passed over up to its end (not run as a line of its own); one of 127
+    # and CR LF read whole (no empty line after it): each line's number as counted (an error says it)
+    for nl in (b'\r\n', b'\n'):
+        lines = (b'@echo off\r\nrem ' + b'r' * 123 + b'\r\necho ' + b'y' * 200 + b'Q.BAT' + nl + b'echo ' + b'z' * 300 + nl
+                 + b'nosuch\r\necho done\r\n')
+        k = ktest.KPC(image('bsw_l.img', lcmd, mkf('L.BAT', lines))); k.start()
+        o = Shell(k).run('l')
+        check('lines of 210 and 305 characters (%s): each cut, its rest never run, the next line its own; '
+              '"L line 5: Bad command or file name" (the 127-character line one line), then done'
+              % ('CR LF' if nl == b'\r\n' else 'LF'), 100 < o.count('y') < 124 and 'Q.BAT' not in o
+              and o.count('z') == o.count('y')
+              and o.count('Bad command') == 1 and 'L line 5: Bad command or file name' in o and 'done' in o, o[-700:])
+    # ... a ^Z in a long line's rest: the file's end there
+    k = ktest.KPC(image('bsw_l.img', lcmd, mkf('L.BAT', b'@echo off\r\necho ' + b'y' * 200 + b'\x1a\r\necho never\r\n')))
+    k.start()
+    o = Shell(k).run('l')
+    check('... a ^Z in the rest of a long line passed over: the batch ends there (the line after not run)',
+          'never' not in o and 100 < o.count('y') < 124 and o.rstrip().endswith('A:\\>'), o[-300:])
+    # its directory gone while it runs (path not found, 3, on a removable disk): asked for, as for 2
+    k = ktest.KPC(image('bsw_s.img', lcmd, 'SUB\\', mkf('SUB\\S.BAT', b'@echo off\r\ncd \\ && del sub\\s.bat && rd sub\r\n'
+                                                     b'echo after\r\n'))); k.start()
+    sh = Shell(k)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('sub\\s'); k.key(ktest.ENTER, settle=False)
+    o = drive(k, (('Strike a key', lambda: k.pc.keys.append(3)),))
+    check('... its directory removed while it runs: "Insert disk with batch file" (not "Batch file missing"), Ctrl-C '
+          'ends it, the rest not run', 'Insert disk with batch file' in o and 'Batch file missing' not in o
+          and 'after' not in o and o.rstrip().endswith('A:\\>'), o[-300:])
+    # its whole name past what the kernel opens (127): "Batch file missing" (none of it run, nothing written past
+    # its place); 127 exactly: run.  From a directory 53 deep, a name of its 7 directories more
+    top = ['AAAAAAA%d' % i for i in range(1, 7)]; deep = ['BBBBBBB%d' % i for i in range(1, 8)]
+    ds = ['\\'.join(top[:i + 1]) + '\\' for i in range(6)] + ['\\'.join(top + deep[:i + 1]) + '\\' for i in range(7)]
+    full = '\\'.join(top + deep)
+    more = ['CCCCCCC%d' % i for i in range(1, 6)]
+    ds += ['\\'.join(top + deep + more[:i + 1]) + '\\' for i in range(5)]
+    far = '\\'.join(top + deep + more)
+    k = ktest.KPC(image('bsw_p.img', lcmd, *ds, mkf(full + '\\ABC.BAT', b'echo ran-127\r\n'),
+                        mkf(full + '\\ABCD.BAT', b'echo ran-128\r\n'), mkf(far + '\\ABCD.BAT', b'echo ran-173\r\n'))); k.start()
+    sh = Shell(k); sh.run('cd \\' + '\\'.join(top))
+    rel = '\\'.join(deep) + '\\'
+    o1 = sh.run(rel + 'abc'); o2 = sh.run(rel + 'abcd'); o4 = sh.run(rel + '\\'.join(more) + '\\abcd')
+    o3 = sh.run('echo after'); o5 = sh.run(rel + 'abc')
+    check('a batch file whose whole name is 127 characters (A:\\%s\\ABC.BAT): run; 128 (ABCD.BAT): "Batch file '
+          'missing", none of it run; 173 (5 directories more: the kernel finds it not) not run; the shell as it was '
+          '(no batch on, the 127 one runs again)' % full, len('A:\\' + full + '\\ABC.BAT') == 127
+          and len('A:\\' + far + '\\ABCD.BAT') == 173
+          and 'ran-127' in o1 and 'Batch file missing' in o2 and 'ran-128' not in o2 and 'ran-173' not in o4 and o3.startswith('after') and o3.rstrip().endswith('AAAAAAA6>') and 'ran-127' in o5,
+          (o1[-200:], o2[-200:], o4[-200:], o3, o5[-200:]))
     # DIR's header after a silent remount: B: in \SUB, another disk put in with nothing open: its label and its
     # root, not the old disk's directory (the label's search is what mounts it; 47h asked before is stale)
     h1 = image('bsw_h1.img', 'SUB\\', mkf('SUB\\IN1.TXT', b'x' * 10))
