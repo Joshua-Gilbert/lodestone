@@ -557,15 +557,23 @@ dir_slot:
         ; append a cluster to the subdirectory: find its last cluster
 .last:  mov     dx, ax
         call    fat_get
+        cmp     ax, 2                   ; (free or reserved: a broken chain,
+        jb      .brk                    ;  KDISK.INC rule 7)
         cmp     ax, 0FFF0h
         jb      .last
         call    fat_keep
-        call    clu_alloc               ; linked after DX
+        push    dx                      ; unlinked: zeroed first, then linked
+        xor     dx, dx                  ;  (an Abort between: one cluster
+        call    clu_alloc               ;  lost, nothing stale named)
+        pop     dx
         jc      .err
         push    ax
         call    clu_zero
         pop     cx                      ; (CX = the new cluster)
         jc      .unl
+        mov     ax, dx                  ; the last one -> the new one
+        mov     dx, cx
+        call    fat_set
         mov     word [it_dir], 0
         pop     ax
         push    ax
@@ -574,16 +582,14 @@ dir_slot:
         pop     ax
         clc
         ret
-.unl:   push    ax                      ; it can't be written: unlinked (DX
-        mov     ax, dx                  ;  the end again) and given back
-        mov     dx, 0FFFFh
-        call    fat_set
+.unl:   push    ax                      ; it can't be written: given back
         mov     ax, cx
         xor     dx, dx
         call    fat_set
         call    fat_back                ; (the FAT as it was: unchanged)
         pop     ax
         jmp     short .err
+.brk:
 .full:  mov     ax, 5
 .err:   add     sp, 2
         stc
@@ -745,7 +751,7 @@ f_41:   call    get_path                ; DELETE
         jc      .e
         mov     ax, [de+26]
         call    free_chain
-        call    fat_flush
+        call    fat_flush_act
         jmp     ret_cf
 .nf:    cmp     ax, 2                   ; not there (its directory is): a
         jne     .e                      ;  device's name is 5, as MS-DOS
@@ -809,7 +815,7 @@ f_39:   call    get_path                ; MKDIR
         call    fat_back
         pop     ax
         jmp     .e
-.z:     call    fat_flush               ; its cluster is taken before it is named
+.z:     call    fat_flush_act           ; its cluster is taken before it is named
         jc      .e3
         mov     dx, [d_lba]
         mov     ax, [d_off]
@@ -843,7 +849,7 @@ f_39:   call    get_path                ; MKDIR
         mov     cl, A_DIR
         call    new_entry
         jc      .e
-        call    fat_flush
+        call    fat_flush_act
         jmp     ret_cf
 .e3:    push    ax                      ; the cluster given back (a failed
         mov     ax, [new_dir]           ;  write: else a lost cluster once
@@ -928,7 +934,7 @@ f_3A:   call    get_path                ; RMDIR
         mov     ax, [new_dir]
         call    free_chain
         mov     word [it_dir], 0
-        call    fat_flush
+        call    fat_flush_act
         jmp     ret_cf
 .cur:   mov     ax, 16                  ; the current directory
         jmp     .e
@@ -1111,7 +1117,7 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     ax, [r_dir]
         call    dir_slot
         jc      .e
-        call    fat_flush               ; a grown target linked before it is named
+        call    fat_flush_act           ; a grown target linked before it is named
         jc      .e
         mov     di, si                  ; the old entry, renamed, in the slot
         push    si
@@ -1125,15 +1131,42 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     cx, 11
         rep     movsb
         pop     si
+        mov     ax, [d_off]             ; the old one in the same sector:
+        xor     ax, [ren_off]           ;  deleted in the same write (else
+        and     ax, 0FE00h              ;  the two entries name one chain
+        jnz     .two                    ;  between the writes, as MS-DOS's)
+        mov     ax, [d_lba]
+        cmp     ax, [ren_lba]
+        jne     .two
+        mov     bx, si
+        mov     ax, [d_off]
+        and     ax, 511
+        sub     bx, ax
+        mov     ax, [ren_off]
+        and     ax, 511
+        add     bx, ax
+        mov     byte [bx], 0E5h
         call    buf_put
+        jmp     ret_cf
+.two:   call    buf_put
         jc      .e
         mov     dx, [ren_lba]           ; and the old one deleted
         mov     ax, [ren_off]
         call    dent_buf
-        jc      .e
+        jc      .un
         mov     byte [si], 0E5h
         call    buf_put
-        jmp     ret_cf
+        jnc     .ok
+.un:    push    ax                      ; (not: the new one taken out again,
+        mov     dx, [d_lba]             ;  if it can be, so no two entries
+        mov     ax, [d_off]             ;  name the chain)
+        call    dent_buf
+        jc      .unx
+        mov     byte [si], 0E5h
+        call    buf_put
+.unx:   pop     ax
+        stc
+.ok:    jmp     ret_cf
 .dev:   mov     ax, 17                  ; not the same device
         jmp     .e
 .acc:   mov     ax, 5
