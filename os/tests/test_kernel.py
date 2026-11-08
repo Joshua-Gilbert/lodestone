@@ -1670,7 +1670,9 @@ def t_devname():
         k = ktest.KPC(image('devname.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'DEVNAME.COM=' + com, 'A.B\\'),
                       ems_pages=ems)
         at, devs = 0x600 + k.Y['dev_open'], []
-        k.hooks.append(lambda pc: devs.append(pc.r('ax')) if pc.r('cs') * 16 + pc.r('ip') == at else None)
+        from unicorn import UC_HOOK_CODE                # (exact: pcemu's block hook sees a block it stops the
+        k.pc.mu.hook_add(UC_HOOK_CODE, lambda uc, a, size, ud: devs.append(k.pc.r('ax')), None, at, at)  # emulator at twice)
+        k.pc.mu.ctl_flush_tb()
         k.start()
         sh = Shell(k)
         assert run_long(k, 'devname > out.txt')
