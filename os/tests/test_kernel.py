@@ -3008,6 +3008,87 @@ def t_mount():
           and safe_files(x).get('A:\\M.TXT') == b'm' * 3000,
           (o[-200:], fatcheck.check(x)[0][:4]))
 
+def t_batswap():
+    """A batch file is opened for each line and closed again (as COMMAND's), at its whole name and place, so
+    one that has the user change its disk asks for it back ("Insert disk with batch file", a key), never
+    "Invalid disk change"; CALL's levels each keep theirs; deleted while it runs: "Batch file missing"."""
+    def mkf(n, b):
+        t = os.path.join(OUT, 'bsw_' + n.replace('\\', '_')); open(t, 'wb').write(b); return n + '=' + t
+    lcmd = os.path.join(GOS, 'src', 'LCMD.COM')
+    def drive(k, keys_at):
+        """k's tty from now as each (text, action) comes: run until text is on it, then action()"""
+        pc = k.pc; n0 = len(pc.tty)
+        for text, act in keys_at:
+            pc.run_until(lambda: text in ''.join(pc.tty)[n0:] or pc.crash, 20)
+            if text not in ''.join(pc.tty)[n0:]: break
+            act()
+        k.settle()
+        return ''.join(pc.tty)[n0:].replace('\r', '')
+    key = lambda k: (lambda: k.pc.keys.append(ord(' ')))
+    b1 = image('bsw_b1.img', mkf('S.BAT', b'@echo off\r\necho one\r\npause && dir b:\r\necho two\r\n'),
+               mkf('A.BAT', b'@echo off\r\necho outer\r\ncall b:c\r\necho back\r\n'),
+               mkf('C.BAT', b'@echo off\r\necho inner\r\npause\r\necho inner2\r\n'))
+    b2 = image('bsw_b2.img', mkf('P1.TXT', b'P' * 900))
+    d1 = open(b1, 'rb').read(); d2 = bytearray(open(b2, 'rb').read()); d2[0:512] = d1[0:512]; d2 = bytes(d2)
+    for name, what in (('s', 'a PAUSE, the other disk (the same boot sector) put in, DIR B: on it'),
+                       ('a', 'CALL C, C\'s PAUSE, the other disk put in')):
+        k = ktest.KPC(image('bsw_a.img', lcmd), b=b1); k.start()
+        Shell(k); pc = k.pc
+        first = pc.drives[1]; other = pcemu.Floppy(bytearray(d2))
+        def put(d):
+            def f():
+                d.changed = True; pc.drives[1] = d; pc.keys.append(ord(' '))
+            return f
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key('b:' + name); k.key(ktest.ENTER, settle=False)
+        o = drive(k, (('Strike a key', put(other)), ('Insert disk with batch file', lambda: None),
+                      ('Strike a key', put(first))))
+        img = bytes(first.img)
+        want = ('one', 'P1       TXT', 'Insert disk with batch file', 'two') if name == 's' else \
+               ('outer', 'inner', 'Insert disk with batch file', 'inner2', 'back')
+        at = [o.find(w) for w in want]
+        check('a batch file on B:, %s: no "Invalid disk change"; its next line asks "Insert disk with batch file", '
+              'the first disk back and a key: it goes on (%s); both disks as they were' % (what, ', '.join(want)),
+              'Fail?' not in o and -1 not in at and at == sorted(at) and bytes(other.img) == d2 and img == d1
+              and not fatcheck.check(img)[0], o[-500:])
+    # deleted while it runs: asked for once (a removable disk), then "Batch file missing"
+    k = ktest.KPC(image('bsw_d.img', lcmd, mkf('D.BAT', b'@echo off\r\ndel d.bat\r\necho after\r\n'))); k.start()
+    Shell(k)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('d'); k.key(ktest.ENTER, settle=False)
+    o = drive(k, (('Strike a key', key(k)),))
+    check('a batch file that deletes itself: "Insert disk with batch file" once, a key, then "Batch file missing", '
+          'the rest not run, the prompt back', 'Insert disk with batch file' in o and 'Batch file missing' in o
+          and 'after' not in o and o.rstrip().endswith('A:\\>'), o[-300:])
+    k = ktest.KPC(image('bsw_d.img', lcmd, mkf('D.BAT', b'@echo off\r\ndel d.bat\r\necho after\r\n'))); k.start()
+    sh = Shell(k)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('d'); k.key(ktest.ENTER, settle=False)
+    o = drive(k, (('Strike a key', lambda: k.pc.keys.append(3)),))
+    o2 = sh.run('echo still')
+    check('... Ctrl-C at its "Insert disk with batch file": the batch ends, the rest not run, the prompt back',
+          'Insert disk with batch file' in o and 'Batch file missing' not in o and 'after' not in o
+          and o.rstrip().endswith('A:\\>') and o2.startswith('still'), (o[-300:], o2))
+    # GOTO and a long file: each line from its place (the next one's offset kept, not a handle's)
+    lines = b'@echo off\r\ngoto two\r\n:one\r\necho at one\r\ngoto end\r\n:two\r\n' + b'rem ' + b'x' * 200 + b'\r\n' \
+            + b'echo at two\r\ngoto one\r\n:end\r\necho done\r\n'
+    k = ktest.KPC(image('bsw_g.img', lcmd, mkf('G.BAT', lines))); k.start()
+    o = Shell(k).run('g')
+    at = [o.find(w) for w in ('at two', 'at one', 'done')]
+    check('GOTO forward and back past a 200-character line: each line read from its place, in order',
+          -1 not in at and at == sorted(at), o[-300:])
+    # DIR's header after a silent remount: B: in \SUB, another disk put in with nothing open: its label and its
+    # root, not the old disk's directory (the label's search is what mounts it; 47h asked before is stale)
+    h1 = image('bsw_h1.img', 'SUB\\', mkf('SUB\\IN1.TXT', b'x' * 10))
+    h2 = bytearray(open(image('bsw_h2.img', mkf('P2.TXT', b'y' * 10)), 'rb').read())
+    i = h2.find(b'LODESTONE  \x08'); h2[i:i + 11] = b'OTHERDISK  '
+    k = ktest.KPC(image('bsw_a.img', lcmd), b=h1); k.start()
+    sh = Shell(k); sh.run('cd b:\\sub')
+    d = pcemu.Floppy(h2); d.changed = True; k.pc.drives[1] = d
+    o = sh.run('dir b:')
+    check('DIR B: in B:\\SUB, another disk put in (nothing open): "Volume in drive B is OTHERDISK", "Directory of  '
+          'B:\\", its files', i > 0 and 'drive B is OTHERDISK\n Directory of  B:\\\n' in o and 'P2       TXT' in o, o)
+
 def t_newname():
     """new_name: CREATE, CREATE NEW, MKDIR and RENAME onto a name with no last part (A:\\, \\, A:, ., A.B\\.: 5;
     A.B\\ and the empty name: 3) make nothing, and the disk stays consistent."""
@@ -4230,7 +4311,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
