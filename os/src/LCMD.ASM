@@ -332,8 +332,14 @@ ctrlc:  cmp     byte [cs:sv_busy], 0    ; (the Executive's saver: on)
         retf                            ; ends the program
 .us:    push    cs
         pop     ds
+        push    cs
+        pop     es
         mov     byte [aborted], 1
-        call    bat_end
+        cmp     byte [dstate], 0        ; (a concatenation's destination: put
+        je      .b                      ;  back, or one made deleted, as a
+        mov     byte [cerr], 2          ;  failed one's)
+        call    cat_fail
+.b:     call    bat_end
 
         cmp     byte [oneshot], 0
         je      .p
@@ -341,6 +347,8 @@ ctrlc:  cmp     byte [cs:sv_busy], 0    ; (the Executive's saver: on)
         mov     ah, 4Ch
         int     21h
 .p:     jmp     prompt_loop
+        db      90h                     ; (the odd bytes of the put-back
+                                        ;  above: what follows its parity)
 
 ; INT 24h: "Not ready reading drive A / Abort, Retry, Fail?"
 crit:   sti
@@ -3096,30 +3104,40 @@ do_type:
 ; destination as the first source is kept and the rest appended, in ASCII
 ; from its first ^Z; met again, or after the copy made it, "Content of
 ; destination lost before copy" and the rest go on.  "+" to no
-; destination, or a directory: the first source's name (there); to a name
-; with wildcards: that name made once, from the first source.  A first
-; source with wildcards and "+" to no destination, a directory or a name
-; with wildcards pairs names, as MS-DOS's: each file it finds with the
-; file of its name made through each further source's pattern (one not
-; there passed over), into the destination of its name (made through the
-; destination's pattern): one destination, and one count, each.  A "+"
-; part not there is passed over without a word; ",," after a "+" ends
-; the list.  "COPY A+" is onto itself; "COPY A+,," gives A the date and
-; time of now (in ASCII cut at its first ^Z).  A single copy is binary
-; unless /A; one that fails is deleted.  /A and /B are by position: each
-; for the source it is next to and those after it, and for the
-; destination when given with it or after it; one after the last source
-; but before the destination is for nothing, and /A and /B on one name
-; are both for nothing (MS-DOS's SETASC).  A concatenation that fails (a
-; source not read, or found and not opened; the disk full; its ^Z not
-; written; Fail at INT 24h):
-;   - the user's file (kept, the first source) comes out of it exactly as
-;     it was: what this command wrote cut off again, its ^Z back (one with
-;     more after its first ^Z is written past its end, and that moved down
-;     over the ^Z only once the copy is whole), not counted;
-;   - one this copy made is deleted after an error writing it, as
-;     MS-DOS's COPERR, and closed and counted after a source's error (its
-;     ENDCOPY: what was read is kept).
+; destination, or a directory: the name (there) of the first source found
+; (MS-DOS's SDIRBUF: not the first typed, which may not be there); to a
+; name with wildcards: that name made once, from the first source.  A
+; first source with wildcards and "+" to no destination, a directory or a
+; name with wildcards pairs names, as MS-DOS's: each file it finds with
+; the file of its name made through each further source's pattern (one
+; not there, a directory or past 79 characters passed over), into the
+; destination of its name (made through the destination's pattern): one
+; destination, and one count, each.  A file of the first source with no
+; partner at all, to no destination, is left as it was and not counted
+; (MS-DOS rewrites it cut at its ^Z, and counts it).  A "+" part not there
+; is passed over without a word; ",," after a "+" ends the list.  "COPY
+; A+" is onto itself; "COPY A+NOSUCH" counts A, left as it was (MS-DOS
+; also rewrites it cut at its ^Z); "COPY A+,," gives A the date and time of
+; now (in ASCII cut at its first ^Z).  A single copy is binary unless /A;
+; one that fails, its close too, is deleted.  /A and /B are by position:
+; each for the source it is next to (one after the last source, before
+; the destination, that source's: MS-DOS's SWITCH) and those after it,
+; and for the destination when given with it or after it; /A and /B on
+; one name are both for nothing (MS-DOS's SETASC).  The user's file (kept,
+; the first source) is always written past its end, so that its entry
+; keeps its size on the disk till the copy is whole: it needs room for
+; what is appended on top of all it holds (what is after its ^Z too), and
+; what came is moved down over its first ^Z only then.  A concatenation
+; that fails (a source not read, or found and not opened; the disk full;
+; its ^Z, the last cut or a close refused; Fail at INT 24h; Ctrl-C):
+;   - the user's file comes out of it exactly as it was: cut back to its
+;     old end, not counted.  The one exception, a failure while what came
+;     is moved down: cut at its first ^Z and the ^Z written again (its
+;     text kept, what was after the ^Z lost, as MS-DOS's cut would);
+;     a put-back refused is said ("Destination not put back as it was");
+;   - one this copy made is deleted after an error writing it (or Ctrl-C),
+;     as MS-DOS's COPERR, and closed and counted after a source's error
+;     (its ENDCOPY: what was read is kept).
 ; The count is of destinations closed whole.
 do_copy:
         xor     ax, ax
@@ -3165,13 +3183,11 @@ do_copy:
         call    strcpy
         inc     byte [pmode]
         jmp     short .cc
-.p0:    cmp     byte [dst_dir], 0       ; "+" to here or a directory: the
-        je      .cc                     ;  first source's name there
-        call    .dirn
-        mov     si, path1
-        call    name_part
-        call    strcpy
-        mov     byte [dst_dir], 0
+.p0:    cmp     byte [dst_dir], 0       ; "+" to here or a directory: named
+        je      .cc                     ;  there from the first source found
+        call    .dirn                   ;  (MS-DOS's SDIRBUF), not from the
+        mov     byte [dst_dir], 0       ;  first one typed
+        inc     byte [pfnd]
         jmp     short .cc
 .dirn:  mov     si, path2               ; path2 (a directory, or ""): "\"
         call    strend                  ;  after it, DI on its NUL
@@ -3286,18 +3302,25 @@ pair:   mov     al, [dst_dir]
         call    next_src
         cmp     byte [path1], 0
         je      .n
-        mov     si, path1               ; its name made from the first's
+        mov     si, path1               ; its name made from the first's, in
+        mov     di, ppart               ;  ppart (room for what the name
+        call    strcpy                  ;  grows by; past 79: passed over)
+        mov     si, ppart
         call    name_part
         mov     di, si
         mov     bx, pfirst
         call    wild_map
-        mov     dx, path1               ; there?  (4300h: the first source's
+        mov     si, ppart
+        call    strlen
+        cmp     cx, 79
+        ja      .n
+        mov     dx, ppart               ; there?  (4300h: the first source's
         mov     ax, 4300h               ;  search, in the DTA, goes on)
         int     21h
         jc      .n
         test    cl, 18h                 ; (a directory or the label: no)
         jnz     .n
-        mov     si, path1
+        mov     si, ppart
         mov     di, src
         call    strcpy
         mov     si, src
@@ -3319,15 +3342,15 @@ pair:   mov     al, [dst_dir]
 ; sources, "+" between them, the /A or /B of each kept by it, as is one
 ; before the first: with the source it follows), path2 (the destination)
 ; and dsw (its switch: with it or after it; /A and /B both: 1, neither).
-; Switches after the last source, before the destination: for nothing.
+; Switches after the last source, before the destination: that source's
+; (MS-DOS's source_set: SWITCH past the blanks).
 ; touch: "+,,", which ends the list (MS-DOS's CPARSE).  CF: SI = message
 ; (a name longer than 79, a word past the destination)
 cparse: call    plus_join               ; ("a + b": "a+b")
         mov     di, plist
         xor     bx, bx                  ; BX: the name's length so far
         xor     dl, dl                  ; DL: the last but switches
-        mov     [swp], bx               ; swp: where switches after a name
-.l:     lodsb                           ;  and blanks began (0: none)
+.l:     lodsb
         or      al, al
         jz      .z
         call    is_blank
@@ -3347,7 +3370,6 @@ cparse: call    plus_join               ; ("a + b": "a+b")
 .st:    cmp     di, plist + LBUF
         jae     .long
         mov     dl, al
-        mov     word [swp], 0           ; (switches before it: its)
         stosb
         jmp     .l
 .sw:    lodsb                           ; a switch: kept, by its source
@@ -3376,27 +3398,15 @@ cparse: call    plus_join               ; ("a + b": "a+b")
         dec     si
         or      al, al                  ; the list goes on: none in it yet,
         jz      .z                      ;  a "+" last, or a switch next
-        cmp     al, '/'
-        jne     .b2
-        or      dl, dl                  ; (after a name: its, or nothing's
-        jz      .l                      ;  if the destination comes next)
-        cmp     dl, '+'
+        cmp     al, '/'                 ; (a switch: the source's before it)
         je      .l
-        cmp     word [swp], 0
-        jne     .l
-        mov     [swp], di
-        jmp     .l
 .b2:    cmp     byte [touch], 0         ; (after "+,,": the destination)
         jne     .dst
         or      dl, dl
         jz      .l
         cmp     dl, '+'
         je      .l
-.dst:   mov     ax, [swp]               ; the destination: switches just
-        or      ax, ax                  ;  before it for nothing
-        jz      .d0
-        xchg    di, ax
-.d0:    mov     byte [di], 0
+.dst:   mov     byte [di], 0            ; the destination
         mov     di, path2
 .d:     lodsb
         cmp     al, ' '
@@ -3561,10 +3571,13 @@ zend:   call    d_ascii
         ret
 
 ; the end of a concatenation: its ^Z, cut there, closed, counted; one it
-; made that came out empty: deleted, 0; the user's written past its end
-; (kjunk): that moved down over its first ^Z first; only the first source:
-; "onto itself" (pairs: nothing), or with "+,," its date and time now (in
-; ASCII cut at its first ^Z).  Its ^Z not written: as a failed one
+; made that came out empty: deleted, 0; the user's (always written past
+; its end): what came moved down over its first ^Z first (zhad); only the
+; first source: with another part in the list (not there) counted, as it
+; was; a bare "A+" "onto itself" (pairs: nothing); with "+,," its date and
+; time now (in ASCII cut at its first ^Z).  Its ^Z, the cut or the close
+; refused: as a failed one (a close refused: the user's opened again and
+; put back, one made deleted)
 cat_end:
         mov     al, [dstate]
         or      al, al
@@ -3587,7 +3600,7 @@ cat_end:
         int     21h
 .x:     mov     byte [dstate], 0        ; (done: none open)
         ret
-.k:     cmp     byte [kjunk], 0
+.k:     cmp     byte [zhad], 0
         je      .z
         call    kmove
         jc      .f
@@ -3596,21 +3609,50 @@ cat_end:
         xor     cx, cx                  ; (cut there: what was past it, gone,
         mov     ah, 40h                 ;  as MS-DOS's)
         int     21h
-        inc     word [copied]
-.cl:    mov     ah, 3Eh
+        mov     si, e_wfail
+        jc      .f
+.cl:    mov     ah, 3Eh                 ; closed whole: counted
         int     21h
+        mov     si, e_wfail
+        jc      .fc
+        inc     word [copied]
         jmp     short .x
 .f:     call    err
         mov     byte [cerr], 2
         jmp     cat_fail
+.fc:    call    err                     ; the close refused (its entry not
+        mov     al, [dstate]            ;  written)
+        mov     byte [dstate], 0
+        mov     dx, dst
+        cmp     al, 1
+        je      .fd
+        cmp     al, 3                   ; the user's: opened again, put back
+        je      kput.r
+        ret
+.fd:    mov     ah, 41h                 ; one made: deleted
+        int     21h
+.fx:    ret
 .kept:  mov     dx, dst
         cmp     byte [touch], 0
         jne     .t
         cmp     byte [pmode], 0         ; (pairs: its partner not there)
         jne     .x
-        mov     si, e_self
+        mov     si, plist               ; a "+" list with another part (not
+.pm:    lodsb                           ;  there): counted, the file as it
+        or      al, al                  ;  was; a bare "A+": onto itself
+        jz      .self                   ;  (MS-DOS's CHECKDONE)
+        cmp     al, '+'
+        jne     .pm
+        mov     al, [si]
+        or      al, al
+        jz      .self
+        cmp     al, '/'
+        je      .self
+        inc     word [copied]
+        jmp     .x
+.self:  mov     si, e_self
         call    err
-        jmp     short .x
+        jmp     .x
 .t:     mov     ax, 3D02h               ; "+,,": its date and time now, in
         int     21h                     ;  ASCII cut at its first ^Z
         jc      .te
@@ -3618,22 +3660,24 @@ cat_end:
         call    zseek
         jc      .tf
         cmp     byte [zhad], 0
-        jne     .tc
-        cmp     byte [kjunk], 0
         je      .tz
-.tc:    mov     dx, [zpos]
+        mov     dx, [zpos]
         mov     cx, [zpos + 2]
         call    trunc
+        jc      .tw
 .tz:    xor     cx, cx                  ; (written to: the date of now)
         mov     ah, 40h
         int     21h
+        jc      .tw
         call    zend
-        jc      .tf
-        inc     word [copied]
-        jmp     short .cl
+        jnc     .cl
 .tf:    call    err
         mov     bx, [fh2]
-        jmp     short .cl
+        mov     ah, 3Eh
+        int     21h
+        jmp     .x
+.tw:    mov     si, e_wfail
+        jmp     short .tf
 .te:    call    err_create
         jmp     .x
 
@@ -3651,9 +3695,7 @@ cat_fail:
         je      .m
         cmp     al, 3
         jne     .x
-        call    krest
-        mov     ah, 3Eh
-        int     21h
+        jmp     kput
 .x:     ret
 .m:     cmp     byte [cerr], 1
         jne     .d
@@ -3666,18 +3708,52 @@ cat_fail:
         int     21h
         ret
 
-; BX, the user's file: what this command wrote cut off (back to kpos), its
-; ^Z put back where it was written over (zhad)
+; the user's file at BX put back (krest) and closed; refused on that handle
+; (a kernel that refuses a handle's writes after one failed), once more on
+; one of its own (kput.r: from there).  Refused still: said, never silent
+kput:   call    krest
+        pushf
+        mov     ah, 3Eh
+        int     21h
+        popf
+        jnc     .x
+.r:     mov     dx, dst
+        mov     ax, 3D02h
+        int     21h
+        jc      .n
+        xchg    bx, ax
+        call    krest
+        pushf
+        mov     ah, 3Eh
+        int     21h
+        popf
+        jnc     .x
+.n:     mov     si, e_nrest
+        jmp     err
+.x:     ret
+
+; BX, the user's file, put back: nothing moved down yet, cut back to its
+; old end (kpos: its ^Z and what follows never touched, nor its entry's
+; size on the disk); moved down part-way (kmoved), cut at its ^Z (zpos)
+; and the ^Z written again (its text kept; what was after the ^Z lost).
+; CF if refused
 krest:  mov     dx, [kpos]
         mov     cx, [kpos + 2]
+        cmp     byte [kmoved], 0
+        je      trunc
+        mov     dx, [zpos]
+        mov     cx, [zpos + 2]
         call    trunc
-        cmp     byte [zhad], 0
-        je      .x
+        jc      .x
         mov     byte [zbyte], 1Ah
         mov     dx, zbyte
         mov     cx, 1
         mov     ah, 40h
         int     21h
+        jc      .x
+        dec     ax
+        jz      .x
+        stc
 .x:     ret
 
 ; BX's pointer to CX:DX, the file cut there
@@ -3688,10 +3764,19 @@ trunc:  mov     ax, 4200h
         int     21h
         ret
 
-; the user's file at BX, written past its end (kjunk: from kpos on): that
-; moved down to its first ^Z (zpos), BX's pointer past it.  CF: SI
-kmove:  mov     dx, [kpos]              ; from kpos ...
-        mov     cx, [kpos + 2]
+; the user's file at BX, written past its end (from kpos on): that moved
+; down over its first ^Z (zpos), BX's pointer past it.  kmoved once a
+; write of it is made (a failure after: krest's cut at zpos).  CF: SI
+kmove:  mov     ax, [kpos]
+        mov     dx, [kpos + 2]
+        mov     [mrd], ax
+        mov     [mrd + 2], dx
+        mov     ax, [zpos]
+        mov     dx, [zpos + 2]
+        mov     [mwr], ax
+        mov     [mwr + 2], dx
+.l:     mov     dx, [mrd]               ; from mrd ...
+        mov     cx, [mrd + 2]
         mov     ax, 4200h
         int     21h
         call    cb_read                 ; (up to its end)
@@ -3699,22 +3784,28 @@ kmove:  mov     dx, [kpos]              ; from kpos ...
         or      ax, ax
         jz      .e
         push    ax
-        mov     dx, [zpos]              ; ... to zpos (below it: what it
-        mov     cx, [zpos + 2]          ;  writes over, read already)
+        mov     dx, [mwr]               ; ... to mwr (below it: what it
+        mov     cx, [mwr + 2]           ;  writes over, read already)
         mov     ax, 4200h
         int     21h
         pop     cx
-        mov     si, e_full
+        mov     byte [kmoved], 1
+        mov     si, e_wfail
         mov     ah, 40h
+        push    cx
         call    cb_io
+        pop     cx
         jc      .x
-        add     [kpos], ax
-        adc     word [kpos + 2], 0
-        add     [zpos], ax
-        adc     word [zpos + 2], 0
-        jmp     kmove
-.e:     mov     dx, [zpos]
-        mov     cx, [zpos + 2]
+        cmp     ax, cx
+        stc
+        jne     .x
+        add     [mrd], ax
+        adc     word [mrd + 2], 0
+        add     [mwr], ax
+        adc     word [mwr + 2], 0
+        jmp     .l
+.e:     mov     dx, [mwr]
+        mov     cx, [mwr + 2]
         mov     ax, 4200h
         int     21h
 .x:     ret
@@ -3723,7 +3814,18 @@ kmove:  mov     dx, [kpos]              ; from kpos ...
 ; files closed; in concatenation, the destination as said above)
 copy_one:
         mov     [srcname], bx
-        ; destination name
+        cmp     byte [pfnd], 0          ; ("+" to here or a directory: named
+        je      .nm                     ;  from this, the first found)
+        mov     byte [pfnd], 0
+        mov     si, path2
+        call    strend
+        mov     si, bx
+        call    strcpy
+.nm:    cmp     byte [cmode], 0         ; (concatenation, the destination
+        je      .dn                     ;  named already: its name kept)
+        cmp     byte [dstate], 0
+        jne     .dok
+.dn:    ; destination name
         mov     di, dst
         mov     si, path2
         call    strcpy
@@ -3854,9 +3956,22 @@ copy_one:
         mov     bx, [fh2]
         mov     ax, 5701h
         int     21h
-.cl:    call    close2
+.cl:    mov     bx, [fh2]               ; (its close refused: as a write
+        mov     ah, 3Eh                 ;  error, deleted)
+        int     21h
+        pushf
+        call    close1
+        popf
+        mov     si, e_wfail
+        jc      .clf
         inc     word [copied]
         clc
+        ret
+.clf:   call    err
+        mov     dx, dst
+        mov     ah, 41h
+        int     21h
+        stc
         ret
 .perr:  mov     byte [cerr], 1          ; a source not read (SI = e_read),
         cmp     si, e_read              ;  or the destination not written
@@ -3876,16 +3991,15 @@ copy_one:
         stc
         ret
 
-; the user's file at fh2, kept, at its start: where this command writes in
-; it (kpos).  Binary: its end.  ASCII: its first ^Z (zpos): over it if
-; only the ^Z is after it (zhad: put back if the copy fails), else past its
-; end (kjunk: moved down over it once the copy is whole, so that a failed
-; one leaves the file as it was); no ^Z: its end.  CF: SI
+; the user's file at fh2, kept, at its start: this command writes past its
+; end (kpos), so that its entry keeps its size on the disk until the copy
+; is whole.  ASCII: its first ^Z (zpos, zhad): what came is moved down
+; over it then (kmove).  CF: SI
 zseek:  xor     ax, ax
         mov     [zpos], ax
         mov     [zpos + 2], ax
         mov     [zhad], al
-        mov     [kjunk], al
+        mov     [kmoved], al
         mov     bx, [fh2]
         cmp     byte [kascii], 0
         je      .end
@@ -3904,24 +4018,7 @@ zseek:  xor     ax, ax
 .end:   call    seek_end                ; DX:AX its size
         mov     [kpos], ax
         mov     [kpos + 2], dx
-        cmp     byte [zhad], 0
-        je      .ok
-        sub     ax, 1                   ; only its ^Z after it: written over
-        sbb     dx, 0                   ;  from it
-        cmp     ax, [zpos]
-        jne     .j
-        cmp     dx, [zpos + 2]
-        jne     .j
-        mov     [kpos], ax
-        mov     [kpos + 2], dx
-        mov     cx, dx
-        xchg    dx, ax
-        mov     ax, 4200h
-        int     21h
-        jmp     short .ok
-.j:     mov     byte [zhad], 0          ; (more after it: past its end)
-        inc     byte [kjunk]
-.ok:    clc
+        clc
 .x:     ret
 
         times   ($ - $$) & 1 db 90h     ; (hot: pump.l even)
@@ -5429,6 +5526,8 @@ e_plong     db 'Invalid path or file name', 0
 e_pmany     db 'Too many parameters', 0
 e_full      db 'Insufficient disk space', 0
 e_read      db 'Read error', 0
+e_wfail     db 'Write error', 0
+e_nrest     db 'Destination not put back as it was', 0
 e_nomem     db 'Insufficient memory', 0
 e_batch     db 'Batch file missing', 0
 e_envfull   db 'Out of environment space', 0
@@ -5523,15 +5622,18 @@ dsw         resb 1                  ;  the destination's
 kascii      resb 1                  ;  the kept one read as ASCII
 sdev        resb 1                  ;  this source a device
 pmode       resb 1                  ;  pairs (pdst the destination's pattern)
+pfnd        resb 1                  ;  named from the first source found
 cerr        resb 1                  ;  its error: 1 a source's, 2 its own
 touch       resb 1                  ;  "+,,"
 zbyte       resb 1
-zhad        resb 1                  ;  the kept one written over its ^Z
-kjunk       resb 1                  ;  the kept one written past its end
+zhad        resb 1                  ;  the kept one has a ^Z (zpos)
+kmoved      resb 1                  ;  kmove has written
 pnext       resw 1                  ;  the list's next source
-swp         resw 1                  ;  cparse: switches after a name
-kpos        resw 2                  ;  where this command writes in the kept
+kpos        resw 2                  ;  the kept one's old end
 zpos        resw 2                  ;  its first ^Z
+mrd         resw 2                  ;  kmove: where it reads,
+mwr         resw 2                  ;   where it writes
+ppart       resb 96                 ;  pairs: a partner's name
 pdst        resb 80
 pfirst      resb 14                 ;  pairs: the first source's file found
 plist       resb LBUF + 2           ;  the list

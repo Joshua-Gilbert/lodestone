@@ -1792,9 +1792,10 @@ def t_copycat():
           'C.REF and the destination ASCII', fs().get('A:\\MIX.DAT') == b'x\x1ayccc\x1a', (o, fs().get('A:\\MIX.DAT')))
     o = sh.run('copy c.ref+bin1.dat /b nb.dat') + sh.run('copy /b bin1.dat + c.ref /a mix2.dat')
     f = fs()
-    check('a switch after the last source but before the destination is for nothing (MS-DOS): C.REF+BIN1.DAT /B '
-          'NB.DAT all ASCII, /B BIN1.DAT + C.REF /A MIX2.DAT all binary', f.get('A:\\NB.DAT') == b'cccx\x1a'
-          and f.get('A:\\MIX2.DAT') == b'x\x1ayccc', (o, f.get('A:\\NB.DAT'), f.get('A:\\MIX2.DAT')))
+    check('a switch after the last source but before the destination is that source\'s (MS-DOS\'s SWITCH, past the '
+          'blanks): C.REF+BIN1.DAT /B NB.DAT: BIN1.DAT whole, and the destination binary (no ^Z); /B BIN1.DAT + C.REF '
+          '/A MIX2.DAT: C.REF and the destination ASCII', f.get('A:\\NB.DAT') == b'cccx\x1ay'
+          and f.get('A:\\MIX2.DAT') == b'x\x1ayccc\x1a', (o, f.get('A:\\NB.DAT'), f.get('A:\\MIX2.DAT')))
     o = sh.run('copy bin1.dat /b /a bin6.dat') + sh.run('copy bin1.dat bin7.dat /b /a') + sh.run('copy bin1.dat /b /a+c.ref m3.dat')
     f = fs()
     check('/B and /A on one name, the source\'s or the destination\'s: both for nothing (MS-DOS\'s SETASC): a binary '
@@ -2038,6 +2039,101 @@ def t_copycat():
           'was and not counted, nothing said; "2 File(s) copied"', f.get('A:\\X1.TXT') == b'x1r1\x1a'
           and f.get('A:\\X2.TXT') == b'x2r2\x1a' and f.get('A:\\X3.TXT') == b'x3' and '2 File(s) copied' in o
           and 'onto itself' not in o and not fatcheck.check(raw())[0], (o, f.get('A:\\X3.TXT')))
+    # the review of 0444069's cases
+    def lcmd21(k, fn):
+        # fn(AH, pc) at each INT 21h LCMD makes (its segment: the kernel's current PSP, at the prompt)
+        seg = k.u16('cur_psp')
+        h = lambda pc: fn(pc.r('ax') >> 8, pc) if k.addr == k.i21 and pc.u16(pc.r('ss'), pc.r('sp') + 2) == seg else None
+        k.hooks.append(h)
+        return h
+    def wp_at(k, cmd, nth, ah=0x40, cx0=False, off=True):
+        # cmd, the disk write-protected at LCMD's nth call AH (CX = 0 ones only if cx0); F at each INT 24h
+        # prompt (the tab off again first if off) -> the screen
+        d = k.pc.drives[0]; st = {'n': 0}
+        def on(a, pc):
+            if a == ah and pc.r('bx') >= 5 and (not cx0 or pc.r('cx') == 0):   # (a file's, not the screen's)
+                st['n'] += 1
+                if st['n'] == nth: d.wp = True
+        h = lcmd21(k, on)
+        pc = k.pc; k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
+        k.key(cmd); k.key(ktest.ENTER, settle=False)
+        for i in range(8):
+            pc.run_until(lambda: ''.join(pc.tty)[n0:].count('Fail?') > i or 'copied' in ''.join(pc.tty)[n0:], 30)
+            if ''.join(pc.tty)[n0:].count('Fail?') <= i: break
+            if off: d.wp = False
+            pc.keys.append(ord('f'))
+        k.settle(); d.wp = False; k.hooks.remove(h)
+        return pc.text_screen()
+    def fresh(name, *files):
+        k = ktest.KPC(image(name, os.path.join(GOS, 'src', 'LCMD.COM'), *files)); k.start()
+        return k, Shell(k), lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    k, sh, F = fresh('catr1.img', 'REPORT.TXT=' + mkf('rr', b'USER-REPORT'), 'ADD.TXT=' + mkf('ra', b'add'),
+                     'MORE.TXT=' + mkf('rm', b'more'), 'SUB\\', 'SUB\\X=' + mkf('rx', b'x'))
+    o = sh.run('copy sub\\report.txt+add.txt') + sh.run('copy nosuch\\report.txt+add.txt+more.txt')
+    f = F()
+    check('"+" to no destination, the first typed not there (SUB\\REPORT.TXT+ADD.TXT): named from the first found, '
+          'ADD.TXT (kept, MORE.TXT appended), not REPORT.TXT, which is untouched (MS-DOS\'s SDIRBUF)',
+          f.get('A:\\REPORT.TXT') == b'USER-REPORT' and f.get('A:\\ADD.TXT') == b'addmore\x1a'
+          and 'A:\\SUB\\REPORT.TXT' not in f and 'onto itself' not in o, (o, f.get('A:\\REPORT.TXT'), f.get('A:\\ADD.TXT')))
+    o = sh.run('copy report.txt+nosuch.txt')
+    check('COPY REPORT.TXT+NOSUCH.TXT: "1 File(s) copied" (only a bare A+ is onto itself, MS-DOS\'s CHECKDONE), '
+          'REPORT.TXT as it was', '1 File(s) copied' in o and 'onto itself' not in o and F().get('A:\\REPORT.TXT') == b'USER-REPORT', o)
+    k, sh, F = fresh('catr2.img', 'LONGNAME.TXT=' + mkf('rl', b''), 'NAME.TXT=' + mkf('rn', b'USER-PRECIOUS'))
+    o = sh.run('copy longn*.txt+' + '.\\' * 38 + '*.* *.cat')
+    f = F()
+    check('pairs, a partner\'s pattern of 79 characters that its name makes longer: passed over, the destination\'s '
+          'name not written over (NAME.TXT, not named, untouched)', f.get('A:\\NAME.TXT') == b'USER-PRECIOUS'
+          and not fatcheck.check(bytes(k.pc.drives[0].img))[0], (o, sorted(f)))
+    k, sh, F = fresh('catr3.img', 'X1.TXT=' + mkf('rp1', b'x1'), 'X1.REF\\', 'LODESTON.TXT=' + mkf('rp2', b'lt'))
+    o = sh.run('copy x*.txt+*.ref *.dat') + sh.run('copy lodes*.txt+*.e *.dat')
+    f = F()
+    check('pairs, a partner that is a directory (X1.REF) or the label (LODESTON.E, "LODESTONE"): passed over',
+          f.get('A:\\X1.DAT') == b'x1\x1a' and f.get('A:\\LODESTON.DAT') == b'lt\x1a' and o.count('1 File(s) copied') == 2
+          and 'not found' not in o, (o, {n: v for n, v in f.items() if n.endswith('.DAT')}))
+    K0 = b'keep-me\r\n\x1a'
+    k, sh, F = fresh('catr4.img', 'K.TXT=' + mkf('rk', K0), 'X1.TXT=' + mkf('rx1', b'x' * 3000),
+                     'X2.TXT=' + mkf('rx2', b'y' * 3000), 'OUT.DAT=' + mkf('ro', b'OLD-OUT'))
+    o = wp_at(k, 'copy k.txt+x1.txt', 1, cx0=True)
+    check('the user\'s (its ^Z last) appended to, the last cut refused (Fail): K.TXT exactly as it was, "0 File(s) '
+          'copied" (it was written over its ^Z in place, and said 1)', F().get('A:\\K.TXT') == K0 and '0 File(s) copied' in o, (o, F().get('A:\\K.TXT')))
+    o = wp_at(k, 'copy k.txt+x1.txt+x2.txt', 3, ah=0x3E)
+    check('... its close refused (LCMD\'s third close: X1.TXT, X2.TXT, then K.TXT): K.TXT exactly as it was, not counted',
+          F().get('A:\\K.TXT') == K0 and '1 File(s) copied' not in o, (o, F().get('A:\\K.TXT')))
+    o = wp_at(k, 'copy x1.txt+x2.txt out.dat', 1, cx0=True)
+    check('a made one\'s last cut refused: not counted ("0 File(s) copied")', '0 File(s) copied' in o, (o, F().get('A:\\OUT.DAT', b'')[:10]))
+    o = wp_at(k, 'copy x1.txt out2.dat', 1, ah=0x3E)
+    check('a single copy\'s close refused: not counted, "Write error"', '0 File(s) copied' in o and 'Write error' in o, o)
+    P = b'PRECIOUS-P\r\n'; Q = b'user-Q-after-the-Z' * 100
+    k, sh, F = fresh('catr5.img', 'K.TXT=' + mkf('rk5', P + b'\x1a' + Q), 'BIG.TXT=' + mkf('rb5', b'B' * 100000))
+    cxs = []                                            # (a dry run: LCMD's writes, their sizes)
+    k0, _, _ = fresh('catr5d.img', 'K.TXT=' + mkf('rk5', P + b'\x1a' + Q), 'BIG.TXT=' + mkf('rb5', b'B' * 100000))
+    h0 = lcmd21(k0, lambda a, pc: cxs.append(pc.r('cx')) if a == 0x40 and pc.r('bx') >= 5 else None)
+    k0.key('copy k.txt+big.txt'); k0.key(ktest.ENTER); k0.settle(30)
+    mv2 = cxs.index(1)                                  # (the write before the ^Z's: the move's second, from 1)
+    o = wp_at(k, 'copy k.txt+big.txt', mv2)
+    f = F()
+    check('the user\'s (more after its ^Z), what came moved down, its second write refused: its text kept, its ^Z '
+          'back, cut there (what was after the ^Z lost: the one exception), "0 File(s) copied"',
+          f.get('A:\\K.TXT') == P + b'\x1a' and '0 File(s) copied' in o and not fatcheck.check(bytes(k.pc.drives[0].img))[0],
+          (o, len(f.get('A:\\K.TXT', b'')), f.get('A:\\K.TXT', b'')[:30]))
+    k, sh, F = fresh('catr6.img', 'K.TXT=' + mkf('rk6', P + b'\x1a' + Q), 'BIG.TXT=' + mkf('rb6', b'B' * 100000))
+    o = wp_at(k, 'copy k.txt+big.txt', 2)
+    check('... the disk refusing while it is appended (before any move): K.TXT exactly as it was, tail and all',
+          F().get('A:\\K.TXT') == P + b'\x1a' + Q and '0 File(s) copied' in o, (o, len(F().get('A:\\K.TXT', b''))))
+    o = wp_at(k, 'copy k.txt+big.txt', mv2, off=False)
+    check('... refused and the tab left on (the put-back refused too): said, "Destination not put back as it was"',
+          'Destination not put back as it was' in o, o)
+    k, sh, F = fresh('catr7.img', 'K.TXT=' + mkf('rk7', K0), 'X.TXT=' + mkf('rx7', b'x' * 100), 'M.TXT=' + mkf('rm7', b'm'))
+    for cmd in ('copy k.txt+x.txt+con', 'copy x.txt+con made.dat'):
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key(cmd); k.key(ktest.ENTER)
+        k.key('typed line'); k.key(ktest.ENTER)
+        k.key('\x03'); k.key(ktest.ENTER)
+    o = sh.run('copy m.txt m2.txt')
+    f = F()
+    check('Ctrl-C with CON in the list: the user\'s (K.TXT) exactly as it was; one made (MADE.DAT) deleted; a copy '
+          'still works after', f.get('A:\\K.TXT') == K0 and 'A:\\MADE.DAT' not in f and f.get('A:\\M2.TXT') == b'm'
+          and not fatcheck.check(bytes(k.pc.drives[0].img))[0], (f.get('A:\\K.TXT'), sorted(f)))
 
 def t_spacenames():
     """Names with a space inside (another system's, or a program's: MS-DOS takes them) through LCMD's COPY
