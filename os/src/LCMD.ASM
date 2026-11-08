@@ -293,9 +293,6 @@ unwind: cmp     byte [rdepth], 0
         pop     es
 .nf:    cmp     byte [es:bat_on - bat_ctx], 0
         je      .fr
-        mov     bx, [es:bat_h - bat_ctx]
-        mov     ah, 3Eh
-        int     21h
         mov     al, [es:bat_echo - bat_ctx]     ; (the outermost's last)
         mov     [echo], al
 .fr:    mov     ah, 49h
@@ -321,6 +318,7 @@ unwind: cmp     byte [rdepth], 0
         cmp     bx, 20
         jb      .hc
 .x:     ret
+        db      90h                     ; (the hot labels after at their parity)
 
 ; Ctrl-C: a program of ours ends; our own command is abandoned
 ctrlc:  cmp     byte [cs:sv_busy], 0    ; (the Executive's saver: on)
@@ -1195,12 +1193,9 @@ bat_start:
         mov     dl, [echo]              ; ECHO as it was, for the end
         cmp     byte [bat_on], 1        ; (2: CALL, a level of its own)
         jne     .new
-        mov     bx, [bat_h]             ; one batch runs another: replaced
-        mov     ah, 3Eh                 ;  (ECHO at the end as the first
-        int     21h                     ;  one found it)
-        mov     byte [bat_on], 0
-        mov     dl, [bat_echo]
-.new:   push    dx
+        mov     byte [bat_on], 0        ; one batch runs another: replaced
+        mov     dl, [bat_echo]          ;  (ECHO at the end as the first
+.new:   push    dx                      ;  one found it)
         mov     dx, prog
         mov     ax, 3D80h               ; (not inherited: a task START's keeps none)
         int     21h
@@ -1210,12 +1205,19 @@ bat_start:
         mov     byte [errlvl], 1
         mov     si, e_batch
         jmp     err
-.op:    mov     [bat_h], ax
-        mov     [bat_echo], dl
-        mov     byte [bat_on], 1
+.op:    xchg    bx, ax                  ; there: closed again.  Each line
+        mov     ah, 3Eh                 ;  opens it by its whole name, as
+        int     21h                     ;  COMMAND's, so that no file of
+        mov     [bat_echo], dl          ;  it stays open on a disk the
+        mov     byte [bat_on], 1        ;  batch has the user change
         xor     ax, ax
         mov     [bat_line], ax
         mov     [bat_last], al
+        mov     [bat_pos], ax
+        mov     [bat_pos + 2], ax
+        mov     si, prog
+        mov     di, bat_path
+        call    canon
         mov     si, cword               ; its name, for errors
         call    name_part
         mov     di, bat_name
@@ -1231,20 +1233,33 @@ bat_start:
         call    strcpy
         mov     si, [argp]
         jmp     strcpy
+        db      90h                     ; (bat_read.f and what follows even)
 
 ; the batch file's next line into bat_raw (NUL-terminated), counted in
 ; bat_line.  CF at its end
 bat_read:
         cmp     byte [bat_last], 0      ; (a ^Z ended the one before)
         jne     .end
-        mov     bx, [bat_h]
+.o:     mov     dx, bat_path            ; opened at its place, read, closed
+        mov     ax, 3D80h
+        int     21h
+        jnc     .h
+        call    bat_gone                ; (CF: it ended the batch file)
+        jnc     .o
+        ret
+.h:     mov     byte [bat_ask], 0
+        xchg    bx, ax
+        mov     dx, [bat_pos]
+        mov     cx, [bat_pos + 2]
+        mov     ax, 4200h
+        int     21h
         mov     dx, bat_raw
         mov     cx, LBUF
         mov     ah, 3Fh
         int     21h
-        jc      .end
+        jc      .ce
         or      ax, ax
-        jz      .end
+        jz      .ce
         inc     word [bat_line]
         ; up to the end of the line; seek back to the next one
         mov     cx, ax
@@ -1264,8 +1279,7 @@ bat_read:
         jmp     .f
 .eof:   mov     byte [si], 0
         mov     byte [bat_last], 1
-        clc
-        ret
+        jmp     short .got
 .cr:    mov     byte [si], 0
         inc     dx
         cmp     dx, cx
@@ -1278,18 +1292,39 @@ bat_read:
         inc     dx
         jmp     .back
 .eol:   mov     byte [si], 0
-.back:  sub     cx, dx                  ; seek back over what wasn't used
-        jz      .got
-        mov     dx, cx
-        neg     dx
-        mov     cx, 0FFFFh
-        mov     bx, [bat_h]
-        mov     ax, 4201h
+.back:  add     [bat_pos], dx           ; (the next line's place)
+        adc     word [bat_pos + 2], 0
+.got:   mov     ah, 3Eh
         int     21h
-.got:   clc
+        clc
         ret
+.ce:    mov     ah, 3Eh
+        int     21h
 .end:   stc
         ret
+
+; the batch file won't open: on a removable disk asked for once ("Insert
+; disk with batch file", a key; CF clear: tried again); else, or the
+; second time, "Batch file missing" and the batch ends (CF)
+bat_gone:
+        cmp     byte [bat_ask], 0
+        jne     .miss
+        mov     bl, [bat_path]
+        sub     bl, 'A' - 1
+        mov     ax, 4408h               ; (AX 0: removable)
+        int     21h
+        jc      .miss
+        or      ax, ax
+        jnz     .miss
+        inc     byte [bat_ask]
+        mov     si, s_insbat
+        call    puts_nl
+        call    do_pause                ; (Ctrl-C there: the batch ends)
+        clc
+        ret
+.miss:  call    bat_end
+        mov     si, e_batch
+        jmp     err
 
 ; run the batch file's next line (or end it)
 bat_next:
@@ -1345,9 +1380,6 @@ bat_end:
         mov     byte [bat_on], 0
         mov     al, [bat_echo]
         mov     [echo], al
-        mov     bx, [bat_h]
-        mov     ah, 3Eh
-        int     21h
 .x:     ret
 
 ; %NAME% at SI (past the first %): the variable's value at DI (nothing
@@ -1406,10 +1438,9 @@ do_goto:
 .l:     call    getarg1
         mov     byte [for_stop], 1      ; (out of a FOR)
         push    word [bat_line]         ; (for the message)
-        mov     bx, [bat_h]             ; from the top
-        mov     al, 0
-        call    seek
-        xor     ax, ax
+        xor     ax, ax                  ; from the top
+        mov     [bat_pos], ax
+        mov     [bat_pos + 2], ax
         mov     [bat_line], ax
         mov     [bat_last], al
 .r:     call    bat_read
@@ -2642,6 +2673,9 @@ do_dir: xor     ax, ax
         call    crlf
         mov     dl, [pat_drv]
         call    show_volume
+        mov     si, path1               ; again: the label's search reads the
+        mov     di, pat                 ;  disk, so another one put in is
+        call    make_pattern            ;  mounted now, at its root
         mov     si, s_dirof
         call    puts
         mov     si, pat_dir
@@ -2654,6 +2688,7 @@ do_dir: xor     ax, ax
         int     21h
         jnc     .e
 .nf:    jmp     err_notfound
+        db      90h                     ; (.e and what follows even)
 .e:     inc     word [dir_n]
         cmp     byte [dir_w], 0
         jne     .wide
@@ -5723,6 +5758,7 @@ e_zcut      db 'Destination put back without what followed its ^Z', 0
 e_dchg      db 'Disk changed: the destination not touched', 0
 e_nomem     db 'Insufficient memory', 0
 e_batch     db 'Batch file missing', 0
+s_insbat    db 'Insert disk with batch file', 0
 e_envfull   db 'Out of environment space', 0
 e_date      db 'Invalid date', 0
 e_time      db 'Invalid time', 0
@@ -5899,6 +5935,7 @@ rdepth      resb 1                  ; levels of redirection kept (rsave)
 tpre_on     resb 1                  ; pipe_name: tpre read at this level (0: none)
 tpre        resb 66                 ; pipe_name: %TEMP%, a '\' after (\: none)
 cdepth      resb 1                  ; CALLs (call_segs)
+bat_ask     resb 1                  ; the batch file's disk asked for
 ed_tab      resb 1
 ed_wrap     resb 1                      ; Tab: wrapped to the first once
 ed_len      resb 1                  ; (ed_len, ed_pos: a word)
@@ -5926,7 +5963,8 @@ call_segs   resw CMAX
 ; a batch file's place, the line being run and FOR's state: CALL keeps
 ; them in a block of its own while the other batch file runs
 bat_ctx:
-bat_h       resw 1
+bat_pos     resw 2                  ; the next line's place in the file
+bat_path    resb 82                 ; its whole name (canon): opened each line
 bat_line    resw 1
 bat_on      resb 1                  ; 1: a batch file runs (2: CALL starts one)
 bat_echo    resb 1
