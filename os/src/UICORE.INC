@@ -1945,9 +1945,11 @@ api_sberr:
         or      ax, ax
         jz      .chk
         mov     bx, ax
+        cmp     al, 16                  ; (0Fh, an invalid disk change: DOS's
+        je      .dc                     ;  34; AH is 0: INT 24h's DI + 1)
         cmp     ax, 13
         ja      .other                  ; (said as its own number, as before)
-        add     bl, 18
+.dc:    add     bl, 18
 .chk:   or      bh, bh                  ; (the tables hold codes under 256)
         jnz     .other
 .find:  mov     al, [si]
@@ -4532,6 +4534,7 @@ dos_msgs    db 2, 'File not found',0
             db 30, '(read)',0
             db 31
 s_dskerr    db 'Disk error',0         ; (and "Disk error (...)" for those above)
+            db 34, 'Invalid disk change',0
             db 39, 'Disk is full',0
             db 80, 'File already exists',0
             db 83, 'Disk error',0

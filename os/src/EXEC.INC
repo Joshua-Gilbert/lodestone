@@ -3298,7 +3298,6 @@ s_mouse1    db 'Mouse COM1',0
 s_mouse2    db 'Mouse COM2',0
 s_nomouse   db 'No mouse',0
 s_bios      db 'BIOS ',0
-s_all       db '*.*', 0
 s_claude    db 'CLAUDE.COM', 0
 s_system    db 'SYSTEM.RUN', 0
 s_write     db 'WRITE.RUN', 0
@@ -3317,7 +3316,6 @@ s_cantopen  db 'open ', 0
 s_cantdir   db "Can't read the disk: ", 0
 s_first     db 'Only the first ', 0
 s_listed    db ' are listed', 0
-s_colon     db ': ', 0
 ; the file commands
 copy_form:  dw ftitle, s_copyp, 60, 11, 6
             dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
@@ -3350,14 +3348,13 @@ s_delete    db 'Delete ', 0
 s_delp      db 'Delete: Confirm to erase (* or ? for several)', 0
 s_erased    db 'Erased ', 0
 s_rokept    db ' read-only kept', 0
-s_title     db ' title', 0
-s_to        db ' to ', 0
 s_comma     db ', ', 0
 s_left      db ' is there already: left as it was', 0
 s_leftn     db ' left as they were', 0
 s_allin     db ' and all in it', 0
 s_dotdot    db '..', 0
-s_star      db '\*.*', 0
+s_star      db '\'                      ; (s_all its tail)
+s_all       db '*.*', 0
 s_mkq       db " isn't there: Confirm to make it", 0
 s_copy      db 'Copy ', 0
 s_move      db 'Move ', 0
@@ -3365,18 +3362,20 @@ s_rename    db 'Rename ', 0
 s_copyp     db 'Copy: Fill in form and confirm', 0
 s_movep     db 'Move: Fill in form and confirm', 0
 s_renp      db 'Rename: Fill in form and confirm', 0
-s_lbl_new   db 'New title', 0
-s_eraseq    db 'Erase: Confirm to erase ', 0
+s_lbl_new   db 'New'                    ; (s_title its tail)
+s_title     db ' title', 0
+s_eraseq    db 'Erase: Confirm to '     ; (s_canterase its tail)
+s_canterase db 'erase ', 0
 s_replace   db ' is there already: Confirm to replace it', 0
 s_same      db ' is there now: choose another place', 0
 s_inself    db ' into itself: choose another place', 0
 s_copying   db 'Copying ', 0
 s_moving    db 'Moving ', 0
-s_copied    db 'Copied to ', 0
+s_copied    db 'Copied'                 ; (s_to its tail)
+s_to        db ' to ', 0
 s_moved     db 'Moved to ', 0
 s_cantcopy  db 'copy ', 0                ; (xpick: the Move one next)
 s_cantmove  db 'move ', 0
-s_canterase db 'erase ', 0
 s_cantren   db 'rename ', 0
             times -(s_move != s_copy + 6 || s_moving != s_copying + 9) db 0     ; (xpick: each
             times -(s_moved != s_copied + 11 || s_cantmove != s_cantcopy + 6) db 0 ;  Move string next)
@@ -3390,7 +3389,8 @@ s_subch     db ':*?', 0                 ; not in a subject
 s_badtit    db ": a title can't have \ : * or ?", 0
 s_badsub    db ": a subject can't have : * or ?", 0
 s_partial   db "Copied, but can't erase ", 0
-s_here      db ' here: ', 0
+s_here      db ' here'                  ; (s_colon its tail)
+s_colon     db ': ', 0
 s_kept      db 'Copy kept as ', 0
 k_file      db 'File',0
 k_run       db 'Run',0
