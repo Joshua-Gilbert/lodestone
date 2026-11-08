@@ -576,10 +576,14 @@ class PC:
         # 1520 rate instead of a whole block each.
         if addr == s.last_blk[0] and size <= 4: s.us += s.rep_us(addr, size)
         else: s.us += BLOCK_US
+        pa, pz = s.last_blk
         s.last_blk = (addr, size)
         if s.watch: s.watch(addr)
-        if s.irq_wait and s.r('flags') & 0x200:
-            s.irq_wait = False; s.mu.emu_stop()     # (IF back with an IRQ waiting: run() delivers it)
+        if s.irq_wait and s.r('flags') & 0x200 \
+                and not (pa + pz == addr and s.mu.mem_read(addr - 1, 1)[0] == 0xFB):
+            s.irq_wait = False; s.mu.emu_stop()     # (IF back with an IRQ waiting: run() delivers it; but the
+                                                    #  instruction after an STI first, as the 286: STI / HLT
+                                                    #  takes it in the HLT, and returns past it)
         if s.us >= s.next_event: s.on_time()
 
     def rep_us(s, addr, size):

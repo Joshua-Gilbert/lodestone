@@ -6878,7 +6878,7 @@ def t_srq():
           irq == 5 and not k.pc.pic_mask & 0x20 and (gb[0], gb[1] | gb[2] << 8, gb[3] | gb[4] << 8) == (0xEA, Y['mt_srqi'], seg),
           (irq, hex(k.pc.pic_mask), gb.hex()))
     # a program behind asking, a task computing: its turn at once
-    typ(k, 'mtlaunch mtsrq.com 4', 1.0); line(k, '')        # (task 1, MTSPIN 2: MTSPIN's next in turn is the
+    typ(k, 'mtlaunch mtsrq.com 5', 1.0); line(k, '')        # (task 1, MTSPIN 2: MTSPIN's next in turn is the
     typ(k, 'mtlaunch mtspin.com 9000 s1.txt', 1.0); line(k, '')     #  Executive, not MTSRQ)
     q = one()
     nq, nspin = (tnum_(q) if q else None), tnum('MTSPIN.COM')
@@ -6903,10 +6903,14 @@ def t_srq():
     check('... IRQ 5 in MT\'s own code as a switch to MTSPIN ends (mt_load\'s STI / RET: not a point to switch from): '
           'MTSRQ runs at the next tick (%s ms; %s), the wake kept, not lost' % r,
           isinstance(r[0], float) and 3 < r[0] <= 70 and 'pick' in r[1], r)
-    r = lat(q, own(nq))                                 # (its own code, interrupts on: not MT's switch to it)
+    r = lat(q, lambda: cur() == nq, at=q * 16 + 0x19A)  # (MTSRQ's sleep: CLI / the count / STI / HLT; its STI)
+    check('... raised in its own CLI, at its STI before HLT (held, taken in the HLT: the instruction after STI runs '
+          'first, as the 286\'s): seen at once (%s ms), not at a tick after' % r[0], isinstance(r[0], float)
+          and r[0] <= 3.0, r)
+    r = lat(q, lambda: cur() == nq)
     check('... while MTSRQ itself runs (in its HLT): seen at once (%s ms)' % r[0], isinstance(r[0], float) and r[0] <= 3.0, r)
     k.run_for(0.3)
-    check('... its fourth SRQ: it ends; its wake with it (mt_wkt FFh)', srq_progs(k) == [] and wkt() == 0xFF,
+    check('... its fifth SRQ: it ends; its wake with it (mt_wkt FFh)', srq_progs(k) == [] and wkt() == 0xFF,
           (srq_progs(k), wkt()))
     # in INT 21h when it comes: at its way out
     typ(k, 'mtlaunch mtspin.com 9000 s2.txt d', 1.0); line(k, '')
