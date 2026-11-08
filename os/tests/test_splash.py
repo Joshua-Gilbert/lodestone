@@ -252,7 +252,10 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '564.2', 88: '580.3'}   # (ROM 1's room: Lodefont packed, the UI block 64 bytes less: 0.1 KB more,
+MEM_044 = {0: '564.2', 88: '580.2'}   # (fat_drop and SF_LOST out, the writes in order (an entry before the frees
+                                      #  it lets go of), a failed buffer read again at Abort, terminate's Abort as
+                                      #  Fail: 16 bytes more, 0.1 KB less with EMS, 2026-11-08;
+                                      #  ROM 1's room: Lodefont packed, the UI block 64 bytes less: 0.1 KB more,
                                       #  2026-11-07;
                                       #  a failed write's FAT changes dropped: fat_drop, SF_LOST, 96 bytes, 0.1 KB less,
                                       #  2026-11-07;

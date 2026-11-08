@@ -28,8 +28,6 @@ SF_DEV  equ 80h
 SF_DIRTY equ 40h                ; written: update the directory at close
 SF_RAW  equ 20h                 ; device in raw (binary) mode
 SF_STAMP equ 10h                ; time/date set by the program
-SF_LOST equ 08h                 ; its FAT changes dropped (fat_drop): no
-                                ;  more writes, its entry left as it is
 DEV_CON equ 0
 DEV_NUL equ 1
 DEV_AUX equ 2
@@ -431,20 +429,24 @@ do_create:
         jnz     .acc
         call    sft_busy
         jc      .acc
-        mov     ax, [si+26]             ; truncate the old file: its chain
-        call    free_chain              ;  freed, its entry a fresh one (the
-        jmp     short .ne               ;  name the same: no wildcards)
-.new:   cmp     ax, 2
-        jne     .err
-        mov     ax, [r_dir]
-        call    dir_slot
+        mov     ax, [si+26]             ; truncate the old file: its entry a
+        jmp     short .ne               ;  fresh one (the name the same: no
+.new:   cmp     ax, 2                   ;  wildcards), and only then, that on
+        jne     .err                    ;  the disk, its chain freed: a
+        mov     ax, [r_dir]             ;  refused write frees nothing that
+        call    dir_slot                ;  the disk's entry still names
         jc      .x
-.ne:    mov     cl, [bp+F_CX]
+        xor     ax, ax                  ; (no chain to free)
+.ne:    push    ax
+        mov     cl, [bp+F_CX]
         and     cl, 7                   ; (CREATE TEMPORARY: 8 and the rest too)
         or      cl, A_ARC               ; new, or made anew: archive, as MS-DOS
         xor     ax, ax
         call    new_entry
+        pop     dx                      ; (AX: the error, if any)
         jc      .x
+        mov     ax, dx                  ; (two bytes: what follows even)
+        call    free_chain              ; (the old chain; 0: none)
         push    si
         mov     di, de
         mov     cx, 16
@@ -574,8 +576,6 @@ sft_release:
 sft_commit:
         test    byte [si+S_FLAGS], SF_DIRTY
         jz      .ok
-        test    byte [si+S_FLAGS], SF_LOST
-        jnz     .lost
         push    bx
         push    dx
         push    di
@@ -620,11 +620,6 @@ sft_commit:
         pop     bx
 .ok:    clc
         ret
-.lost:  and     byte [si+S_FLAGS], ~(SF_DIRTY | SF_STAMP)
-        mov     ax, 5                   ; (its entry as on the disk: the
-        stc                             ;  changes it named are gone)
-        ret
-        db      90h                     ; (parity: what follows as it was)
 .e:     pop     di
         pop     dx
         pop     bx
@@ -1014,9 +1009,6 @@ rw_t0       resb 1              ; sector in the track a write run starts at
 section .text
 
 file_write:
-        test    byte [si+S_FLAGS], SF_LOST      ; (fat_drop: no more: the
-        mov     ax, 5                           ;  chain it had is gone)
-        jnz     .err
         call    rw_start
         jc      .err
         or      byte [si+S_FLAGS], SF_DIRTY
@@ -1215,15 +1207,54 @@ file_write:
         pop     ax
         cmp     dx, 0FFF0h
         jae     .sz
+        push    ax                      ; a shorter file: its entry, the new
+        push    dx                      ;  size, on the disk first (.tcommit)
+        call    .tcommit
+        jc      .ts
+        pop     dx
+        pop     ax
         push    dx
         mov     dx, 0FFFFh
         call    fat_set                 ; end the chain here
         pop     ax
-        call    free_chain              ; and drop the rest
-        jmp     .sz
+.tfree: call    free_chain              ; and drop the rest, then the FAT
+        mov     al, [si+S_DRV]          ;  out (refused: the frees go at the
+        call    fat_flush_drv           ;  next flush, their entry on the
+        jmp     .done                   ;  disk already)
 .zero:  mov     ax, [si+S_CLU]
-        call    free_chain
-        mov     word [si+S_CLU], 0
+        cmp     ax, 2
+        jb      .sz
+        push    ax
+        call    .tcommit
+        jc      .tz
+        pop     ax
+        jmp     .tfree
+.ts:    pop     cx                      ; (refused: AX the error)
+.tz:    pop     cx
+        jmp     .err
+; the entry of SI with its size S_POS (0: no cluster) on the disk, before
+; the clusters past it are freed: a refused write frees nothing the disk's
+; entry still names.  CF: AX, the SFT as it was
+.tcommit:
+        push    word [si+S_CLU]
+        push    word [si+S_SIZE+2]
+        push    word [si+S_SIZE]
+        mov     word [si+S_CCL], 0
+        mov     ax, [si+S_POS]
+        mov     [si+S_SIZE], ax
+        mov     ax, [si+S_POS+2]
+        mov     [si+S_SIZE+2], ax
+        or      ax, [si+S_POS]
+        jnz     .tc
+        mov     [si+S_CLU], ax
+.tc:    call    sft_commit
+        jc      .tb
+        add     sp, 6
+        ret
+.tb:    pop     word [si+S_SIZE]
+        pop     word [si+S_SIZE+2]
+        pop     word [si+S_CLU]
+        ret
 .sz:    mov     word [si+S_CCL], 0
         mov     ax, [si+S_POS]
         mov     [si+S_SIZE], ax

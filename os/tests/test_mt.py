@@ -64,10 +64,14 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 415Dh on
-# 2026-11-07, with fat_drop and ROM 1's room), and a change past it moves image_end and bss_end.  The UI's pads, UICORE.INC's,
-# likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4160, 'bss_end': 0x7560, 'ui_keep_end': 0x6804}  # (6844h before Lodefont was packed (FONTPACK.INC)
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 416Dh on
+# 2026-11-08, with the writes in order and ROM 1's room), and a change past it moves image_end and bss_end.  The UI's pads,
+# UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
+OFF_MAP ={'image_end': 0x4170, 'bss_end': 0x7570, 'ui_keep_end': 0x6804}  # (4160h/7560h before fat_drop and SF_LOST gave
+                                        #  way to the writes in order (an entry before the frees it lets go
+                                        #  of), a failed buffer read again at Abort too, and terminate's
+                                        #  Abort as Fail, 2026-11-08;
+                                        #  6844h before Lodefont was packed (FONTPACK.INC)
                                         #  and "Disk error (" shared in dos_msgs, ROM 1's room, 2026-11-07;
                                         #  4100h/7500h before a failed write's FAT
                                         #  changes dropped (fat_drop, SF_LOST), 2026-11-07;
@@ -7031,7 +7035,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 580.3 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.3', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 580.2 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.2', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)

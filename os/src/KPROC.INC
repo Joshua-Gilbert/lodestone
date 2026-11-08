@@ -9,6 +9,7 @@ root_psp    resw 1
 last_exit   resw 1              ; AL = code, AH = how it ended
 term_keep   resw 1              ; TSR: paragraphs to keep
 gp_ok       resb 1              ; INT 60h installed (GPIB, or -dSERIAL's link)
+term_now    resb 1              ; terminate's closes under way: Abort = Fail
             alignb 2
 ex_psp      resw 1
 ex_size     resw 1              ; paragraphs given
@@ -627,7 +628,8 @@ terminate:
         mov     bx, [cur_psp]
         cmp     bx, [root_psp]
         je      root_restart            ; the Executive itself: start over
-        mov     es, bx
+        mov     byte [term_now], 1      ; (an INT 24h in its closes and flush:
+        mov     es, bx                  ;  Abort is Fail, crit_disk)
         cmp     byte [last_exit+1], 3   ; a TSR keeps its files open
         je      .kf
         call    close_all
@@ -655,6 +657,7 @@ terminate:
         mov     ax, bx
 .fcall: call    mem_free_owner          ; (KEMS.INC: ems_free_owner, if EMS)
 .mem:   call    fat_flush
+        mov     byte [term_now], 0
         mov     es, bx
         mov     dx, [es:16h]            ; parent
         mov     si, [es:0Ah]            ; where to go back to
