@@ -99,6 +99,7 @@ start:  mov     sp, stack_top
         mov     [s_d4], al
         mov     [path], al              ; "A:\"
         mov     word [path+1], '\' << 8 | ':'
+        xor     dx, dx                  ; (DL 0, as XCOPY's: NetWare's F0h)
         mov     ax, 0F000h              ; Lodestone?
         int     21h
         cmp     ax, 4F47h
