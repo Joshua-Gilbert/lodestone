@@ -169,6 +169,7 @@ start:  cld
         cmp     ax, 4F47h
         jne     .ro
         mov     byte [lodestone], 1
+        mov     byte [crit_a], 83h              ; (its kernel's nobody-asked)
 .ro:    push    ds
         xor     ax, ax
         mov     ds, ax
@@ -190,8 +191,9 @@ start:  cld
         int     21h                             ; one): fail, no prompt
         mov     [sp0], sp
         jmp     main
-crit:   mov     al, 83h                 ; (Fail, nobody asked: the kernel
-        iret                            ;  drops nothing, its rule 4)
+crit:   mov     al, [cs:crit_a]         ; Fail: 83h, nobody asked, on
+        iret                            ;  Lodestone (its kernel drops
+crit_a  db      3                       ;  nothing, its rule 4); else 3
 
 nomem:  mov     dx, s_nomem
         jmp     short txtfail
