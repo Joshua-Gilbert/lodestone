@@ -912,7 +912,7 @@ rs_aini:
         pop     dx
         pop     es
         ret
-rs_i24: mov     al, 3                   ; fail
+rs_i24: mov     al, 83h                 ; fail, nobody asked (KDISK rule 4)
         iret
 
 s_aini  db      'A:\LODE.INI', 0

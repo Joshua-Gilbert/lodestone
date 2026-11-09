@@ -410,13 +410,18 @@ raw_bounce:
 ;     whose write fails, the call going on): the drive's open files with
 ;     changes pending are SF_LOST (sft_pend): their writes and close
 ;     refused (5), their entries as the disk has them.  A Fail nobody was
-;     asked for (83h, c24_ans: the Executive's for what it doesn't ask
-;     about, and for 0Fh with a text task in front; a task's behind a
-;     graphics screen, mt_c24; a screen capture's) drops nothing: "Invalid
-;     disk change" leaves the old disk mounted, its changes kept, and the
-;     call fails (34), as fat_out's look does (its changes kept, the call
-;     failing), the drive looked at again at its next access, so the
-;     question comes back when it can be answered.  (chg_ask's Fail, a
+;     asked for (c24_ans bit 7: 83h from a Lodestone handler that doesn't
+;     ask, the Executive's for what it doesn't ask about, and for 0Fh with
+;     a text task in front; a task's behind a graphics screen, mt_c24; a
+;     screen capture's; LCMD's in its own work, the utilities', CLAUDE's;
+;     the kernel's own int24, which answers 3 and sets the bit itself, so
+;     a handler that chains to it sees 3) drops nothing: "Invalid disk
+;     change" leaves the old disk mounted, its changes kept, and the call
+;     fails (34), as fat_out's look does (its changes kept, the call
+;     failing; INT 21h 0Dh keeps them too), the drive looked at again at
+;     its next access, so the question comes back when it can be answered;
+;     a search's next (4Fh) looks first then, never reading the disk in
+;     as the old one.  (chg_ask's Fail, a
 ;     transfer's 06h, unmounts whoever answered: the call's other
 ;     transfers mustn't reach the disk in.)  With nothing open and nothing
 ;     to go another disk is just mounted.  A transfer the BIOS fails with 06h
@@ -653,8 +658,8 @@ drv_ready:
         call    rt_put
 .rd:    cmp     byte [cwd_redo], 0
         je      .ok
-        jmp     cwd_find                ; (CF: AX, the disk unreadable)
-.ok:    clc
+        call    cwd_find                ; (unreadable: D_CWD unknown, the
+.ok:    clc                             ;  call goes on, rule 1)
 .x:     ret
 .mf:    push    ax                      ; not mounted: what this look had to
         mov     al, [cwd_redo]          ;  settle is the next one's (the
@@ -889,9 +894,11 @@ gen_of: mov     ah, 0
 ; go): its current directory as its name says, if this disk has it, else
 ; the root (MS-DOS's FATREAD_CDS).  The disk unreadable (its FAT or a
 ; directory: another floppy's FAT that can't go out first, fat_out, too):
-; CF, AX = the error, the name kept and found at the drive's next access
-; (D_CHK 2), never the root for it.  nm11 kept (a resolve's r_name,
-; maybe).  All else kept
+; CF, AX = the error, the name kept, never the root for it, and D_CWD
+; FFFFh, unknown: found when a relative path wants it (resolve), the
+; drive's other calls going on (a handle call, an absolute path, CD to
+; one; MS-DOS's CDS kept unknown, -1, till it's used).  nm11 kept (a
+; resolve's r_name, maybe).  All else kept
 cwd_find:
         pusha
         push    es
@@ -923,7 +930,7 @@ cwd_find:
 .err:   mov     bp, sp
         mov     [bp+2+14], ax           ; (AX: pusha's, past ES)
         mov     si, [actp]
-        or      byte [si+D_CHK], 2
+        or      word [si+D_CWD], -1     ; (unknown: resolve's to find)
         stc
         jmp     short .nm
 .d:     test    byte [de+11], A_DIR
@@ -1016,8 +1023,10 @@ fat_forget:
 
 ; INT 21h 0Dh: write back and forget the cached FAT and sectors (the
 ; next access reads the disk again; mounts and directories stay)
-; CF if changed FAT sectors couldn't be written; everything is forgotten
-; either way.  The FAT is only written if its disk is still in the drive.
+; CF if changed FAT sectors couldn't be written; everything else is
+; forgotten either way, the FAT too unless the Fail was nobody's (rule 4:
+; kept changed then).  The FAT is only written if its disk is still in
+; the drive.
 disk_reset:
         mov     al, [fat_drv]
         cmp     al, 0FFh
@@ -1025,13 +1034,15 @@ disk_reset:
         cmp     byte [fat_dirty], 0
         je      .w
         call    drv_ready               ; (a different disk: its FAT is
-        jnc     .w                      ;  dropped, not written; and if
-        jmp     short .f                ;  we can't tell, not written)
-.w:     call    fat_flush
+        jc      .f                      ;  dropped, not written; and if
+.w:     call    fat_flush               ;  we can't tell, not written)
 .f:     pushf
-        mov     al, [fat_drv]           ; (a flush refused, or not tried:
-        call    fat_drop                ;  its files' changes lost, rule 4)
-        mov     al, 0
+        jnc     .d                      ; (a flush refused, or not tried: the
+        test    byte [c24_ans], 80h     ;  user's Fail drops its files'
+        jnz     .k                      ;  changes, rule 4; a Fail nobody was
+.d:     mov     al, [fat_drv]           ;  asked for, a program's 0Dh under
+        call    fat_drop                ;  MT, keeps another task's)
+.k:     mov     al, 0
         call    .one
         mov     al, 1
         call    .one
@@ -2441,9 +2452,11 @@ chg_ask:
         times ($ - $$) & 1 db 90h       ; (crit_disk even, as it was)
 
 ; INT 24h for the failed transfer -> AL = 0 ignore, 1 retry, 3 fail;
-; c24_ans the answer as given (a Lodestone handler's Fail with nobody
-; asked, the Executive's or a task's behind a screen nobody reads, and a
-; screen capture's: 83h, rule 4)
+; c24_ans the answer as given, bit 7 a Fail nobody was asked for (rule 4):
+; a Lodestone program's handler's 83h (LCMD's, the utilities', the
+; Executive's or a task's behind a screen nobody reads), a screen
+; capture's, or the kernel's own int24's (it answers 3 and sets the bit
+; here, so a program's handler that chains to it sees an ordinary 3)
 ; (abort ends the program here and doesn't come back; while EXEC loads one
 ; it fails instead: the caller is cur_psp still, and f_4B gives back what
 ; the new program had.  Outside INT 21h (InDOS 0: C:'s INT 25h/26h) no
@@ -2472,6 +2485,7 @@ crit_disk:
         jne     .r
         or      ah, 1                   ; a write
 .r:     mov     al, [io_drv]
+        mov     byte [c24_ans], 0       ; (int24, the kernel's own, sets 80h)
         mov     bp, cs
 .c24:   mov     si, crit_dev            ; (multitasking: a far call, KMT.INC)
         int     24h
@@ -2480,7 +2494,7 @@ crit_disk:
         pop     es
         pop     ds
         popa
-.an:    mov     [c24_ans], al
+.an:    or      [c24_ans], al
         cmp     al, 2
         je      .abort
         cmp     al, 3

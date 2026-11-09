@@ -67,7 +67,12 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (1 byte after 482Fh on
 # 2026-11-09, with fat_out's kept changes), and a change past it moves image_end and bss_end.  The UI's pads,
 # UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4870, 'bss_end': 0x7CD0, 'ui_keep_end': 0x6874}  # (4830h/7C90h before a Fail nobody
+OFF_MAP ={'image_end': 0x4860, 'bss_end': 0x7CC0, 'ui_keep_end': 0x6874}  # (4870h/7CD0h before the kernel's
+                                        #  default INT 24h was a Fail nobody was asked for, a
+                                        #  current directory that can't be found again unknown
+                                        #  (the drive's other calls going on), 0Dh kept such a
+                                        #  Fail's changes and a search looked first, its
+                                        #  savings 16 bytes more; 4830h/7C90h before a Fail nobody
                                         #  was asked for was kept apart (83h), a FAT's look was a
                                         #  write's and the user's Fail gave its changes up, a
                                         #  directory wasn't taken for the root when its disk can't

@@ -73,10 +73,12 @@ sft_init:
         mov     byte [si+S_DEV], DEV_PRN
         ret
 section .text
-        times ($ - $$) & 1 db 90h       ; (hot: what follows even; after
-                                        ;  KFAT.INC's last JMP)
+        times (($ - $$) & 1) ^ 1 db 90h ; (hot: h2sft even, h2sft_bp odd;
+                                        ;  after KFAT.INC's last JMP)
 ; handle BX (current process) -> SI = SFT entry, AL = its number.
-; CF: AX = 6.  Keeps BX.
+; CF: AX = 6.  Keeps BX.  h2sft_bp: the call's BX's
+h2sft_bp:
+        mov     bx, [bp+F_BX]
 h2sft:  cmp     bx, 20
         jae     .bad
         push    es
@@ -561,8 +563,7 @@ tmp_ins     resw 1
 tmp_n       resw 1
 section .text
 
-f_3E:   mov     bx, [bp+F_BX]           ; CLOSE
-        call    h2sft
+f_3E:   call    h2sft_bp                ; CLOSE
         jc      .e
         call    sft_release             ; the handle let go after: an Abort
         push    ax                      ;  in its INT 24h leaves it to
@@ -751,24 +752,21 @@ sft_write:
         jnz     dev_write
         jmp     file_write
 
-f_3F:   mov     bx, [bp+F_BX]           ; READ
-        call    h2sft
-        jc      .e
+f_3F:   call    h2sft_bp                ; READ
+        jc      f_40.e
         mov     al, [si+S_MODE]
         and     al, 3
         cmp     al, 1
-        je      .acc
+        je      f_40.acc
         mov     cx, [bp+F_CX]
         mov     es, [bp+F_DS]
         mov     di, [bp+F_DX]
         call    sft_read
-        jc      .e
+        jc      f_40.e
         jmp     ok_ax
-.acc:   mov     ax, 5
-.e:     jmp     fail
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
-f_40:   mov     bx, [bp+F_BX]           ; WRITE
-        call    h2sft
+f_40:   call    h2sft_bp                ; WRITE
         jc      .e
         mov     al, [si+S_MODE]
         and     al, 3
@@ -781,6 +779,7 @@ f_40:   mov     bx, [bp+F_BX]           ; WRITE
         jmp     ok_ax
 .acc:   mov     ax, 5
 .e:     jmp     fail
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; a read or write of CX bytes for SFT SI begins: the memory pointer ES:DI
 ; as segment + offset < 16 in rw_seg / rw_off; the file's drive, with
@@ -983,18 +982,9 @@ file_read:
         call    rw_where                ; BX index, CX sector, DX offset
         call    sft_cluster
         jc      .done
-        mov     [rw_cl], ax
         mov     [rw_cix], bx
-        push    cx
-        call    clu2lba
-        pop     cx
-        add     ax, cx
-        adc     byte [lba_hi], 0        ; (taken by disk_io or buf_getd below)
-        mov     [rw_lba], ax
-        or      dx, dx
-        jnz     .part
-        cmp     word [rw_left], 512
-        jb      .part
+        call    rw_lba_of
+        jc      .part
         ; whole sectors straight into memory, across touching clusters
         call    rw_run0
         mov     ax, [rw_left]
@@ -1044,16 +1034,8 @@ file_read:
         jmp     .loop
 .part:  call    pos_sec
         call    rw_setra
-        push    dx
-        mov     al, [act]
-        mov     dx, [rw_lba]
-        push    si
-        call    buf_getd
-        mov     bx, si
-        pop     si
-        pop     dx
-        jc      .err
         call    rw_part
+        jc      .err
         push    si
         push    cx
         mov     si, bx
@@ -1095,14 +1077,41 @@ rw_adv: mov     [rw_cl], ax
         xor     ah, ah
         add     [rw_run], ax
         ret
-; CX = the bytes of this sector from offset DX, [rw_left] at most
+; cluster AX, sector CX of it, offset DX there: [rw_cl], and [rw_lba]
+; its sector (its high bits in lba_hi: taken by disk_io or buf_getd).  CF:
+; not a whole sector's (offset DX, or less than 512 to go: rw_part's)
+rw_lba_of:
+        mov     [rw_cl], ax
+        push    cx
+        call    clu2lba
+        pop     cx
+        add     ax, cx
+        adc     byte [lba_hi], 0
+        mov     [rw_lba], ax
+        or      dx, dx
+        stc
+        jnz     .x
+        cmp     word [rw_left], 512
+.x:     ret
+; [rw_lba] in a buffer, BX (SI kept); CX = the bytes of it from offset DX,
+; [rw_left] at most.  CF: AX = the error
 rw_part:
+        push    dx
+        mov     al, [act]
+        mov     dx, [rw_lba]
+        push    si
+        call    buf_getd
+        mov     bx, si
+        pop     si
+        pop     dx
+        jc      .r
         mov     cx, 512
         sub     cx, dx
         cmp     cx, [rw_left]
         jbe     .x
         mov     cx, [rw_left]
-.x:     ret
+.x:     clc
+.r:     ret
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; AX = the sector of the file the position of SFT SI is in
 pos_sec:
@@ -1175,17 +1184,8 @@ file_write:
         call    rw_where
         call    sft_cluster_alloc
         jc      .full
-        mov     [rw_cl], ax
-        push    cx
-        call    clu2lba
-        pop     cx
-        add     ax, cx
-        adc     byte [lba_hi], 0        ; (taken by disk_io or buf_getd below)
-        mov     [rw_lba], ax
-        or      dx, dx
-        jnz     .part
-        cmp     word [rw_left], 512
-        jb      .part
+        call    rw_lba_of
+        jc      .part
         ; Whole sectors, across touching clusters, to the end of the track
         ; at most.  Where the chain ends, the free clusters right after it
         ; join the run.  They are linked into the chain before the write
@@ -1291,16 +1291,8 @@ file_write:
         mov     [di+D_HINT], ax
 .lx:    pop     cx
         ret
-.part:  push    dx
-        mov     al, [act]
-        mov     dx, [rw_lba]
-        push    si
-        call    buf_getd
-        mov     bx, si
-        pop     si
-        pop     dx
+.part:  call    rw_part
         jc      .err
-        call    rw_part
         push    si
         push    ds
         push    cx
@@ -1667,8 +1659,7 @@ con_readline:
 ; ---------------------------------------------------------------------
 ;  seek, IOCTL, dup, time stamps, commit
 ; ---------------------------------------------------------------------
-f_42:   mov     bx, [bp+F_BX]           ; LSEEK
-        call    h2sft
+f_42:   call    h2sft_bp                ; LSEEK
         jc      .e
         mov     ax, [bp+F_DX]
         mov     dx, [bp+F_CX]
@@ -1702,8 +1693,7 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
         je      .okk
         cmp     al, 0Bh
         je      .okk
-        mov     bx, [bp+F_BX]
-        call    h2sft
+        call    h2sft_bp
         jc      .e
         mov     al, [bp+F_AX]
         cmp     al, 0
@@ -1785,8 +1775,7 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
 .map:   xor     ax, ax
         jmp     ok_ax
 
-f_45:   mov     bx, [bp+F_BX]           ; DUP
-        call    h2sft
+f_45:   call    h2sft_bp                ; DUP
         jc      .e
         push    ax
         call    jft_alloc
@@ -1797,8 +1786,7 @@ f_45:   mov     bx, [bp+F_BX]           ; DUP
         jmp     give_handle
 .e:     jmp     fail
 
-f_46:   mov     bx, [bp+F_BX]           ; DUP2: CX becomes a copy of BX
-        call    h2sft
+f_46:   call    h2sft_bp                ; DUP2: CX becomes a copy of BX
         jc      .e
         push    ax
         push    si
@@ -1818,8 +1806,7 @@ f_46:   mov     bx, [bp+F_BX]           ; DUP2: CX becomes a copy of BX
         mov     ax, 6
 .e:     jmp     fail
 
-f_57:   mov     bx, [bp+F_BX]           ; file date and time
-        call    h2sft
+f_57:   call    h2sft_bp                ; file date and time
         jc      .e
         cmp     byte [bp+F_AX], 0
         jne     .set
@@ -1838,8 +1825,7 @@ f_57:   mov     bx, [bp+F_BX]           ; file date and time
 .x:     jmp     ok
 .e:     jmp     fail
 
-f_68:   mov     bx, [bp+F_BX]           ; COMMIT
-        call    h2sft
+f_68:   call    h2sft_bp                ; COMMIT
         jc      .e
         test    byte [si+S_FLAGS], SF_DEV
         jnz     .x
@@ -2050,7 +2036,12 @@ find_next:
         jc      .nomore
         cmp     byte [si+D_MNT], 0
         je      .nomore
-        call    fat_load
+        cmp     byte [si+D_CHK], 0      ; a look due (another disk seen and
+        je      .ld                     ;  kept, an automatic Fail; INT 21h
+        call    drv_ready               ;  0Dh): looked at first, as MS-
+        jc      .nomore                 ;  DOS's buffers do, so the search
+        les     di, [dta]               ;  never reads another disk's
+.ld:    call    fat_load                ;  sectors as its own
         jc      .x
         mov     word [it_dir], 0
         push    ds                      ; the pattern

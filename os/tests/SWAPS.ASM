@@ -10,12 +10,29 @@
 ; NEWLAB, written back; G B:'s boot sector, a sector more a track in what
 ; would be written (not written); x INT 21h F008h for B: with the last
 ; of those (the sector as read, then as written; none: the boot sector,
-; zeros).  Anything else is a sync: INT 21h AH=30h with BX=5A5Ah, CL the
-; character (the test swaps disks there)
+; zeros); q open B:\K.TXT (absolute); F find next; N create A:\NEW.TXT,
+; write 600, close; O open A:\AW.TXT, S to its end and write 600, V close
+; it.  Anything else is a sync: INT 21h AH=30h with BX=5A5Ah, CL the
+; character (the test swaps disks there).  -DSCR="...": that script when
+; the tail is empty (run from the Executive); -DNOH24: no INT 24h handler
+; of its own (the one it was started with answers)
 org 100h
+%ifdef SCR
+        cmp     byte [80h], 0
+        jne     .tl
+        mov     si, scrb
+        mov     di, 81h
+.cs:    lodsb
+        stosb
+        cmp     al, 13
+        jne     .cs
+.tl:
+%endif
+%ifndef NOH24
         mov     ax, 2524h
         mov     dx, h24
         int     21h
+%endif
         mov     si, 81h
         mov     di, buf
         mov     cx, 700
@@ -143,7 +160,57 @@ ops:    db 'o'
         dw op_Y
         db 'G'
         dw op_G
+        db 'q'
+        dw op_q
+        db 'F'
+        dw op_F
+        db 'N'
+        dw op_N
+        db 'O'
+        dw op_O
+        db 'S'
+        dw op_S
+        db 'V'
+        dw op_V
         db 0
+op_q:   mov     dx, kabs
+        mov     ax, 3D02h
+        int     21h
+        jc      .x
+        mov     [h1], ax
+.x:     ret
+op_F:   mov     ah, 4Fh
+        int     21h
+        ret
+op_N:   mov     dx, aname
+        xor     cx, cx
+        mov     ah, 3Ch
+        int     21h
+        jc      .x
+        mov     [h3], ax
+        mov     bx, ax
+        call    wr
+        jc      .x
+        mov     bx, [h3]
+        jmp     clz
+.x:     ret
+op_O:   mov     dx, awname
+        mov     ax, 3D02h
+        int     21h
+        jc      .x
+        mov     [h3], ax
+.x:     ret
+op_S:   mov     bx, [h3]
+        mov     ax, 4202h
+        xor     cx, cx
+        xor     dx, dx
+        int     21h
+        jc      .x
+        mov     bx, [h3]
+        jmp     wr
+.x:     ret
+op_V:   mov     bx, [h3]
+        jmp     clz
 op_o:   mov     dx, kname
         mov     ax, 3D02h
         int     21h
@@ -290,7 +357,10 @@ op_d:   mov     ah, 0Dh
         int     21h
         clc
         ret
-op_f:   mov     dx, wild
+op_f:   mov     dx, fdta                ; (its own DTA: PSP:80h holds the
+        mov     ah, 1Ah                 ;  script)
+        int     21h
+        mov     dx, wild
         mov     cx, 0
         mov     ah, 4Eh
         int     21h
@@ -350,6 +420,13 @@ h2      dw 0
 op      db 0
 ansp    dw 0
 kname   db 'B:K.TXT', 0
+kabs    db 'B:\K.TXT', 0
+aname   db 'A:\NEW.TXT', 0
+awname  db 'A:\AW.TXT', 0
+h3      dw 0
+%ifdef SCR
+scrb    db SCR, 13
+%endif
 lname   db 'B:L.TXT', 0
 nname   db 'B:N.TXT', 0
 wild    db 'B:*.*', 0
@@ -363,3 +440,4 @@ newlab  db 'NEWLAB     '
 buf:
 pre     equ buf + 704
 post    equ pre + 512
+fdta    equ post + 512
