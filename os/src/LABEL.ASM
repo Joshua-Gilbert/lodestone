@@ -21,7 +21,8 @@
 ; line; or, when it says changed or the drive has none, its boot sector
 ; and the root sector as read), and INT 21h 0Dh comes before and after,
 ; so the kernel reads the disk again; its current directory there is
-; kept (a new label in the BPB makes the kernel mount the disk afresh).
+; kept.  After the writes INT 21h F008h has the kernel take the disk as
+; it now is, so a file open on it (LABEL's output sent there) goes on.
 ; INT 26h tells the kernel for C:.  With multitasking, nothing is written
 ; while other tasks are there (Shift-Return with no others: alone).
 ;
@@ -116,8 +117,10 @@ start:  mov     sp, stack_top
 done:   mov     ax, 4C00h
         int     21h
 
-fail:   call    print
-        call    told
+fail:   push    dx                      ; (told first: the message may go to
+        call    told                    ;  a file on the disk written)
+        pop     dx
+        call    print
         mov     ax, 4C01h
         int     21h
 stop:   mov     dx, s_crlf
@@ -602,14 +605,19 @@ stamp:  push    di
         mov     [di+18h], ax
         ret
 
-; after writes: a floppy read again by the kernel (INT 21h 0Dh), and its
-; current directory there as it was (a new BPB label makes the kernel
-; mount it afresh, at its root)
+; after writes: a floppy taken by the kernel as it is now (INT 21h F008h:
+; its BPB's label and its root's first sector are what it knows the disk
+; by, and a file of the kernel's may be open on it, LABEL's output sent
+; there), then read again (INT 21h 0Dh), and its current directory there
+; as it was
 told:   cmp     byte [wrote], 0
         je      .x
         mov     byte [wrote], 0
         cmp     byte [kind], K_FL
         jne     .x
+        mov     ax, 0F008h              ; (before 0Dh: its flush looks at
+        mov     dl, [drv]               ;  the disk)
+        int     21h
         mov     ah, 0Dh
         int     21h
         mov     dx, curdir
