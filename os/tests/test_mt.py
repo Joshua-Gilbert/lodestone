@@ -67,7 +67,12 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (1 byte after 482Fh on
 # 2026-11-09, with fat_out's kept changes), and a change past it moves image_end and bss_end.  The UI's pads,
 # UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4860, 'bss_end': 0x7CC0, 'ui_keep_end': 0x6874}  # (4870h/7CD0h before the kernel's
+OFF_MAP ={'image_end': 0x4850, 'bss_end': 0x7CB0, 'ui_keep_end': 0x6894}  # (4860h/7CC0h/6874h before the
+                                        #  current directory was only marked unknown, found by
+                                        #  resolve alone, and the Executive asked about a FAT's
+                                        #  write and asked for a program's drive's free space
+                                        #  first: 16 bytes less in the kernel, 32 more kept of
+                                        #  the UI, the figures as they were; 4870h/7CD0h before the kernel's
                                         #  default INT 24h was a Fail nobody was asked for, a
                                         #  current directory that can't be found again unknown
                                         #  (the drive's other calls going on), 0Dh kept such a
@@ -8020,16 +8025,21 @@ def t_cwdmount():
                   'again by name, NEW.TXT there, the other disk untouched', f.get('A:\\SUB\\NEW.TXT') == b'hello\r\n'
                   and not probs and bytes(other.img) == d2 and 'B:\\SUB>cd\nB:\\SUB\n' in scr, (scr[-200:], probs))
 
+def asks(band):
+    """The Executive's question about a floppy's changes that can't go out (UICORE.INC ui_int24) in its band"""
+    return any('Put the disk back in drive' in l for l in band)
+
 def t_dkeep():
     """A floppy's changed FAT and an INT 24h nobody answered (KDISK.INC rule 4): MTKEEP, a task, writes B:K.TXT and
     waits for a key; the Executive in front, B: emptied, MTADLY started: the Executive's own A: calls (A:'s FAT
-    loaded: B:'s looked at first, "Not ready") are failed at once, nobody asked: B:'s changes kept; MTADLY's own
-    look asks in its text screen, "Not ready writing drive B" (the FAT's: a write's); the disk back, Retry: its
-    create goes, and MTKEEP's next write and close (K.TXT 4,200 bytes).  A text task's own prompt (mt_i24) for
+    loaded: B:'s looked at first, "Not ready", a FAT's write) are asked about in its band ("Put the disk back in
+    drive B:", as for 0Fh), B:'s changes kept meanwhile; the disk back, RETURN (Retry): MTADLY's create goes, and
+    MTKEEP's next write and close (K.TXT 4,200 bytes).  A text task's own prompt (mt_i24) for
     another disk in says "Invalid disk change writing drive B", as COMMAND does; its Fail, the user's, drops the
     changes (the write refused), the other disk untouched.  The Fails of Lodestone's other handlers that ask nobody
-    keep them too: the kernel's own default (Shift-CODE-P's prompt loaded from A:, the Executive's EXEC) and LCMD's
-    while Tab looks (its own work, no prompt in the line being edited)."""
+    keep them too: LCMD's while Tab looks (its own work, no prompt in the line being edited); and before the
+    Executive EXECs a program (Shift-CODE-P's prompt loaded from A:) it asks for that drive's free space with its
+    own INT 24h in, so the question comes then, not the load failed by the kernel's default for nobody."""
     import mkimg, fatcheck
     kp = os.path.join(A.OUT, 'dk_k.txt'); open(kp, 'wb').write(b'k' * 3000)
     b1 = open(mkimg.build(os.path.join(A.OUT, 'dk_b1.img'), ['K.TXT=' + kp]), 'rb').read()
@@ -8046,20 +8056,21 @@ def t_dkeep():
     front(k, 0)
     d1.empty = True; d1.changed = True
     ret(k, 'MTADLY.COM', 0.3); front(k, 0); k.run_for(4.0)
-    crit, tail = pc.rd(mt_seg(k), k.Y['mt_crit'], 1)[0], ''.join(pc.tty)[-60:]
+    crit, tail, q = pc.rd(mt_seg(k), k.Y['mt_crit'], 1)[0], ''.join(pc.tty)[-60:], k.band()
     d1.empty = False; d1.changed = True
+    if asks(q): k.key(ktest.ENTER); k.run_for(2.0)
     pc.keys.append(ord('r')); k.run_for(2.0)
     n = [t for t, s, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
     if n: front(k, n[0])
     pc.keys.append(ord(' ')); k.run_for(4.0)
     f = fatcheck.read_files(bytes(d1.img))
     check('MTKEEP\'s B:K.TXT grown, the Executive in front, B: emptied, MTADLY started: the Executive\'s own A: '
-          'calls fail at once (nobody asked), B:\'s changes kept; MTADLY asks "Not ready writing drive B: Abort, '
-          'Retry, Fail?"; the disk back, Retry: its RES.TXT made, MTKEEP\'s write and close go, K.TXT 4,200 bytes, '
-          'the disk consistent', 0 in auto and crit == 1 and 'Not ready writing drive B: Abort, Retry, Fail?' in tail
+          'calls meet B:\'s look, and the Executive asks ("Put the disk back in drive B:", UICORE.INC ui_int24), '
+          'B:\'s changes kept meanwhile; the disk back, RETURN (Retry): MTADLY\'s RES.TXT made, MTKEEP\'s write and '
+          'close go, K.TXT 4,200 bytes, the disk consistent', 0 in auto and asks(q)
           and A.disk_file(k, 'RES.TXT') == b'ok' and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'+0258 +')
           and len(f.get('A:\\K.TXT', b'')) == 4200 and not fatcheck.check(bytes(d1.img))[0],
-          (auto, crit, tail, A.disk_file(k, 'RES.TXT'), A.disk_file(k, 'RES2.TXT'), len(f.get('A:\\K.TXT', b''))))
+          (auto, crit, tail, q, A.disk_file(k, 'RES.TXT'), A.disk_file(k, 'RES2.TXT'), len(f.get('A:\\K.TXT', b''))))
     for lfirst in (False, True):
         fl = files + [os.path.join(HERE, 'MTKEEP2.COM')]
         k = ktest.KPC(A.image('mt_dk3.img', *fl), b1, ems_pages=88)
@@ -8074,9 +8085,11 @@ def t_dkeep():
         if not lfirst: k.code_p(); k.run_for(2.0)
         else:
             k.key('type a:\\lc'); k.key(ktest.TAB); k.run_for(2.0)
-        kept = (pc.rd(0x60, k.Y['fat_drv'], 1)[0], pc.rd(0x60, k.Y['fat_dirty'], 1)[0])
-        if lfirst: k.key(ktest.ESC); k.key('exit'); k.key(ktest.ENTER); k.run_for(1.0)
+        kept = (pc.rd(0x60, k.Y['fat_drv'], 1)[0], pc.rd(0x60, k.Y['fat_dirty'], 1)[0]); q = k.band()
+        if lfirst: k.key(ktest.ESC); k.key('exit'); k.key(ktest.ENTER); k.run_for(1.0); q = k.band()
         d1.empty = False; d1.changed = True
+        if asks(q): k.key(ktest.ENTER); k.run_for(2.0)
+        if not lfirst: k.key('exit'); k.key(ktest.ENTER); k.run_for(1.0)
         n = [t for t, s_, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
         if n: front(k, n[0])
         pc.keys.append(ord(' ')); k.run_for(4.0)
@@ -8084,11 +8097,33 @@ def t_dkeep():
         check('MTKEEP\'s B:K.TXT grown, B: emptied, %s: B:\'s look "Not ready", the Fail nobody was asked for '
               '(%s): B:\'s changes kept; the disk back, MTKEEP\'s writes and close go, K.TXT %s bytes, the disk '
               'consistent' % (('LCMD started first, Tab after "type a:\\lc" (its files looked for)', 'LCMD\'s, '
-              'while Tab looks', '4,800') if lfirst else ('Shift-CODE-P (the prompt loaded from A:)', 'the kernel\'s '
-              'default handler\'s, the Executive\'s EXEC', '4,200')), kept == (1, 1)
+              'while Tab looks', '4,800') if lfirst else ('Shift-CODE-P (the prompt loaded from A:, the Executive '
+              'asking first: its drive\'s free space with its INT 24h in, not the load failed by the kernel\'s for '
+              'nobody)', 'none: "Put the disk back in drive B:", RETURN', '4,200')), kept == (1, 1)
+              and (lfirst or asks(q))
               and len(f.get('A:\\K.TXT', b'')) == (4800 if lfirst else 4200) and not fatcheck.check(bytes(d1.img))[0]
               and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'+0258 +0258 +' if lfirst else b'+0258 +'),
-              (kept, len(f.get('A:\\K.TXT', b'')), A.disk_file(k, 'RES2.TXT')))
+              (kept, q, len(f.get('A:\\K.TXT', b'')), A.disk_file(k, 'RES2.TXT')))
+    # Shift-Return (exec_raw, the kernel's INT 24h for the program) with the Executive's screen as it was: asked
+    k = ktest.KPC(A.image('mt_dk4.img', *files), b1, ems_pages=88)
+    k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc; d1 = pc.drives[1]
+    ret(k, 'MTKEEP.COM', 1.0); front(k, 0)
+    d1.empty = True; d1.changed = True
+    k.select('MTADLY.COM'); pc.wr(0x40, 0x17, b'\x02'); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    pc.wr(0x40, 0x17, b'\x00'); q = k.band()
+    d1.empty = False; d1.changed = True
+    if asks(q): k.key(ktest.ENTER, settle=False)
+    k.run_for(5.0); k.settle()
+    n = [t for t, s_, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
+    if n: front(k, n[0])
+    pc.keys.append(ord(' ')); k.run_for(4.0)
+    f = fatcheck.read_files(bytes(d1.img))
+    check('MTKEEP\'s B:K.TXT grown, B: emptied, MTADLY run with Shift-Return (exec_raw: the kernel\'s INT 24h for '
+          'it): the Executive asks first, for its drive\'s free space with its own handler in ("Put the disk back in '
+          'drive B:"), not the load failed for nobody; the disk back, RETURN: MTADLY runs (RES.TXT), MTKEEP\'s write '
+          'and close go, K.TXT 4,200 bytes', asks(q) and A.disk_file(k, 'RES.TXT') == b'ok'
+          and len(f.get('A:\\K.TXT', b'')) == 4200 and not fatcheck.check(bytes(d1.img))[0],
+          (q, A.disk_file(k, 'RES.TXT'), len(f.get('A:\\K.TXT', b''))))
     # MTKEEP in front (a text task, no INT 24h of its own: mt_i24 asks), another disk in B:
     k = ktest.KPC(A.image('mt_dk2.img', *files), b1, ems_pages=88)
     k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc

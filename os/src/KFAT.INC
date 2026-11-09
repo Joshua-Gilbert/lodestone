@@ -229,11 +229,12 @@ resolve_si:
         cmp     byte [si], '\'
         je      .abs
         inc     ax                      ; (FFFFh: the current directory
-        jz      .find                   ;  unknown, its disk unreadable when
-        dec     ax                      ;  it was looked for: found now, a
-        jmp     short .c                ;  relative path wanting it; still
-.find:  call    cwd_find                ;  unreadable: 3, MS-DOS's)
-        jnc     .cw
+        jz      .find                   ;  unknown: found now, by its name,
+        dec     ax                      ;  a relative path wanting it;
+        jmp     short .c                ;  unreadable: 3, MS-DOS's.  Found
+.find:  call    cwd_find                ;  never FFFFh, so once)
+        mov     ax, [bx+D_CWD]
+        jnc     .c
         jmp     .np
 .abs:   xor     ax, ax
         inc     si
@@ -903,6 +904,8 @@ find_dir:
         test    byte [de+11], A_DIR
         jz      .np
         mov     ax, [de+26]
+        cmp     ax, -1                  ; (FFFFh: a broken entry, and an
+        je      .np                     ;  unknown current directory's)
 .ok:    clc
 .x:     ret
 .np:    mov     ax, 3
@@ -914,7 +917,17 @@ f_3A:   call    get_path                ; RMDIR
         call    find_dir
         jc      .nd
         mov     si, [actp]              ; the current directory (".", or the
-        cmp     ax, [si+D_CWD]          ;  root from it): 16, as MS-DOS
+        cmp     word [si+D_CWD], -1     ;  root from it): 16, as MS-DOS
+        jne     .kc                     ;  (unknown: found first, by its
+        push    ax                      ;  name; still unknown, 16 too)
+        push    word [d_lba]
+        push    word [d_off]
+        call    cwd_find
+        pop     word [d_off]
+        pop     word [d_lba]
+        pop     ax
+        jc      .cur
+.kc:    cmp     ax, [si+D_CWD]
         je      .cur
         cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
         je      .acc                    ;  doesn't look the name up, so

@@ -3662,11 +3662,18 @@ def t_swaps():
           and len(f.get('A:\\K.TXT', b'')) == 4200 and sane(im['1']) and im['2'] == d2,
           (o, len(f.get('A:\\K.TXT', b''))))
     o, im = run('doewEa1wc/aa', cd='\\sub')
-    check('A:\\SUB current, INT 21h 0Dh (its directory to be found again), B:K.TXT grown, B: emptied, an A: call: '
-          'A:\'s FAT can\'t come in (B:\'s kept, nobody asked, as the directory is looked for and again for the '
-          'call\'s own): the call fails, A:\'s directory kept by name, not taken for the root; B:\'s disk back: B:\'s '
-          'file written on, A:\'s directory found again (the prompt A:\\SUB>)', 'E a[021B][021B]-' in o
+    check('A:\\SUB current, INT 21h 0Dh (its directory to be found again: unknown, MS-DOS\'s -1), B:K.TXT grown, '
+          'B: emptied, an A: call (free space, no path): A:\'s FAT can\'t come in (B:\'s kept, nobody asked), asked '
+          'once, for the call\'s own load (the directory not looked for: a call that doesn\'t want it never reads '
+          'it): the call fails, A:\'s directory kept by name, not taken for the root; B:\'s disk back: B:\'s file '
+          'written on, A:\'s directory found again (the prompt A:\\SUB>)', 'E a[021B]-' in o and '[021B][021B]' not in o
           and ' 1 w+0258 c+' in o and 'A:\\SUB>' in o, o)
+    o, im = run('OoewES1Vwc/a')
+    fa = fatcheck.read_files(last['a'])
+    check('A:\\AW.TXT open, B:K.TXT grown, B: emptied, AW.TXT written past its end (A:\'s FAT to come in, B:\'s '
+          'kept, nobody asked): the handle call fails with 5 (KDISK.INC rule 4: a handle call\'s), not 34; B:\'s disk '
+          'back: both closed, K.TXT 4,200 bytes', 'E S[021B]-0005' in o and ' 1 V+' in o and ' w+0258 c+' in o
+          and len(fatcheck.read_files(im['1']).get('A:\\K.TXT', b'')) == 4200 and sane(last['a']), o)
     o, im = run('oewYxwc')
     check('B:K.TXT open and grown, its boot sector\'s label written by the program and F008h: taken, the disk '
           'still mounted (no unmount, nothing dropped), the file written on', 'x+' in o and 'w+0258 c+' in o
@@ -3699,12 +3706,34 @@ def t_swaps():
           'Fail: B:\'s changes kept, the create fails (3, a path call\'s); the disk back: the file written on, K.TXT '
           '4,200 bytes, the disk consistent', 'E N-0003' in o and ' 1 w+0258 c+' in o
           and len(f.get('A:\\K.TXT', b'')) == 4200 and sane(im['1']), (o, len(f.get('A:\\K.TXT', b''))))
+    # the Executive asks about a floppy's changes that can't go out (a FAT's write: UICORE.INC ui_int24), so
+    # the user can give them up (ESC, the user's Fail) or put the disk back (RETURN): never locked out
+    for esc in (True, False):
+        o, im = run('oewE', exe=True); k = last['k']; pc = k.pc
+        q = k.band(); d = pc.drives[1]
+        if not esc: d.empty = False; d.changed = True
+        k.key(ktest.ESC if esc else ktest.ENTER); k.run_for(2)
+        dirty = pc.rd(0x60, k.Y['fat_dirty'], 1)[0]; probs = fatcheck.check(bytes(d.img))[0]
+        if esc:
+            k.key(ktest.ENTER); k.run_for(1); k.code_p(); k.run_for(2); n0 = len(pc.tty)
+            k.key('ver'); k.key(ktest.ENTER); k.run_for(2); t = ''.join(pc.tty)[n0:]
+            check('run from the Executive (the kernel\'s INT 24h, nobody asked): B:K.TXT grown, B: emptied, the '
+                  'program ended, its close failed (kept): the Executive asks ("Put the disk back in drive B:"); ESC, '
+                  'the user\'s Fail: B:\'s changes given up, and Shift-CODE-P opens LCMD (not "Path not found")',
+                  'Put the disk back in drive B:' in q and dirty == 0 and pc.mode() != 0x40 and 'Lodestone' in t,
+                  (q, dirty, hex(pc.mode()), t[-80:]))
+        else:
+            check('... the disk put back and RETURN (Retry): B:\'s FAT written there (K.TXT\'s chain its 8 '
+                  'clusters, the entry the 3,000 bytes its failed close left: rule 2, CHKDSK /F\'s)',
+                  'Put the disk back in drive B:' in q and dirty == 0
+                  and [p for p in probs if 'chain has 8' in p], (q, dirty, probs))
     o, im = run('OSdoewEV1c/a')
     fa = fatcheck.read_files(last['a'])
     check('A:\\AW.TXT grown, 0Dh, B:K.TXT grown, B: emptied, AW.TXT closed (its drive\'s current directory to be '
           'found again; A:\'s FAT can\'t come in, B:\'s kept, nobody asked): a handle call, it doesn\'t need the '
           'directory: the close done, AW.TXT 3,600 bytes, A: consistent; the disk back: K.TXT closed too',
-          'E V[021B]+' in o and ' 1 c+' in o and len(fa.get('A:\\AW.TXT', b'')) == 3600 and sane(last['a']),
+          'E V+' in o and '[' not in o and ' 1 c+' in o and len(fa.get('A:\\AW.TXT', b'')) == 3600
+          and sane(last['a']),
           (o, len(fa.get('A:\\AW.TXT', b''))))
     for a24, why, then in (('a', 'a Fail nobody was asked for (the utility\'s handler; under MT, maybe another '
                             'task\'s changes)', 'kept, the file written on, K.TXT 4,200 bytes'),
@@ -3837,8 +3866,9 @@ def t_cwdfind():
     o = cmd('pclose')
     f = fatcheck.read_files(bytes(pc.drives[1].img))
     check('B:\\SUB\\DEEP current, B:\\K.TXT grown, 0Dh, SUB\'s sector unreadable: its close looks at B:, the directory '
-          'not found again (asked: "Data error", Fail), the close goes on all the same (+), K.TXT 3,600 bytes, the '
-          'disk consistent', 'Data error' in o and '+' in o.split('Fail?')[-1] and len(f.get('A:\\K.TXT', b'')) == 3600
+          'not read (unknown: a handle call doesn\'t want it, MS-DOS\'s -1), nothing asked, the close done (+), K.TXT '
+          '3,600 bytes, the disk consistent', 'Data error' not in o and '+' in o
+          and len(f.get('A:\\K.TXT', b'')) == 3600
           and not fatcheck.check(bytes(pc.drives[1].img))[0], (o[-120:], len(f.get('A:\\K.TXT', b''))))
     o1 = cmd('dir b:'); o2 = cmd('dir b:\\'); o3 = cmd('copy b:\\k.txt a:\\kc.txt'); o4 = cmd('cd b:\\')
     o5 = cmd('b:'); o6 = cmd('dir'); fa = fatcheck.read_files(bytes(pc.drives[0].img))
@@ -3847,6 +3877,27 @@ def t_cwdfind():
           'Data error' in o1 and 'K        TXT' not in o1 and 'K        TXT' in o2 and '1 File(s) copied' in o3
           and len(fa.get('A:\\KC.TXT', b'')) == 3600 and 'B:\\>' in o5 and 'K        TXT' in o6,
           [x[-90:] for x in (o1, o2, o3, o4, o5, o6)])
+    # RMDIR of the current directory while it is unknown (after 0Dh): found first by its name, refused (16)
+    b4 = image('cf_b4.img', mkf('K.TXT', b'k' * 100), 'SUB\\', 'SUB\\DEEP\\')
+    k = ktest.KPC(image('cf_a.img', lcmd, 'Z0D.COM=' + z0d), b=b4); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('b:'); sh.run('cd sub\\deep'); sh.run('a:'); sh.run('a:z0d')
+    o = sh.run('rd b:\\sub\\deep') + sh.run('b:') + sh.run('cd')
+    im = bytes(pc.drives[1].img)
+    check('B:\\SUB\\DEEP current (empty), INT 21h 0Dh (its cluster unknown till wanted), RD B:\\SUB\\DEEP: '
+          'the current directory, refused (16, as MS-DOS), DEEP still there and still current',
+          im.find(b'DEEP       ') >= 0 and 'B:\\SUB\\DEEP>' in o and not fatcheck.check(im)[0], o[-200:])
+    # a directory entry whose cluster is FFFFh (broken; on C: FAT16's end mark): never a current directory's
+    # (FFFFh is unknown's), CD to it refused, the drive goes on (no endless search for it)
+    bf = bytearray(open(image('cf_bf.img', mkf('K.TXT', b'k' * 100), 'BAD\\'), 'rb').read())
+    i = bf.find(b'BAD        ', 19 * 512); bf[i + 26:i + 28] = b'\xff\xff'
+    bfp = os.path.join(OUT, 'cf_bf2.img'); open(bfp, 'wb').write(bf)
+    k = ktest.KPC(image('cf_a.img', lcmd), b=bfp); k.start()
+    sh = Shell(k); pc = k.pc
+    o = sh.run('cd b:\\bad') + sh.run('b:') + sh.run('dir') + sh.run('cd')
+    check('B:\\BAD\'s entry cluster FFFFh: CD B:\\BAD refused ("Invalid directory"), B:\\ still current, DIR '
+          'lists it (no hang)', 'Invalid directory' in o and 'K        TXT' in o and o.rstrip().endswith('B:\\>')
+          and 'B:\\BAD' not in o.split('Invalid directory')[-1], o[-200:])
 
 def t_batswap():
     """A batch file is opened for each line and closed again (as COMMAND's), at its whole name and place, so
