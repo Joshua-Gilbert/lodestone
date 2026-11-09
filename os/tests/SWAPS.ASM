@@ -3,7 +3,8 @@
 ; [DI AH] and answers the next digit after '/' (Fail when none is left).
 ; Ops: o p open B:K.TXT, B:L.TXT; r R read 1; w W write 600; c C close;
 ; n create B:N.TXT; e b seek to the end, the start; m commit (68h); d INT
-; 21h 0Dh; f find B:*.*; g a free space on B:, A:; v 59h.  Anything else
+; 21h 0Dh; f find B:*.*; g a free space on B:, A:; v 59h; x INT 21h F008h
+; for B: (its disk written by the caller: taken as it is).  Anything else
 ; is a sync: INT 21h AH=30h with BX=5A5Ah, CL the character (the test
 ; swaps disks there)
 org 100h
@@ -127,6 +128,8 @@ ops:    db 'o'
         dw op_v
         db 'a'
         dw op_a
+        db 'x'
+        dw op_x
         db 0
 op_o:   mov     dx, kname
         mov     ax, 3D02h
@@ -179,6 +182,10 @@ op_b:   mov     ax, 4200h
         jmp     sk
 op_m:   mov     bx, [h1]
         mov     ah, 68h
+        int     21h
+        ret
+op_x:   mov     ax, 0F008h
+        mov     dl, 1
         int     21h
         ret
 op_d:   mov     ah, 0Dh

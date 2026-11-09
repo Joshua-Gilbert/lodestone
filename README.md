@@ -119,14 +119,14 @@ On the 1520, BENCH from each kind of drive, in seconds:
 | Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
 | **All ten tests** | **87.6** | **9.1** | **2.1** |
 
-Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its memory figures 2026-11-09, with a floppy's root's first sector part of what makes it the same disk, a disk changed under a transfer asked about there and then, a floppy's mount rules, the Executive's right-click menu, a program's modes on it, and MS-DOS's FCB search, names and CHDIR) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
+Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its memory figures 2026-11-09, with INT 21h F008h for a floppy its program wrote itself, a floppy's root's first sector part of what makes it the same disk, a disk changed under a transfer asked about there and then, a floppy's mount rules, the Executive's right-click menu, a program's modes on it, and MS-DOS's FCB search, names and CHDIR) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
 
 | | Lodestone | GRiD MS-DOS 3.30 | FreeDOS |
 |---|---:|---:|---:|
 | BENCH file-system total | **78.6** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **578.7 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 562.6 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **578.6 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 562.5 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.

@@ -564,9 +564,12 @@ section .text
 f_3E:   mov     bx, [bp+F_BX]           ; CLOSE
         call    h2sft
         jc      .e
-        mov     al, 0FFh
-        call    jft_set
-        call    sft_release
+        call    sft_release             ; the handle let go after: an Abort
+        push    ax                      ;  in its INT 24h leaves it to
+        mov     al, 0FFh                ;  terminate's close_all (else the
+        mov     bx, [bp+F_BX]           ;  SFT stayed in use till a reboot)
+        call    jft_set                 ; (flags kept)
+        pop     ax
         jmp     ret_cf
 .e:     jmp     fail
 

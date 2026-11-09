@@ -64,10 +64,14 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (11 bytes after 46F5h on
-# 2026-11-09, with a disk's root's first sector compared), and a change past it moves image_end and bss_end.  The UI's pads,
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (9 bytes after 4747h on
+# 2026-11-09, with INT 21h F008h), and a change past it moves image_end and bss_end.  The UI's pads,
 # UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4700, 'bss_end': 0x7B60, 'ui_keep_end': 0x6874}  # (4670h/7AC0h before a disk's root's
+OFF_MAP ={'image_end': 0x4750, 'bss_end': 0x7BB0, 'ui_keep_end': 0x6874}  # (4700h/7B60h before INT 21h F008h, a
+                                        #  floppy its program wrote through INT 13h taken as it
+                                        #  is, and an Abort at a close leaving its handle to
+                                        #  terminate, 2026-11-09;
+                                        #  4670h/7AC0h before a disk's root's
                                         #  first sector was compared, a disk changed on another
                                         #  machine told apart by it, 2026-11-09;
                                         #  4580h/79A0h/6804h before a disk
@@ -7084,7 +7088,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 578.7 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '578.7', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 578.6 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '578.6', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)

@@ -331,9 +331,15 @@ raw_bounce:
 ;     read, or as written by copy 1; while a flush is part done, the
 ;     cache's own sector 0 may be that disk's too), and the same root's
 ;     first sector (rt_sum: read at each mount, taken from each write of
-;     it; none kept, the boot disk's or after 0Dh: kept at the next look;
-;     a disk changed elsewhere, its FAT's first sector as it was, is
-;     another disk so).  A changed cache never
+;     it, forgotten at one that fails or is Ignored; none kept, the boot
+;     disk's or after 0Dh: kept at the next look; a disk changed
+;     elsewhere, its FAT's first sector as it was, is another disk so).
+;     A program that writes the disk's boot sector or root itself (INT
+;     13h: LABEL) says so with INT 21h F008h (dsk_own): the BPB and the
+;     root's sum are taken again from the disk.  (One that doesn't, with
+;     a file of the kernel's open on that floppy, finds it another disk at
+;     the next look after 0Dh: "Invalid disk change", where MS-DOS, the
+;     change line not set, reads on.)  A changed cache never
 ;     vouches for a disk.  A read that fails there is INT 24h's for that
 ;     read, not another disk.  INT 21h 0Dh forgets a floppy's sum when it
 ;     has nothing to go and no file open (a program may rewrite the disk
@@ -612,8 +618,9 @@ drv_ready:
         je      .ng                     ;  (rule 1: not another disk), Retry
         mov     dx, [sd_lba]            ;  looks again, Fail leaves it all
         call    crit_bounce             ;  to the next look (.mf: D_CHK 3)
-        jnc     .sd
-        jmp     short .m3
+        jc      .m3                     ; (AX: its error)
+        mov     al, [act]               ; (crit_bounce's AX: the drive again,
+        jmp     .sd                     ;  for .ng's mount number and files)
 .inv:   mov     ax, 15                  ; invalid drive
         stc
         ret
@@ -636,6 +643,39 @@ unmount:
         pop     si
         pop     ax
         ret
+
+; INT 21h F008h (f_F0): floppy AL's disk just written by the caller itself
+; through INT 13h, and still the disk the kernel has mounted (the caller
+; checked: LABEL, its boot sector's label and the root's label entry).
+; What tells the disk apart (rule 1) is taken from it as it is now: its
+; BPB and its root's first sector's sum (none if it can't be read), and
+; the kernel's sectors of it are dropped; so the next look, with its files
+; open, doesn't take it for another disk.  Not its FAT (the cache's is the
+; disk's).  Not a mounted floppy: nothing.  AX, BX, CX, DX, DI changed
+dsk_own:
+        cmp     al, NFLOP
+        jae     .x
+        call    use_drive               ; ([act], SI)
+        cmp     byte [si+D_MNT], 0
+        je      .x
+        call    buf_inval
+        xor     dx, dx
+        call    raw_bounce
+        jc      .r
+        push    si
+        push    es
+        push    cs
+        pop     es
+        mov     si, bounce + 0Bh
+        call    bpb_slot
+        rep     movsb
+        pop     es
+        pop     si
+.r:     mov     dx, [si+D_ROOT]
+        call    raw_bounce              ; (CF: rt_put forgets it)
+        mov     al, [act]
+        jmp     short rt_put
+.x:     ret
 
 ; floppy AL's root's first sector (its sector DX, at BX, as the disk
 ; has it: read or written there): rt_put keeps its sum (CF: forgets it),
@@ -1408,11 +1448,15 @@ buf_put:
         mov     ah, 3
         push    ax                      ; (AL: the drive)
         call    disk_io
-        jc      .e1
-        pop     ax                      ; written: a floppy's root's first
-        call    rt_put                  ;  sector's sum is this one now
-        db      0A8h                    ;  (rt_put, rule 1; DX, BX kept.
-.e1:    pop     cx                      ;  TEST AL, imm8: skips the POP)
+        pop     cx
+        pushf
+        xchg    ax, cx                  ; (CX: disk_io's AX)
+        jc      .f                      ; written: a floppy's root's first
+        cmp     byte [io_ign], 1        ;  sector's sum is this one now; a
+        cmc                             ;  failed or Ignored write: forgotten
+.f:     call    rt_put                  ;  (rt_put, rule 1; DX, BX kept)
+        xchg    ax, cx
+        popf
         pop     bx
         jnc     .ok
         mov     byte [buf_drv+bx], 0FFh ; (CF stays set: not the disk's now)
