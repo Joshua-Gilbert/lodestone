@@ -3,10 +3,14 @@
 ; [DI AH] and answers the next digit after '/' (Fail when none is left).
 ; Ops: o p open B:K.TXT, B:L.TXT; r R read 1; w W write 600; c C close;
 ; n create B:N.TXT; e b seek to the end, the start; m commit (68h); d INT
-; 21h 0Dh; f find B:*.*; g a free space on B:, A:; v 59h; x INT 21h F008h
-; for B: (its disk written by the caller: taken as it is).  Anything else
-; is a sync: INT 21h AH=30h with BX=5A5Ah, CL the character (the test
-; swaps disks there)
+; 21h 0Dh; f find B:*.*; g a free space on B:, A:; v 59h; k B:'s root's
+; first sector read through INT 13h (as read and to be written); X: that,
+; L.TXT renamed M.TXT in it, written back; Y B:'s boot sector, its label
+; NEWLAB, written back; G B:'s boot sector, a sector more a track in what
+; would be written (not written); x INT 21h F008h for B: with the last
+; of those (the sector as read, then as written; none: the boot sector,
+; zeros).  Anything else is a sync: INT 21h AH=30h with BX=5A5Ah, CL the
+; character (the test swaps disks there)
 org 100h
         mov     ax, 2524h
         mov     dx, h24
@@ -130,6 +134,14 @@ ops:    db 'o'
         dw op_a
         db 'x'
         dw op_x
+        db 'k'
+        dw op_k
+        db 'X'
+        dw op_X
+        db 'Y'
+        dw op_Y
+        db 'G'
+        dw op_G
         db 0
 op_o:   mov     dx, kname
         mov     ax, 3D02h
@@ -186,8 +198,93 @@ op_m:   mov     bx, [h1]
         ret
 op_x:   mov     ax, 0F008h
         mov     dl, 1
+        mov     cx, [lsec]
+        mov     bx, pre
         int     21h
         ret
+; B:'s boot sector -> pre and post, its layout (spt, hds, rtlba)
+rdboot: mov     word [spt], 9
+        mov     word [hds], 2
+        xor     ax, ax
+        mov     [lsec], ax
+        mov     bx, pre
+        call    rd13
+        jc      .x
+        mov     ax, [pre+18h]
+        mov     [spt], ax
+        mov     ax, [pre+1Ah]
+        mov     [hds], ax
+        mov     al, [pre+10h]
+        cbw
+        mul     word [pre+16h]
+        add     ax, [pre+0Eh]
+        mov     [rtlba], ax
+        jmp     short cpost
+.x:     ret
+cpost:  mov     si, pre
+        mov     di, post
+        mov     cx, 256
+        rep     movsw
+        clc
+        ret
+; B:'s sector AX <-> ES:BX: rd13 reads, wr13 writes.  CF: AH the BIOS's
+rd13:   mov     di, 0201h
+        jmp     short io13
+wr13:   mov     di, 0301h
+io13:   xor     dx, dx
+        div     word [spt]
+        mov     cl, dl
+        inc     cl
+        xor     dx, dx
+        div     word [hds]
+        mov     ch, al
+        mov     dh, dl
+        mov     dl, 1
+        mov     ax, di
+        int     13h
+        ret
+op_k:   call    rdboot
+        jc      .x
+        mov     ax, [rtlba]
+        mov     [lsec], ax
+        mov     bx, pre
+        call    rd13
+        jc      .x
+        call    cpost
+.x:     ret
+op_X:   call    op_k
+        jc      .x
+        mov     si, post
+        mov     cx, 16
+.l:     push    si
+        push    cx
+        mov     di, l11
+        mov     cx, 11
+        repe    cmpsb
+        pop     cx
+        pop     si
+        jne     .n
+        mov     byte [si], 'M'
+.n:     add     si, 32
+        loop    .l
+        mov     ax, [lsec]
+        mov     bx, post
+        call    wr13
+.x:     ret
+op_Y:   call    rdboot
+        jc      .x
+        mov     si, newlab
+        mov     di, post + 2Bh
+        mov     cx, 11
+        rep     movsb
+        xor     ax, ax
+        mov     bx, post
+        call    wr13
+.x:     ret
+op_G:   call    rdboot
+        jc      .x
+        inc     byte [post+18h]
+.x:     ret
 op_d:   mov     ah, 0Dh
         int     21h
         clc
@@ -253,4 +350,12 @@ lname   db 'B:L.TXT', 0
 nname   db 'B:N.TXT', 0
 wild    db 'B:*.*', 0
 rbuf    db 0
+spt     dw 9
+hds     dw 2
+rtlba   dw 0
+lsec    dw 0
+l11     db 'L       TXT'
+newlab  db 'NEWLAB     '
 buf:
+pre     equ buf + 704
+post    equ pre + 512

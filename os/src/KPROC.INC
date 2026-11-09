@@ -651,7 +651,7 @@ terminate:
 .free:  call    ui_progend              ; (INT 33h forgets its handler)
         mov     ax, bx
 .fcall: call    mem_free_owner          ; (KEMS.INC: ems_free_owner, if EMS)
-.mem:   call    fat_flush
+.mem:   call    fat_outt                ; (a floppy's: looked at first)
         mov     byte [term_now], 0
         mov     es, bx
         mov     dx, [es:16h]            ; parent

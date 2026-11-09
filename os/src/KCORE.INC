@@ -1115,8 +1115,11 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
 ;   AL = 6: PrtSc's printer driver -> ES:BX = its path ("": files), CX =
 ;           its room (the caller changes it there)
-;   AL = 8: DL = a floppy (0 = A:) the caller has just written itself
-;           through INT 13h, still the kernel's disk: taken as it is now
+;   AL = 8: DL = a floppy (0 = A:) whose sector CX (0: the boot sector;
+;           the root's first) the caller has just written itself through
+;           INT 13h, ES:BX = 1,024 bytes: the sector as it read it, then as
+;           it wrote it: the disk taken as written (CF, 5: what was read
+;           isn't the kernel's disk, or more than a label changed)
 f_F0:   mov     al, [bp+F_AX]
         or      al, al
         jnz     .1
@@ -1140,12 +1143,13 @@ f_F0:   mov     al, [bp+F_AX]
         cmp     al, 1
         jne     f_bad
         jmp     .open
-; AL=8: floppy DL's disk written by the caller through INT 13h (LABEL),
-; the disk the kernel has mounted: its BPB and root sum taken from it as
-; it is now, so the next look doesn't call it another disk (dsk_own)
+; AL=8: floppy DL's sector CX (0: the boot sector; the root's first)
+; written by the caller through INT 13h (LABEL), ES:BX: the sector as it
+; read it, then as it wrote it; the disk taken as written, so the next look
+; doesn't call it another disk (dsk_own).  CF, 5: refused
 .own:   mov     al, [bp+F_DX]
         call    dsk_own
-        jmp     ok
+        jmp     ret_cf
 ; AL=2: lend the disk cache's memory to the caller (windows' save-under):
 ; ES = its segment, CX = bytes.  CF if there is no cache or it is lent.
 ; (KEMS.INC: with the cache in EMS, ems_lend and ems_back instead)
