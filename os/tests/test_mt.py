@@ -64,10 +64,16 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (1 byte after 480Fh on
-# 2026-11-09, with F008h's checks), and a change past it moves image_end and bss_end.  The UI's pads,
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (1 byte after 482Fh on
+# 2026-11-09, with fat_out's kept changes), and a change past it moves image_end and bss_end.  The UI's pads,
 # UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4810, 'bss_end': 0x7C70, 'ui_keep_end': 0x6874}  # (4750h/7BB0h before F008h was given
+OFF_MAP ={'image_end': 0x4830, 'bss_end': 0x7C90, 'ui_keep_end': 0x6874}  # (4810h/7C70h before a floppy's FAT
+                                        #  changes were kept when the look at its drive can't
+                                        #  read it, F008h left a look due, a root read by the
+                                        #  kernel settled which sum, an Ignored entry left alone
+                                        #  at its close: 32 bytes, the KB figures as they were,
+                                        #  2026-11-09;
+                                        #  4750h/7BB0h before F008h was given
                                         #  the sector as read and as written, a failed root
                                         #  write's two sums, a floppy's FAT written from another
                                         #  drive's call only after a look, 2026-11-09;
