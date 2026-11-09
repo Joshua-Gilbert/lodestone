@@ -224,11 +224,18 @@ resolve_si:
         mov     al, [act]
         mov     [r_drv], al
         call    fat_load                ; (keeps BX: the drive's entry)
-        jc      .x
-        mov     ax, [bx+D_CWD]
+        jc      .dr                     ; (another floppy's FAT stuck: 3 too,
+.cw:    mov     ax, [bx+D_CWD]          ;  KDISK.INC rule 4)
         cmp     byte [si], '\'
-        jne     .c
-        xor     ax, ax
+        je      .abs
+        inc     ax                      ; (FFFFh: the current directory
+        jz      .find                   ;  unknown, its disk unreadable when
+        dec     ax                      ;  it was looked for: found now, a
+        jmp     short .c                ;  relative path wanting it; still
+.find:  call    cwd_find                ;  unreadable: 3, MS-DOS's)
+        jnc     .cw
+        jmp     .np
+.abs:   xor     ax, ax
         inc     si
 .c:     mov     [r_dir], ax
 .comp:  cmp     byte [si], 0
@@ -754,6 +761,30 @@ find_named:
         stc
 .x:     ret
 
+f_43:   call    get_path                ; get/set attributes
+        jc      f_41.e
+        call    find_file
+        jc      f_41.e
+        cmp     byte [bp+F_AX], 0
+        jne     .set
+        mov     al, [de+11]
+        xor     ah, ah
+        mov     [bp+F_CX], ax
+        jmp     ok
+.set:   cmp     byte [bp+F_AX], 1
+        jne     .bad
+        mov     al, [bp+F_CX]
+        test    al, A_DIR | A_VOL
+        jnz     f_41.acc
+        mov     ah, [si+11]
+        and     ah, A_DIR
+        or      al, ah
+        mov     [si+11], al
+        call    buf_put
+        jmp     ret_cf
+.bad:   mov     ax, 1
+        jmp     short f_41.e
+
 f_41:   call    get_path                ; DELETE
         jc      .e
         call    find_file
@@ -774,32 +805,6 @@ f_41:   call    get_path                ; DELETE
         call    dev_lookup
         mov     ax, 2                   ; (CF kept)
         jc      .e
-.acc:   mov     ax, 5
-.e:     jmp     fail
-
-f_43:   call    get_path                ; get/set attributes
-        jc      .e
-        call    find_file
-        jc      .e
-        cmp     byte [bp+F_AX], 0
-        jne     .set
-        mov     al, [de+11]
-        xor     ah, ah
-        mov     [bp+F_CX], ax
-        jmp     ok
-.set:   cmp     byte [bp+F_AX], 1
-        jne     .bad
-        mov     al, [bp+F_CX]
-        test    al, A_DIR | A_VOL
-        jnz     .acc
-        mov     ah, [si+11]
-        and     ah, A_DIR
-        or      al, ah
-        mov     [si+11], al
-        call    buf_put
-        jmp     ret_cf
-.bad:   mov     ax, 1
-        jmp     .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
 

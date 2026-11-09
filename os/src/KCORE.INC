@@ -139,8 +139,10 @@ int29:  push    ax                      ; fast console output
 int23:  stc                             ; default ^C handler: end the program
         retf
 
-int24:  mov     al, 3                   ; default critical error: fail the call
-        iret
+int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
+        mov     al, 3                   ;  nobody asked (KDISK.INC rule 4: said
+        iret                            ;  in the kernel's byte, not AL, so a
+                                        ;  handler that chains here sees 3)
 
 int25:  mov     ax, 0207h               ; absolute disk I/O: not supported
         stc

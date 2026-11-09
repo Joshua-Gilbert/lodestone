@@ -3405,7 +3405,10 @@ def t_swaps():
     it, the disk is just forgotten.  A floppy's changed FAT is written, from another drive's call, only after its
     drive is looked at; a look that can't read the disk keeps the changes (the call fails).  A root write that lands
     but is reported failed, read back by the kernel: that sector the disk's.  A create's entry Ignored: no nameless
-    entry at the close.  Without a change line (from boot), within 2 s nothing is looked at (MS-DOS's rule)."""
+    entry at the close.  Without a change line (from boot), within 2 s nothing is looked at (MS-DOS's rule).  The
+    kernel's own default INT 24h (a program run from the Executive with none of its own) is a Fail nobody was asked
+    for, as 83h: B:'s changes kept; so are 0Dh's; a handle call goes on while the current directory can't be found
+    again; a search's next with a look due looks first."""
     def mkf(n, b):
         t = os.path.join(OUT, 'sw_' + n.replace('\\', '_')); open(t, 'wb').write(b); return n + '=' + t
     c = os.path.join(OUT, 'SWAPS.COM')
@@ -3427,10 +3430,19 @@ def t_swaps():
     d8 = open(p8, 'rb').read()
     d6 = bytearray(d1); d6[0x2B:0x36] = b'ELSEWHERE  '; d6 = bytes(d6)        # disk 1 labelled on another machine
     last = {}
-    def run(script, a24='', ce=False, nocl=False, cd=None):
-        k = ktest.KPC(image('sw_a.img', lcmd, 'SWAPS.COM=' + c, 'SUB\\', mkf('SUB\\S.TXT', b's' * 10)), b=b1)
+    aw = mkf('AW.TXT', b'a' * 3000)
+    def run(script, a24='', ce=False, nocl=False, cd=None, exe=False):
+        com = c
+        if exe:                                     # from the Executive, no handler of its own: the kernel's
+            com = os.path.join(OUT, 'SWAPSX.COM')
+            subprocess.run(['nasm', '-f', 'bin', '-dNOH24', '-dSCR="%s"' % script, '-o', com,
+                            os.path.join(HERE, 'SWAPS.ASM')], check=True)
+        k = ktest.KPC(image('sw_a.img', lcmd, ('SWAPSX.COM=' if exe else 'SWAPS.COM=') + com, 'SUB\\',
+                            mkf('SUB\\S.TXT', b's' * 10), aw), b=b1)
         k.pc.drives[1].no_changeline = nocl                                # (from boot: D_PRES 3, AH=15h's)
-        k.start(); Shell(k); pc = k.pc; last['k'] = k
+        k.start()
+        if not exe: Shell(k)
+        pc = k.pc; last['k'] = k
         if cd: k.key('cd ' + cd); k.key(ktest.ENTER)
         um = 0x600 + k.Y['unmount']; last['um'] = []
         D = {'1': pc.drives[1], '2': pcemu.Floppy(bytearray(d2)), '3': pcemu.Floppy(bytearray(d1)),
@@ -3468,10 +3480,13 @@ def t_swaps():
                     r = o13(); pc.w('ax', 0x2000); pc.cf(1); return r
             return o13()
         pc.int13 = i13
+        if exe:
+            o = k.run_file('SWAPSX.COM'); last['a'] = bytes(pc.drives[0].img)
+            return o, {n: bytes(f.img) for n, f in D.items()}
         k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
         k.key('\\swaps ' + script); k.key(ktest.ENTER, settle=False)
         pc.run_until(lambda: ''.join(pc.tty)[n0:].count('>') >= 2 or pc.crash, 60); k.settle()
-        o = ''.join(pc.tty)[n0 + len(script) + 8:]
+        o = ''.join(pc.tty)[n0 + len(script) + 8:]; last['a'] = bytes(pc.drives[0].img)
         return o, {n: bytes(f.img) for n, f in D.items()}
     def sane(img):
         return not [p for p in fatcheck.check(img)[0] if 'lost clusters' not in p]
@@ -3646,11 +3661,12 @@ def t_swaps():
           'written on (K.TXT 4,200 bytes), the other disk untouched', 'a[0F1B]-' in o and ' 1 w+0258 c+' in o
           and len(f.get('A:\\K.TXT', b'')) == 4200 and sane(im['1']) and im['2'] == d2,
           (o, len(f.get('A:\\K.TXT', b''))))
-    o, im = run('doewEa1wc/a', cd='\\sub')
+    o, im = run('doewEa1wc/aa', cd='\\sub')
     check('A:\\SUB current, INT 21h 0Dh (its directory to be found again), B:K.TXT grown, B: emptied, an A: call: '
-          'A:\'s FAT can\'t come in (B:\'s kept, nobody asked): the call fails, A:\'s directory kept by name, not '
-          'taken for the root; B:\'s disk back: found again (the prompt A:\\SUB>)', 'E a[021B]-' in o
-          and 'A:\\SUB>' in o, o)
+          'A:\'s FAT can\'t come in (B:\'s kept, nobody asked, as the directory is looked for and again for the '
+          'call\'s own): the call fails, A:\'s directory kept by name, not taken for the root; B:\'s disk back: B:\'s '
+          'file written on, A:\'s directory found again (the prompt A:\\SUB>)', 'E a[021B][021B]-' in o
+          and ' 1 w+0258 c+' in o and 'A:\\SUB>' in o, o)
     o, im = run('oewYxwc')
     check('B:K.TXT open and grown, its boot sector\'s label written by the program and F008h: taken, the disk '
           'still mounted (no unmount, nothing dropped), the file written on', 'x+' in o and 'w+0258 c+' in o
@@ -3676,6 +3692,34 @@ def t_swaps():
     check('... its entry, never written (Ignored), not made a nameless one at the close (no entry with a 00h first '
           'byte and a chain); the disk consistent but for lost clusters', not [e for e in ents if e[0] == 0 and e[26:32]
           != b'\0' * 6] and sane(im['1']), [e.hex() for e in ents[:6]])
+    o, im = run('oewEN1wc', exe=True)
+    f = fatcheck.read_files(im['1'])
+    check('run from the Executive with no INT 24h handler of its own (the kernel\'s default answers, nobody asked: '
+          'KDISK.INC rule 4): B:K.TXT grown, B: emptied, A:NEW.TXT created: B:\'s look "Not ready", the default\'s '
+          'Fail: B:\'s changes kept, the create fails (3, a path call\'s); the disk back: the file written on, K.TXT '
+          '4,200 bytes, the disk consistent', 'E N-0003' in o and ' 1 w+0258 c+' in o
+          and len(f.get('A:\\K.TXT', b'')) == 4200 and sane(im['1']), (o, len(f.get('A:\\K.TXT', b''))))
+    o, im = run('OSdoewEV1c/a')
+    fa = fatcheck.read_files(last['a'])
+    check('A:\\AW.TXT grown, 0Dh, B:K.TXT grown, B: emptied, AW.TXT closed (its drive\'s current directory to be '
+          'found again; A:\'s FAT can\'t come in, B:\'s kept, nobody asked): a handle call, it doesn\'t need the '
+          'directory: the close done, AW.TXT 3,600 bytes, A: consistent; the disk back: K.TXT closed too',
+          'E V[021B]+' in o and ' 1 c+' in o and len(fa.get('A:\\AW.TXT', b'')) == 3600 and sane(last['a']),
+          (o, len(fa.get('A:\\AW.TXT', b''))))
+    for a24, why, then in (('a', 'a Fail nobody was asked for (the utility\'s handler; under MT, maybe another '
+                            'task\'s changes)', 'kept, the file written on, K.TXT 4,200 bytes'),
+                           ('3', 'the user\'s Fail', 'given up, the file refused (w-0005), K.TXT as it was')):
+        o, im = run('oewEd1wc/' + a24)
+        f = fatcheck.read_files(im['1'])
+        check('B:K.TXT grown, B: emptied, INT 21h 0Dh (as a utility does): B:\'s FAT to go, its drive looked at, '
+              '"Not ready", %s; the disk back: %s' % (why, then), 'E d[021A]' in o and (' 1 w+0258 c+' in o
+              and len(f.get('A:\\K.TXT', b'')) == 4200 if a24 == 'a' else ' 1 w-0005' in o
+              and f.get('A:\\K.TXT') == kk) and sane(im['1']), (o, len(f.get('A:\\K.TXT', b''))))
+    o, im = run('oewf2rF/aa')
+    check('B:K.TXT grown, a search of B: begun, another disk in, a read: "Invalid disk change", a Fail nobody was '
+          'asked for (the old disk kept mounted); the search\'s next: B: looked at first (asked again), no more '
+          'files (18), nothing of the other disk read as the old one\'s', 'r[0F1B]-' in o and 'F[0F1B]-0012' in o
+          and im['2'] == d2, o)
     # COPY's destination's close with another disk in: Write error, 0 copied
     k = ktest.KPC(image('sw_c.img', lcmd), b=b1); k.start()
     sh = Shell(k); pc = k.pc; other = pcemu.Floppy(bytearray(d2))
@@ -3722,7 +3766,10 @@ def t_cwdfind():
     """A floppy's current directory after another disk (KDISK.INC rule 1, cwd_find): B:\\SUB current, INT 21h 0Dh
     (or not), then a copy of the disk's boot sector with no SUB, a file over SUB's cluster: a relative create goes
     to the new disk's root (its D_CWD 0 too, not the old SUB's cluster), the file over it whole.  The first look
-    after 0Dh failing (Fail at "reading drive B"): the directory still found again at the next (D_CHK 2, not 3)."""
+    after 0Dh failing (Fail at "reading drive B"): the directory still found again at the next (D_CHK 2, not 3).
+    The directory's disk unreadable as it is found again (a directory on its path a bad sector): not the root,
+    unknown (D_CWD FFFFh) till a relative path wants it; the drive's other calls go on (a handle call: the close of
+    a changed file; absolute paths, CD to one), so the disk's other files can be copied off."""
     def mkf(n, b):
         t = os.path.join(OUT, 'cf_' + n.replace('\\', '_')); open(t, 'wb').write(b); return n + '=' + t
     lcmd = os.path.join(GOS, 'src', 'LCMD.COM')
@@ -3762,6 +3809,44 @@ def t_cwdfind():
     pc.drives[1].bad = set(); k.key('f')
     check('... after 0Dh, B:\'s first look failing (Fail): a look that finds the directory again still due at the '
           'next (D_CHK %s)' % seen[:1], seen[:1] == [2], seen)
+    # the directory's path unreadable when it's found again: the drive's other calls go on
+    pcl = os.path.join(OUT, 'PCLOSE.COM')
+    open(os.path.join(OUT, 'PCLOSE.ASM'), 'w').write(
+        'org 100h\n mov ax, 3D02h\n mov dx, kn\n int 21h\n jc e\n mov bx, ax\n push bx\n mov ax, 4202h\n'
+        ' xor cx, cx\n xor dx, dx\n int 21h\n pop bx\n push bx\n mov ah, 40h\n mov cx, 600\n mov dx, kn\n'
+        ' int 21h\n mov ah, 0Dh\n int 21h\n pop bx\n mov ah, 3Eh\n int 21h\n mov dl, \'+\'\n jnc o\n'
+        ' mov dl, \'-\'\no: mov ah, 2\n int 21h\ne: mov ax, 4C00h\n int 21h\nkn db \'B:\\K.TXT\', 0\n'
+        ' times 600 db 0\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', pcl, os.path.join(OUT, 'PCLOSE.ASM')], check=True)
+    b3 = image('cf_b3.img', mkf('K.TXT', b'k' * 3000), 'SUB\\', 'SUB\\DEEP\\', mkf('SUB\\DEEP\\S.TXT', b's' * 100))
+    d3 = open(b3, 'rb').read(); i = d3.find(b'SUB        ', 19 * 512)
+    sub = 33 + struct.unpack('<H', d3[i + 26:i + 28])[0] - 2            # (1.44 MB: a sector a cluster)
+    k = ktest.KPC(image('cf_a.img', lcmd, 'Z0D.COM=' + z0d, 'PCLOSE.COM=' + pcl), b=b3); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('b:'); sh.run('cd sub\\deep'); sh.run('a:')
+    pc.drives[1].bad = {sub}
+    def cmd(c, keys='f'):
+        k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
+        k.key(c); k.key(ktest.ENTER, settle=False)
+        for j in range(4):
+            pc.run_until(lambda: ''.join(pc.tty)[n0:].count('>') >= 1 or ''.join(pc.tty)[n0:].count('Fail?') > j
+                         or pc.crash, 30)
+            if ''.join(pc.tty)[n0:].count('Fail?') > j: pc.keys.append(ord(keys))
+            else: break
+        k.settle(); return ''.join(pc.tty)[n0:]
+    o = cmd('pclose')
+    f = fatcheck.read_files(bytes(pc.drives[1].img))
+    check('B:\\SUB\\DEEP current, B:\\K.TXT grown, 0Dh, SUB\'s sector unreadable: its close looks at B:, the directory '
+          'not found again (asked: "Data error", Fail), the close goes on all the same (+), K.TXT 3,600 bytes, the '
+          'disk consistent', 'Data error' in o and '+' in o.split('Fail?')[-1] and len(f.get('A:\\K.TXT', b'')) == 3600
+          and not fatcheck.check(bytes(pc.drives[1].img))[0], (o[-120:], len(f.get('A:\\K.TXT', b''))))
+    o1 = cmd('dir b:'); o2 = cmd('dir b:\\'); o3 = cmd('copy b:\\k.txt a:\\kc.txt'); o4 = cmd('cd b:\\')
+    o5 = cmd('b:'); o6 = cmd('dir'); fa = fatcheck.read_files(bytes(pc.drives[0].img))
+    check('... B:\'s directory unknown, not the root: DIR B: (relative) asks and finds nothing; DIR B:\\ lists the '
+          'root, COPY B:\\K.TXT copies it off, CD B:\\ goes there: the drive usable, B:\\ its directory after',
+          'Data error' in o1 and 'K        TXT' not in o1 and 'K        TXT' in o2 and '1 File(s) copied' in o3
+          and len(fa.get('A:\\KC.TXT', b'')) == 3600 and 'B:\\>' in o5 and 'K        TXT' in o6,
+          [x[-90:] for x in (o1, o2, o3, o4, o5, o6)])
 
 def t_batswap():
     """A batch file is opened for each line and closed again (as COMMAND's), at its whole name and place, so
