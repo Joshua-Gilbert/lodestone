@@ -252,7 +252,9 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '562.7', 88: '578.8'}   # (a disk changed under a transfer asked about there and then
+MEM_044 = {0: '562.6', 88: '578.7'}   # (a disk changed on another machine told apart by its root's first
+                                      #  sector: 160 bytes, 0.1 KB less, 2026-11-09; 562.7 / 578.8 before;
+                                      #  a disk changed under a transfer asked about there and then
                                       #  (Retry, Fail), each task's directories with their mount, MS-DOS's
                                       #  2-second rule for a drive without a change line, the Executive's
                                       #  question for it: 400 bytes, 0.4 KB less, 2026-11-08;

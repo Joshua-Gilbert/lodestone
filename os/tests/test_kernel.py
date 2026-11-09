@@ -3397,7 +3397,8 @@ def t_swaps():
     close of a changed file is asked about with another disk in (it counts as open till its entry is written), and
     Retry with the disk back writes it.  A disk with the same boot sector but another FAT doesn't get the old
     mount back after INT 21h 0Dh, nor after 0Dh with a file open and no Fail; an empty drive while the old disk is
-    looked for is "Not ready" (Retry with it back: the file reads on; Fail: the same, at the next call)."""
+    looked for is "Not ready" (Retry with it back: the file reads on; Fail: the same, at the next call).  The disk
+    changed on another machine with its FAT's first sector as it was is told apart by its root's first sector."""
     def mkf(n, b):
         t = os.path.join(OUT, 'sw_' + n.replace('\\', '_')); open(t, 'wb').write(b); return n + '=' + t
     c = os.path.join(OUT, 'SWAPS.COM')
@@ -3410,10 +3411,13 @@ def t_swaps():
     d2[0x27:0x2B] = b'\x12\x34\x56\x78'; d2 = bytes(d2)                    # (another serial)
     d4 = bytearray(open(image('sw_b4.img', mkf('BIG.TXT', b'B' * 9000), mkf('Q.TXT', b'q' * 100)), 'rb').read())
     d4[0:512] = d1[0:512]; d4 = bytes(d4)                                  # (the same boot sector, another FAT)
+    d5 = bytearray(d1); i = d5.find(b'K       TXT', 19 * 512)               # disk 1 changed elsewhere: K.TXT's
+    d5[i:i + 11] = b'Q       TXT'; d5[i + 28:i + 32] = struct.pack('<I', 10); d5 = bytes(d5)     # slot a small Q.TXT
     def run(script, a24=''):
         k = ktest.KPC(image('sw_a.img', lcmd, 'SWAPS.COM=' + c), b=b1); k.start()
         Shell(k); pc = k.pc
-        D = {'1': pc.drives[1], '2': pcemu.Floppy(bytearray(d2)), '4': pcemu.Floppy(bytearray(d4))}
+        D = {'1': pc.drives[1], '2': pcemu.Floppy(bytearray(d2)), '3': pcemu.Floppy(bytearray(d1)),
+             '4': pcemu.Floppy(bytearray(d4)), '5': pcemu.Floppy(bytearray(d5))}
         st = {'n24': 0}
         def put(ch):
             if ch == '.': return
@@ -3464,6 +3468,16 @@ def t_swaps():
     check('B:K.TXT open (no Fail), INT 21h 0Dh, that disk in: the sum kept with a file open, "Invalid disk change" '
           '(r[0F1B]-0005), the file refused after the Fail, that disk untouched',
           '4 r[0F1B]-0005 w-0005' in o and im['4'] == d4, o)
+    o, im = run('or2r5rwc')
+    check('B:K.TXT open, another disk in, Fail, then K\'s disk as changed on another machine (K.TXT\'s slot a '
+          'small Q.TXT, FAT sector 0 as it was): its root\'s first sector differs, another mount, the file refused '
+          '(r-0005, w-0005), Q.TXT not written over', '5 r-0005 w-0005' in o and im['5'] == d5, o)
+    o, im = run('o5rwc')
+    check('... with no Fail before: "Invalid disk change" (r[0F1B]-0005), that disk untouched',
+          '5 r[0F1B]-0005 w-0005' in o and im['5'] == d5, o)
+    o, im = run('or2r3rwc')
+    check('... a DISKCOPY of the disk instead: the same disk (nothing tells it apart), the file reads and is '
+          'written on', '3 r+0001 w+0258 c+' in o and im['2'] == d2, o)
     o, im = run('or2rErr1rwc/31', '.1')
     check('B:K.TXT open, another disk in, Fail, then the drive empty: "Not ready" as the old disk is looked for '
           '(r[021A]); the first disk put in, Retry: the file reads on (r+), and is written', 'E r[021A]+0001 r+0001'

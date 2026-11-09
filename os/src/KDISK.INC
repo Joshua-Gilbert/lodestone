@@ -70,6 +70,8 @@ fk_dmask    resw 1
 fat_sum     resw 2 * NFLOP      ; each floppy's FAT sector 0 as its disk last
                                 ;  had it (sec_sum: read or written there):
                                 ;  same_disk's, kept when the cache goes
+rt_sum      resw 2 * NFLOP      ; and its root's first sector (rt_chk; 0: none
+                                ;  known)
 ; the cylinder cache: places [tc_lo, tc_hi) of the cylinder starting at
 ; LBA tc_cyl on drive tc_drv (place = head * sectors per track + sector,
 ; from 0), each at place * 512 in the block at tc_seg:0 (KMEM puts it in
@@ -327,7 +329,11 @@ raw_bounce:
 ;     for it only with the same BPB (serial and label included) and the
 ;     same FAT sector 0 as that disk last had (fat_sum, each floppy's: as
 ;     read, or as written by copy 1; while a flush is part done, the
-;     cache's own sector 0 may be that disk's too).  A changed cache never
+;     cache's own sector 0 may be that disk's too), and the same root's
+;     first sector (rt_sum: read at each mount, taken from each write of
+;     it; none kept, the boot disk's or after 0Dh: kept at the next look;
+;     a disk changed elsewhere, its FAT's first sector as it was, is
+;     another disk so).  A changed cache never
 ;     vouches for a disk.  A read that fails there is INT 24h's for that
 ;     read, not another disk.  INT 21h 0Dh forgets a floppy's sum when it
 ;     has nothing to go and no file open (a program may rewrite the disk
@@ -430,7 +436,7 @@ same_disk:
         jnz     .sum
         mov     byte [cwd_redo], 1      ; (nothing known to compare: maybe a
         mov     byte [si+D_CHK], 2      ;  copy of it, its directories not
-        jmp     short .same             ;  where they were, rule 1: this
+        jmp     short .rt               ;  where they were, rule 1: this
 .sum:                                   ;  call's, or the next, chg_ask's)
         mov     dx, [si+D_RSV]
         call    raw_bounce
@@ -443,7 +449,7 @@ same_disk:
         cmp     ax, [fat_sum+bx]
         jne     .cur
         cmp     dx, [fat_sum+bx+2]
-        je      .same
+        je      .rt
 .cur:   mov     cl, [act]
         cmp     [fat_drv], cl           ; (a flush part done: its sector 0
         jne     .diff                   ;  may be the cache's already)
@@ -459,6 +465,13 @@ same_disk:
         jne     .diff
         cmp     dx, bx
         jne     .diff
+.rt:    mov     si, [actp]              ; the root's first sector too, as
+        mov     dx, [si+D_ROOT]         ;  that disk last had it (rule 1:
+        call    raw_bounce              ;  a disk changed elsewhere, its
+        jc      .rerr                   ;  FAT's first sector as it was)
+        mov     al, [act]               ; (BX: bounce)
+        call    rt_chk
+        jc      .diff
 .same:  xor     al, al                  ; (CF clear)
         jmp     short .x
 .rerr:  mov     [sd_lba], dx            ; a read error, not another disk:
@@ -579,6 +592,10 @@ drv_ready:
         call    mount_bpb
         pop     si
         jc      .mf
+        mov     dx, [si+D_ROOT]         ; its root's first sector, as this
+        call    raw_bounce              ;  disk has it (rule 1; none known
+        mov     al, [act]               ;  if it can't be read now: CF)
+        call    rt_put
 .rd:    cmp     byte [cwd_redo], 0
         je      .ok
         call    cwd_find
@@ -619,6 +636,52 @@ unmount:
         pop     si
         pop     ax
         ret
+
+; floppy AL's root's first sector (its sector DX, at BX, as the disk
+; has it: read or written there): rt_put keeps its sum (CF: forgets it),
+; rt_chk compares it with the one kept (CF if it differs; none kept: kept
+; now).  Not the root's first sector, or not a floppy: nothing, NC.  All
+; kept (rule 1)
+rt_put: pusha
+        sbb     di, di                  ; (FFFFh: forget, 0: keep)
+        jmp     short rt_chk.go
+rt_chk: pusha
+        mov     di, 1
+.go:    cmp     al, NFLOP
+        jae     .r0
+        mov     si, bx
+        cbw
+        mov     bx, ax
+        shl     bx, 5                   ; (DRVSZ)
+        or      di, di
+        js      .z
+        cmp     dx, [drvtab+bx+D_ROOT]
+        jne     .r0
+        call    sec_sum
+        shr     bx, 3                   ; (rt_sum's)
+        or      di, di
+        jz      .k
+        mov     cx, [rt_sum+bx]
+        or      cx, [rt_sum+bx+2]
+        jz      .k
+        cmp     ax, [rt_sum+bx]
+        jne     .d
+        cmp     dx, [rt_sum+bx+2]
+        jne     .d
+.k:     mov     [rt_sum+bx], ax
+        mov     [rt_sum+bx+2], dx
+.r0:    clc
+        db      0B1h                    ; (MOV CL, imm8: skips the STC)
+.d:     stc
+        popa
+        ret
+.z:     shr     bx, 3
+        xor     ax, ax
+        cwd
+        jmp     .k
+%if DRVSZ != 32
+%error "rt_chk: DRVSZ"
+%endif
 
 ; checksum of the 512 bytes at SI (Fletcher's, two words) -> DX:AX.
 ; CX, SI changed
@@ -831,6 +894,8 @@ disk_reset:
         mov     ah, 0FEh
         rol     ah, cl
         and     [fat_sv], ah
+        stc                             ; (and its root's)
+        call    rt_put
 .o1:    mov     al, DRVSZ
         mul     cl
         xchg    bx, ax
@@ -1341,7 +1406,13 @@ buf_put:
         pop     es
         mov     cx, 1
         mov     ah, 3
+        push    ax                      ; (AL: the drive)
         call    disk_io
+        jc      .e1
+        pop     ax                      ; written: a floppy's root's first
+        call    rt_put                  ;  sector's sum is this one now
+        db      0A8h                    ;  (rt_put, rule 1; DX, BX kept.
+.e1:    pop     cx                      ;  TEST AL, imm8: skips the POP)
         pop     bx
         jnc     .ok
         mov     byte [buf_drv+bx], 0FFh ; (CF stays set: not the disk's now)
