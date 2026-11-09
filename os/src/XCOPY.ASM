@@ -156,8 +156,9 @@ ctrlc:  push    cs
         call    print
         mov     ax, 4C02h
         int     21h
-crit:   mov     al, 3                   ; (a critical error: Fail, said as
-        iret                            ;  the call's own)
+crit:   mov     al, 83h                 ; (a critical error: Fail, said as
+        iret                            ;  the call's own; 83h, nobody asked:
+                                        ;  the kernel drops nothing)
 
 ; ---------------------------------------------------------------------
 ; command tail: source, destination, switches.  CF: DX

@@ -190,8 +190,8 @@ start:  cld
         int     21h                             ; one): fail, no prompt
         mov     [sp0], sp
         jmp     main
-crit:   mov     al, 3
-        iret
+crit:   mov     al, 83h                 ; (Fail, nobody asked: the kernel
+        iret                            ;  drops nothing, its rule 4)
 
 nomem:  mov     dx, s_nomem
         jmp     short txtfail

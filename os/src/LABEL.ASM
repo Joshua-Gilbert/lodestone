@@ -133,7 +133,8 @@ ctrlc:  push    cs
         call    told
         mov     ax, 4C03h
         int     21h
-crit:   mov     al, 3                   ; (DOS's own I/O: fail it)
+crit:   mov     al, 83h                 ; (DOS's own I/O: fail it, nobody
+                                        ;  asked: the kernel drops nothing)
         iret
 
 ; ---------------------------------------------------------------------

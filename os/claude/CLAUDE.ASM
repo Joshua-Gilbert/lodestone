@@ -315,8 +315,8 @@ int24:  test    ah, 08h                 ; critical error: fail if allowed,
         jz      .fail
         xor     al, al
         iret
-.fail:  mov     al, 3
-        iret
+.fail:  mov     al, 83h                 ; (nobody asked: the kernel drops
+        iret                            ;  nothing, its KDISK rule 4)
 
 ; =====================================================================
 ;  screen

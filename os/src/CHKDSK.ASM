@@ -228,8 +228,8 @@ zero_seg:
 .x:     push    ds
         pop     es
         ret
-crit:   mov     al, 3
-        iret
+crit:   mov     al, 83h                 ; (Fail, nobody asked: the kernel
+        iret                            ;  drops nothing, its rule 4)
 
 K_FL    equ 0                           ; kinds of drive
 K_HD    equ 1
