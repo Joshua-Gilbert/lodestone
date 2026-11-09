@@ -252,7 +252,10 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '562.3', 88: '578.4'}   # (F008h given the sector as read and as written, a failed root write's
+MEM_044 = {0: '562.2', 88: '578.3'}   # (a Fail nobody was asked for kept apart (83h), a FAT's look a
+                                      #  write's and the user's Fail giving its changes up, a directory not
+                                      #  taken for the root when its disk can't be read, a close's slot by name:
+                                      #  64 bytes, 0.1 KB less, 2026-11-09; 562.3 / 578.4 before; F008h given the sector as read and as written, a failed root write's
                                       #  two sums, a floppy's FAT written from another drive's call only after
                                       #  a look at its drive: 192 bytes, 0.2 KB less, 2026-11-09; 562.5 / 578.6
                                       #  before; INT 21h F008h, a floppy its program wrote through INT 13h taken as

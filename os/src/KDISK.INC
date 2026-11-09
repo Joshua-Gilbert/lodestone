@@ -58,7 +58,9 @@ cwd_redo    resb 1              ; 1: this drv_ready calls cwd_find (2: and its
                                 ;  mount may keep unmount's number, rule 9; the name
 cwd_nmk     resb 11             ;  kept), and cwd_find's nm11
 sd_err      resb 1              ; same_disk: 1 if a read failed (not another
-            alignb 2            ;  disk: its sector at sd_lba); 2 while it runs
+                                ;  disk: its sector at sd_lba); 2 while it runs
+c24_ans     resb 1              ; crit_disk: the handler's answer as it gave it
+                                ;  (bit 7: a Fail nobody was asked for, rule 4)
 sd_lba      resw 1
 mgen        resw NFLOP          ; each floppy's mount (an SFT's S_GEN: its low
                                 ;  byte, rule 9; all of a task's, KMT.INC)
@@ -87,7 +89,7 @@ tc_lo       resb 1
 tc_hi       resb 1
 tc_lock     resb 1              ; 1: its memory is lent out (help window)
 tc_bad_drv  resb 1              ; read-ahead failed on this drive's
-            alignb 2
+wlook       resb 1              ; 1: fat_outt's look (a write's, rule 4)
 tc_bad_cyl  resw 1              ;   cylinder: none there
 io_err      resb 1
 buf_drv     resb NBUF
@@ -370,17 +372,25 @@ raw_bounce:
 ;     has nothing to go and no file open (a program may rewrite the disk
 ;     then: CHKDSK /F, DEFRAG), and its current directory is found again
 ;     by name at the next access, as after any mount of another disk
-;     (cwd_find).  (Kept, a rewrite would be another disk: 0Dh is all a
+;     (cwd_find; the disk unreadable then, or another floppy's changed FAT
+;     that can't go out first: that call fails, the name kept, never the
+;     root for it).  (Kept, a rewrite would be another disk: 0Dh is all a
 ;     DOS program tells of one.  A copy of the disk put in then is taken
 ;     for it.)  With a file open it is kept: another disk with the same
 ;     BPB put in is "Invalid disk change", not the same disk; a rewrite
 ;     with a file open is too.  Taken with no sum compared, its current
-;     directory is found again by name too.
+;     directory is found again by name too.  (Copies with the same serial,
+;     an MS-DOS 3.30 DISKCOPY of a DOS 4 disk, relabelled with the label
+;     entry past the root's first sector, aren't told apart: copies are
+;     taken anyway.)
 ;  2. A chain goes to the disk before the entry that names it; an entry
 ;     before the frees it lets go of (do_create, a truncating write,
 ;     DELETE, RMDIR); dir_slot zeroes a directory's new cluster before it
 ;     links it in.  So the disk's FAT and directory agree after any one
-;     failure, or differ by lost clusters only.
+;     failure, or differ by lost clusters only.  (A program that never
+;     retries a failed close, or Aborts it, can leave a chain longer than
+;     its entry says: the FAT, kept, goes out once the disk is back, the
+;     entry never written; CHKDSK /F cuts it, the rest FILE0000.CHK.)
 ;  3. A failed flush keeps the cache changed: on the same disk its
 ;     sectors go out at the next flush.  Each copy goes as one transfer
 ;     (from the first changed sector to the last), so a failure leaves at
@@ -392,12 +402,24 @@ raw_bounce:
 ;     the old disk's cache dropped and the call fails (drv_ready's 34: a
 ;     path call's 3, as MS-DOS's measured; a handle call's 5, sft_chk,
 ;     its documented code, assumed; 59h says the same, MS-DOS's maybe 83);
-;     a changed cache dropped otherwise (INT 21h 0Dh or a screen capture's reset
-;     after a failed flush; another drive's call or a program's end, its
-;     drive looked at first, Fail, fat_out): the drive's open files with changes pending
-;     are SF_LOST (sft_pend): their writes and close refused (5), their
-;     entries as the disk has them.  With nothing open and nothing to go
-;     another disk is just mounted.  A transfer the BIOS fails with 06h
+;     a changed cache dropped otherwise (INT 21h 0Dh or a screen capture's
+;     reset after a failed flush; another drive's call or a program's end,
+;     fat_out, its drive looked at first: another disk, Fail; the disk
+;     unreadable, its INT 24h a write's, "Not ready writing", the FAT's,
+;     as MS-DOS's dirty buffer's, and the user's Fail, as MS-DOS's buffer
+;     whose write fails, the call going on): the drive's open files with
+;     changes pending are SF_LOST (sft_pend): their writes and close
+;     refused (5), their entries as the disk has them.  A Fail nobody was
+;     asked for (83h, c24_ans: the Executive's for what it doesn't ask
+;     about, and for 0Fh with a text task in front; a task's behind a
+;     graphics screen, mt_c24; a screen capture's) drops nothing: "Invalid
+;     disk change" leaves the old disk mounted, its changes kept, and the
+;     call fails (34), as fat_out's look does (its changes kept, the call
+;     failing), the drive looked at again at its next access, so the
+;     question comes back when it can be answered.  (chg_ask's Fail, a
+;     transfer's 06h, unmounts whoever answered: the call's other
+;     transfers mustn't reach the disk in.)  With nothing open and nothing
+;     to go another disk is just mounted.  A transfer the BIOS fails with 06h
 ;     (changed under it; read-ahead's and the cylinder cache's too) isn't
 ;     tried again on the disk in, nor read another way: the same disk goes
 ;     on with it, another is INT 24h 0Fh there and then (chg_ask), Retry
@@ -416,7 +438,8 @@ raw_bounce:
 ;     parts too: buf_inval looks at the drive bits);
 ;     one Ignored is kept as written: if the disk didn't get it, a later
 ;     read finds what it has (a file's entry never written: its close
-;     leaves the slot alone, sft_commit; the chain lost clusters).
+;     leaves a slot without its name alone, unused or another file's
+;     since, sft_commit; the chain lost clusters).
 ;  7. Chain walks stop on an entry below 2 (free, reserved) as a broken
 ;     chain, never as its end: fat_get gives 1 for reserved and bad ones
 ;     (FF0h-FF7h), a link past the disk's end and a cluster past it; a
@@ -555,34 +578,33 @@ drv_ready:
         mov     byte [fat_drv], 0FFh
         jmp     short .same
 .nsd:   cmp     byte [sd_err], 0        ; it couldn't be read: INT 24h for
-        je      .other                  ;  that read, Retry looks again
-        push    bx                      ;  (rule 1: not another disk)
-        push    cx
-        mov     dx, [sd_lba]
-        call    crit_bounce
-        pop     cx
-        pop     bx
-        jnc     .ck
-        pop     dx                      ; (Fail: the call fails, the drive
+        je      .other                  ;  that read (its io_bios), Retry
+        mov     ah, 2                   ;  looks again (rule 1: not another
+        add     ah, [wlook]             ;  disk); fat_outt's a write's, its
+        jmp     short .wr               ;  FAT's (as MS-DOS's buffer's)
+.kp:    pop     dx                      ; (Fail: the call fails, the drive
         add     sp, 2                   ;  looked at again next time: .mf)
         jmp     .mf
 .other: mov     al, [act]               ; another disk, and the old one has
         call    drv_pend                ;  changes to go or files open: INT
         jnc     .um                     ;  24h 0Fh, "Invalid disk change",
-        mov     ah, 3                   ;  as MS-DOS (rule 4; Retry looks
-        mov     [io_drv], ax            ;  again: the right one back, nothing
-        mov     byte [io_bios], 6       ;  lost; a write's, as MS-DOS's:
-        mov     byte [io_crit], 2       ;  io_op 3, after io_drv)
+        mov     byte [io_bios], 6       ;  as MS-DOS (rule 4; Retry looks
+        mov     ah, 3                   ;  again: the right one back, nothing
+.wr:    mov     al, [act]               ;  lost; a write's, as MS-DOS's:
+        mov     [io_drv], ax            ;  io_op 3, after io_drv)
+        mov     byte [io_crit], 2
         call    crit_disk
         cmp     al, 1
         je      .ck
+        mov     ax, 34                  ; (the call fails: 34, as MS-DOS)
+        cmp     byte [sd_err], 0        ; (.wr's Fail: nothing dropped here,
+        jne     .kp                     ;  fat_outt decides)
+        test    byte [c24_ans], 80h     ; a Fail nobody was asked for:
+        jnz     .kp                     ;  nothing dropped, looked at again
         mov     al, [act]               ; Fail: the old disk's changes
-        call    unmount                 ;  dropped, its files refused, and
-        pop     dx                      ;  the call fails (34, as MS-DOS);
-        pop     ax                      ;  the next one mounts the disk in
-        mov     ax, 34
-        stc
-        ret
+        call    unmount                 ;  dropped, its files refused (the
+        mov     al, 34                  ;  next call mounts the disk in:
+        jmp     short .kp               ;  D_CHK 3)
 .um:    mov     byte [cwd_redo], 1      ; nothing to go: the disk in is
         mov     al, [act]               ;  mounted, the current directory
         call    unmount                 ;  found again by its name (as
@@ -631,7 +653,7 @@ drv_ready:
         call    rt_put
 .rd:    cmp     byte [cwd_redo], 0
         je      .ok
-        call    cwd_find
+        jmp     cwd_find                ; (CF: AX, the disk unreadable)
 .ok:    clc
 .x:     ret
 .mf:    push    ax                      ; not mounted: what this look had to
@@ -722,7 +744,8 @@ dsk_own:
         call    bpb_slot
         mov     si, bounce + 0Bh
         rep     movsb
-.um:    call    unmount
+        jmp     short .ok               ; (taken: the disk stays mounted)
+.um:    call    unmount                 ; (AL: drv_pend's, the drive)
 .ok:    clc
         ret
 .no:    mov     ax, 5
@@ -864,8 +887,11 @@ gen_of: mov     ah, 0
 
 ; drive [act], mounted afresh (another disk, nothing of the old one's to
 ; go): its current directory as its name says, if this disk has it, else
-; the root (MS-DOS's FATREAD_CDS).  nm11 kept (a resolve's r_name, maybe).
-; All kept
+; the root (MS-DOS's FATREAD_CDS).  The disk unreadable (its FAT or a
+; directory: another floppy's FAT that can't go out first, fat_out, too):
+; CF, AX = the error, the name kept and found at the drive's next access
+; (D_CHK 2), never the root for it.  nm11 kept (a resolve's r_name,
+; maybe).  All else kept
 cwd_find:
         pusha
         push    es
@@ -877,7 +903,7 @@ cwd_find:
         mov     cx, 11
         rep     movsb
         call    fat_load
-        jc      .root
+        jc      .err
         mov     al, [act]
         call    cwd_of
         lea     si, [di+1]              ; (past its '\')
@@ -891,8 +917,16 @@ cwd_find:
         push    si
         call    dir_find
         pop     si
-        jc      .root
-        test    byte [de+11], A_DIR
+        jnc     .d
+        cmp     ax, 5                   ; (not there, or a loop: the root; a
+        jbe     .root                   ;  read that failed: .err)
+.err:   mov     bp, sp
+        mov     [bp+2+14], ax           ; (AX: pusha's, past ES)
+        mov     si, [actp]
+        or      byte [si+D_CHK], 2
+        stc
+        jmp     short .nm
+.d:     test    byte [de+11], A_DIR
         jz      .root
         mov     ax, [de+26]
         cmp     byte [si], '\'
@@ -905,8 +939,8 @@ cwd_find:
         xor     ax, ax                  ; (the root: D_CWD 0 too, whatever
 .end:   mov     si, [actp]              ;  it held, the same disk's or not)
         mov     [si+D_CWD], ax
-        mov     byte [si+D_CHK], 0      ; (found: no more to do)
-        mov     si, cwd_nmk
+        mov     byte [si+D_CHK], 0      ; (found: no more to do; NC)
+.nm:    mov     si, cwd_nmk
         mov     di, nm11
         mov     cx, 11
         rep     movsb
@@ -1117,7 +1151,9 @@ fat_outt:
         jz      .l                      ;  access's)
         mov     byte [si+D_CHK], 1
 .l:     push    cx
-        call    drv_ready
+        mov     byte [wlook], 1         ; (its INT 24h a write's: drv_ready;
+        call    drv_ready               ;  an Abort there that ends the
+        dec     byte [wlook]            ;  program leaves it 1 till the next)
         pop     cx
         pushf
         mov     si, [actp]
@@ -1126,11 +1162,16 @@ fat_outt:
         jnc     .y
         cmp     byte [fat_drv], 0FFh    ; (another disk, Fail: its changes
         je      .y                      ;  dropped with its mount, rule 4)
-        mov     bp, sp                  ; unreadable (INT 24h's Fail at "Not
-        mov     [bp+16], ax             ;  ready"): kept changed, rule 3,
-        pop     ax                      ;  looked at again next time (.mf),
-        mov     al, ah                  ;  and this call fails with that
-        call    use_drive               ;  look's error (AX)
+        test    byte [c24_ans], 80h     ; unreadable, the user's Fail: given
+        jnz     .kf                     ;  up (rule 4, as MS-DOS's buffer
+        mov     al, [fat_drv]           ;  whose write fails), this call
+        call    fat_drop                ;  goes on
+        jmp     short .y
+.kf:    mov     bp, sp                  ; a Fail nobody was asked for: kept
+        mov     [bp+16], ax             ;  changed, rule 3, looked at again
+        pop     ax                      ;  next time (.mf), and this call
+        mov     al, ah                  ;  fails with that look's error (AX)
+        call    use_drive
         popa
         stc
         ret
@@ -2399,7 +2440,10 @@ chg_ask:
         ret
         times ($ - $$) & 1 db 90h       ; (crit_disk even, as it was)
 
-; INT 24h for the failed transfer -> AL = 0 ignore, 1 retry, 3 fail
+; INT 24h for the failed transfer -> AL = 0 ignore, 1 retry, 3 fail;
+; c24_ans the answer as given (a Lodestone handler's Fail with nobody
+; asked, the Executive's or a task's behind a screen nobody reads, and a
+; screen capture's: 83h, rule 4)
 ; (abort ends the program here and doesn't come back; while EXEC loads one
 ; it fails instead: the caller is cur_psp still, and f_4B gives back what
 ; the new program had.  Outside INT 21h (InDOS 0: C:'s INT 25h/26h) no
@@ -2409,8 +2453,9 @@ chg_ask:
 ; run with BP no frame.  Under MT that place is the running task's own: a
 ; task switched inside INT 21h takes its slice of the kernel stack along)
 crit_disk:
+        mov     al, 83h
         test    byte [cap_req], 2       ; a screen capture: just fail
-        jnz     .fail
+        jnz     .an
         pusha
         push    ds
         push    es
@@ -2435,6 +2480,7 @@ crit_disk:
         pop     es
         pop     ds
         popa
+.an:    mov     [c24_ans], al
         cmp     al, 2
         je      .abort
         cmp     al, 3
@@ -2477,6 +2523,7 @@ drv_dflt:
         inc     al
 .d:     dec     al
         ret
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: f_36.l even)
 
 ; INT 21h 36h: free space.  DL = drive (0 = current)
 f_36:   mov     al, [bp+F_DX]

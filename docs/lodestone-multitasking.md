@@ -825,7 +825,7 @@ The checks:
 - **A new task starts with its spawner's vectors** (`mt_vnew`), but INT 22h-24h are MT's:
   - 22h is its stub's end;
   - 23h is the kernel's ^C (end the program);
-  - 24h is `mt_i24`, a prompt like a shell's: "Not ready reading drive A: Abort, Retry, Fail?", through INT 10h and 16h. It goes on the screen in front (M4a).
+  - 24h is `mt_i24`, a prompt like a shell's: "Not ready reading drive A: Abort, Retry, Fail?", through INT 10h and 16h ("Invalid disk change writing drive B" for code 0Fh, as COMMAND says it). It goes on the screen in front (M4a). A task's error behind a graphics screen is failed at once with 83h, a Fail nobody was asked for: the kernel drops no floppy's changes for it (KDISK.INC rule 4).
 
   So a shell that starts a task (LCMD, through MTLAUNCH or, since M7a, START) doesn't hand it its own ^C and critical-error handlers. Those would run the shell's code in the task (LCMD's ^C goes back to its prompt, on the task's stack), and point into freed memory once the shell ends. Its stub's PSP gets the same three, so its programs do too.
 - **A TSR loaded from the Executive before a task starts** is in that task's vectors too; one loaded after isn't.
