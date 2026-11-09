@@ -495,7 +495,8 @@ yesno:  push    dx
 ; ---------------------------------------------------------------------
 ; the label ([label], 0: none, delete) into the root and the boot sector.
 ; CF: DX
-write:  cmp     byte [hadlab], 0        ; a new entry: room for it?
+write:  mov     byte [nown], 0
+        cmp     byte [hadlab], 0        ; a new entry: room for it?
         jne     .r
         cmp     byte [nofree], 0
         mov     dx, s_full
@@ -530,10 +531,10 @@ write:  cmp     byte [hadlab], 0        ; a new entry: room for it?
         mov     ax, [rootlba]           ; (the kernel told: as read, as
         add     ax, [esec]              ;  written)
         mov     si, rootcp
-        call    own
-        jc      .nown
-        cmp     byte [boot+26h], 29h    ; DOS 4's BPB: its label too
-        jne     .ok
+        call    own                     ; (refused: the boot sector's label
+        adc     byte [nown], 0          ;  written all the same, the disk's
+        cmp     byte [boot+26h], 29h    ;  two labels one; same checked it
+        jne     .ok                     ;  is the disk read: DOS 4's BPB)
         mov     si, boot
         mov     di, [sec]
         mov     cx, 256
@@ -549,14 +550,15 @@ write:  cmp     byte [hadlab], 0        ; a new entry: room for it?
         xor     dx, dx
         call    wrsec
         jc      .werr
-        xor     ax, ax
+        cmp     byte [nown], 0          ; (the root's refused: the boot
+        jne     .ok                     ;  sector's not told either, the
+        xor     ax, ax                  ;  kernel's disk known as it was)
         mov     si, boot
         call    own
-        jc      .nown
-.ok:    clc
-        ret
-.nown:  mov     dx, s_nown
-        stc
+        adc     byte [nown], 0
+.ok:    mov     dx, s_nown              ; (the kernel's files on another disk:
+        cmp     byte [nown], 1          ;  said, after both: CF)
+        cmc
         ret
 .werr:  mov     dx, s_dchg
         cmp     byte [dchg], 0
@@ -958,6 +960,7 @@ xop     resb 1
 bstat   resb 1
 dchg    resb 1
 wrote   resb 1
+nown    resb 1                          ; (INT 21h F008h refused a sector)
 chkroot resb 1
         alignb 2
 sec     resw 1                          ; -> the sector buffer

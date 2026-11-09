@@ -287,10 +287,46 @@ def t_swapq():
               st['sw'] and im[512:19 * 512] == d[512:19 * 512] and im[33 * 512:] == d[33 * 512:] and not po
               and not [q for q in probs if 'cross' in q], (o[-600:], probs, po))
 
+def t_ownref():
+    # another disk put in just after LABEL looked at the drive (at its first INT 13h read), its output sent to a
+    # file on the first disk: LABEL labels the disk it read (the root and, a DOS 4 BPB, the boot sector: one
+    # label), INT 21h F008h refuses (what was read isn't the kernel's disk), LABEL says so (ERRORLEVEL 1); nothing
+    # of the kernel's written to that disk; with nothing open (no redirection) the kernel just takes the disk in
+    for redir in (True, False):
+        p = disk('or1.img', files=('K.TXT=' + os.path.join(SRC, 'LCMD.COM'),))
+        d1 = open(p, 'rb').read()
+        d2 = bytearray(open(disk('or2.img', files=('OTH.TXT=' + os.path.join(SRC, 'LCMD.COM'),)), 'rb').read())
+        d2[0x27:0x2B] = b'\x12\x34\x56\x78'; d2 = bytes(d2)
+        k = boot(p); pc = k.pc; first = pc.drives[1]; other = pcemu.Floppy(bytearray(d2))
+        st = {'go': 0, 'sw': 0, 'own': []}
+        o13 = pc.int13
+        def i13():
+            if st['go'] and not st['sw'] and pc.r('dl') == 1 and pc.r('ah') == 2 and pc.rd(0x60, k.Y['indos'], 1)[0] == 0:
+                st['sw'] = 1; other.changed = True; pc.drives[1] = other
+            return o13()
+        pc.int13 = i13
+        def hook(pc):
+            if k.addr == k.i21 and pc.r('ah') == 0x4B: st['go'] = 1
+            if k.addr == k.i21 and pc.r('ax') == 0xF008: st['own'].append(pc.r('cx'))
+        k.hooks.append(hook)
+        o = run(k, 'label b: newlab' + (' > b:out.txt' if redir else ''))
+        im = bytes(other.img); i1 = bytes(first.img)
+        check('%s: the disk read labelled (root and boot sector: NEWLAB), %s; that disk consistent, only its root\'s '
+              'and boot sector\'s label written; the first disk%s' % (
+                  'output to B:OUT.TXT (a file of the kernel\'s open on the first disk), another disk put in as '
+                  'LABEL reads' if redir else '... no redirection (nothing open)',
+                  'F008h refused (its root not told again), ERRORLEVEL 1' if redir else 'the disk in taken, '
+                  'ERRORLEVEL 0', ' consistent (OUT.TXT empty: the message lost, the other disk in the drive)' if redir
+                  else ' untouched'), st['sw'] and (root_label(im) or b'')[:11] == b'NEWLAB     '
+              and im[0x2B:0x36] == b'NEWLAB     ' and fatcheck.check(im)[0] == []
+              and im[512:19 * 512] == d2[512:19 * 512] and im[20 * 512:] == d2[20 * 512:]
+              and (said(o, 'E1') and st['own'] == [19] and fatcheck.check(i1)[0] == [] if redir
+                   else said(o, 'E0') and i1 == d1 and 'another disk' not in o), (o, st, fatcheck.check(im)[0]))
+
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_floppy, t_spaces, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review, t_redirect, t_swapq):
+    for t in (t_floppy, t_spaces, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review, t_redirect, t_swapq, t_ownref):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
