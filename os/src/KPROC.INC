@@ -192,10 +192,10 @@ f_4B:   cmp     byte [bp+F_AX], 0
         mov     cx, 7
         rep     movsw
         pop     ds
-        call    full_name
+        call    find_file               ; (first: an unknown current
+        jc      .nf                     ;  directory found again, its name
+        call    full_name               ;  right in the program's)
         jc      .e0
-        call    find_file
-        jc      .nf
         test    byte [de+11], A_DIR | A_VOL
         jnz     .acc
         call    sft_alloc

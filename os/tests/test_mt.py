@@ -8011,8 +8011,13 @@ def t_cwdmount():
             front(k, 0); k.run_for(0.5)
             sh.run('dir b:')
         front(k, 1); k.run_for(0.5)
+        line(k, 'cd'); first_cd = k.pc.text_screen()
         line(k, 'echo hello>new.txt'); line(k, 'cd')
         scr = k.pc.text_screen()
+        if back is False:
+            check('... task 1\'s first CD (47h, its B: directory unknown: another mount\'s) finds it again first, as '
+                  'MS-DOS\'s ValidateCDS: B:\\ (no SUB there), not the old B:\\SUB', 'B:\\SUB>cd\nB:\\\n' in first_cd,
+                  first_cd[-160:])
         if back is not True:
             f = fatcheck.read_files(bytes(other.img)); probs = fatcheck.check(bytes(other.img))[0]
             check('B:\\SUB current in task 1, another disk mounted in task 0%s: task 1\'s ECHO > NEW.TXT goes to that '
@@ -8024,6 +8029,42 @@ def t_cwdmount():
             check('... the first disk back (mounted again in task 0) before task 1 runs: task 1\'s B:\\SUB found '
                   'again by name, NEW.TXT there, the other disk untouched', f.get('A:\\SUB\\NEW.TXT') == b'hello\r\n'
                   and not probs and bytes(other.img) == d2 and 'B:\\SUB>cd\nB:\\SUB\n' in scr, (scr[-200:], probs))
+    # the same disk, changed elsewhere (SUB moved to another cluster, its old one NEW.TXT's, all past FAT sector 0
+    # and the root's first), seen by task 0's look: task 1's B:\A\SUB found again by name when it runs (each look
+    # that takes a disk for the same one moves the mount's high byte on: TX_MG not that anymore)
+    bm = mkimg.build(os.path.join(A.OUT, 'mcm.img'), [mkf('K.TXT', b'k' * 3000), mkf('PAD.BIN', b'p' * (400 * 512)),
+                                                      'A\\', 'A\\SUB\\', mkf('A\\SUB\\F.TXT', b'f' * 100)])
+    k = boot('mt_cwd.img', b'MULTITASK=1\r\n', 88, b=bm)
+    sh = Shell(k); sh.run('ver')
+    typ(k, 'start lcmd.com', 1.0)
+    line(k, 'b:'); line(k, 'cd a\\sub'); line(k, 'dir')
+    front(k, 0); k.run_for(0.5)
+    sh.run('dir b:\\')
+    d = k.pc.drives[1].img
+    def sec(c): return (33 + c - 2) * 512
+    def fset(c, v):
+        for base in (512, 512 + 9 * 512):
+            o_ = base + c * 3 // 2; w = d[o_] | d[o_ + 1] << 8
+            w = (w & 0x000F) | (v << 4) if c & 1 else (w & 0xF000) | v
+            d[o_] = w & 255; d[o_ + 1] = w >> 8
+    ia = bytes(d).find(b'A          ', 19 * 512); X0 = struct.unpack('<H', d[ia + 26:ia + 28])[0]
+    isub = bytes(d).find(b'SUB        ', sec(X0)); X = struct.unpack('<H', d[isub + 26:isub + 28])[0]; Y = 1000
+    d[sec(Y):sec(Y) + 512] = d[sec(X):sec(X) + 512]; d[sec(Y) + 26:sec(Y) + 28] = struct.pack('<H', Y)
+    d[isub + 26:isub + 28] = struct.pack('<H', Y)
+    j = sec(X0) + 32
+    while d[j] not in (0, 0xE5): j += 32
+    ent = bytearray(d[isub:isub + 32]); ent[0:11] = b'NEW     TXT'; ent[11] = 0x20
+    ent[26:28] = struct.pack('<H', X); ent[28:32] = struct.pack('<I', 512)
+    d[j:j + 32] = ent; d[sec(X):sec(X) + 512] = b'N' * 512; fset(Y, 0xFFF); fset(X, 0xFFF)
+    k.pc.drives[1].changed = True
+    sh.run('dir b:\\')
+    front(k, 1); k.run_for(0.5)
+    line(k, 'cls'); line(k, 'dir'); line(k, 'copy b:\\k.txt z.txt')
+    scr = k.pc.text_screen(); im = bytes(k.pc.drives[1].img); f = fatcheck.read_files(im)
+    check('B:\\A\\SUB current in task 1; in task 0 the disk, SUB moved on it elsewhere, taken for the same: task 1\'s '
+          'SUB found again by name (DIR lists F.TXT), COPY into it, NEW.TXT whole, the disk consistent',
+          'F        TXT' in scr and f.get('A:\\A\\SUB\\Z.TXT') == b'k' * 3000 and f.get('A:\\A\\NEW.TXT') == b'N' * 512
+          and not fatcheck.check(im)[0], (scr[-200:], fatcheck.check(im)[0][:3]))
 
 def asks(band):
     """The Executive's question about a floppy's changes that can't go out (UICORE.INC ui_int24) in its band"""
@@ -8038,7 +8079,7 @@ def t_dkeep():
     another disk in says "Invalid disk change writing drive B", as COMMAND does; its Fail, the user's, drops the
     changes (the write refused), the other disk untouched.  The Fails of Lodestone's other handlers that ask nobody
     keep them too: LCMD's while Tab looks (its own work, no prompt in the line being edited); and before the
-    Executive EXECs a program (Shift-CODE-P's prompt loaded from A:) it asks for that drive's free space with its
+    Executive EXECs a program (Shift-CODE-P's prompt loaded from A:) it asks for the program's attributes with its
     own INT 24h in, so the question comes then, not the load failed by the kernel's default for nobody."""
     import mkimg, fatcheck
     kp = os.path.join(A.OUT, 'dk_k.txt'); open(kp, 'wb').write(b'k' * 3000)
@@ -8098,7 +8139,7 @@ def t_dkeep():
               '(%s): B:\'s changes kept; the disk back, MTKEEP\'s writes and close go, K.TXT %s bytes, the disk '
               'consistent' % (('LCMD started first, Tab after "type a:\\lc" (its files looked for)', 'LCMD\'s, '
               'while Tab looks', '4,800') if lfirst else ('Shift-CODE-P (the prompt loaded from A:, the Executive '
-              'asking first: its drive\'s free space with its INT 24h in, not the load failed by the kernel\'s for '
+              'asking first: the program\'s attributes (43h) with its INT 24h in, not the load failed by the kernel\'s for '
               'nobody)', 'none: "Put the disk back in drive B:", RETURN', '4,200')), kept == (1, 1)
               and (lfirst or asks(q))
               and len(f.get('A:\\K.TXT', b'')) == (4800 if lfirst else 4200) and not fatcheck.check(bytes(d1.img))[0]
@@ -8119,7 +8160,7 @@ def t_dkeep():
     pc.keys.append(ord(' ')); k.run_for(4.0)
     f = fatcheck.read_files(bytes(d1.img))
     check('MTKEEP\'s B:K.TXT grown, B: emptied, MTADLY run with Shift-Return (exec_raw: the kernel\'s INT 24h for '
-          'it): the Executive asks first, for its drive\'s free space with its own handler in ("Put the disk back in '
+          'it): the Executive asks first, for the program\'s attributes with its own handler in ("Put the disk back in '
           'drive B:"), not the load failed for nobody; the disk back, RETURN: MTADLY runs (RES.TXT), MTKEEP\'s write '
           'and close go, K.TXT 4,200 bytes', asks(q) and A.disk_file(k, 'RES.TXT') == b'ok'
           and len(f.get('A:\\K.TXT', b'')) == 4200 and not fatcheck.check(bytes(d1.img))[0],

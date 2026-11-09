@@ -225,17 +225,16 @@ resolve_si:
         mov     [r_drv], al
         call    fat_load                ; (keeps BX: the drive's entry)
         jc      .dr                     ; (another floppy's FAT stuck: 3 too,
-.cw:    mov     ax, [bx+D_CWD]          ;  KDISK.INC rule 4)
-        cmp     byte [si], '\'
-        je      .abs
-        inc     ax                      ; (FFFFh: the current directory
-        jz      .find                   ;  unknown: found now, by its name,
-        dec     ax                      ;  a relative path wanting it;
-        jmp     short .c                ;  unreadable: 3, MS-DOS's.  Found
-.find:  call    cwd_find                ;  never FFFFh, so once)
-        mov     ax, [bx+D_CWD]
-        jnc     .c
-        jmp     .np
+.cw:    cmp     word [bx+D_CWD], -1     ;  KDISK.INC rule 4)
+        jne     .k                      ; (FFFFh: the current directory
+        call    cwd_find                ;  unknown: found now, by its name,
+        mov     byte [r_name], 0        ;  for any path, as MS-DOS's
+        jnc     .k                      ;  ValidateCDS (r_name none again:
+        cmp     byte [si], '\'          ;  nm11 cwd_find's); unreadable: a
+        jne     .np                     ;  relative path 3, an absolute one
+.k:     mov     ax, [bx+D_CWD]          ;  goes on, it unknown still.  Found
+        cmp     byte [si], '\'          ;  never FFFFh, so once)
+        jne     .c
 .abs:   xor     ax, ax
         inc     si
 .c:     mov     [r_dir], ax
@@ -368,8 +367,14 @@ dir_entry:
         mov     ax, [it_cl]
         mov     cx, [it_ci]
         jmp     .walk
-        times ($ + 5 - $$) & 1 db 90h   ; (hot: .walk and what follows even)
-.walk0: mov     [it_dir], ax
+.b3:    mov     ax, 3                   ; (.walk0's: 3)
+        jmp     near .bs
+        times ($ + 15 - $$) & 1 db 90h  ; (hot: .walk and what follows even)
+.walk0: cmp     ax, [di+D_NCL]          ; a first cluster the disk hasn't (a
+        jae     .b3                     ;  broken entry's: FFFFh, past the
+        cmp     ax, 1                   ;  end, 1): 3, nothing read or
+        je      .b3                     ;  written where it points
+        mov     [it_dir], ax
         xor     cx, cx
 .walk:  cmp     cx, dx
         je      .there
@@ -416,7 +421,7 @@ dir_entry:
         clc
         jmp     .x
 .brk:   mov     ax, 5
-        stc
+.bs:    stc
         jmp     short .x
 .end0:  mov     word [it_dir], 0
 .end:   mov     ax, 18
@@ -918,17 +923,9 @@ f_3A:   call    get_path                ; RMDIR
         jc      .nd
         mov     si, [actp]              ; the current directory (".", or the
         cmp     word [si+D_CWD], -1     ;  root from it): 16, as MS-DOS
-        jne     .kc                     ;  (unknown: found first, by its
-        push    ax                      ;  name; still unknown, 16 too)
-        push    word [d_lba]
-        push    word [d_off]
-        call    cwd_find
-        pop     word [d_off]
-        pop     word [d_lba]
-        pop     ax
-        jc      .cur
-.kc:    cmp     ax, [si+D_CWD]
-        je      .cur
+        je      .np3                    ;  (unknown: resolve found it first,
+        cmp     ax, [si+D_CWD]          ;  by its name; still unknown, it
+        je      .cur                    ;  couldn't be read: 3, ValidateCDS's)
         cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
         je      .acc                    ;  doesn't look the name up, so
         cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
@@ -981,6 +978,8 @@ f_3A:   call    get_path                ; RMDIR
         call    find_named              ; (nm11: the last name still)
         jnc     .acc
         call    dev_lookup
+        db      0B0h                    ; (MOV AL, imm8: skips the STC,
+.np3:   stc                             ;  flags dev_lookup's)
         mov     ax, 3                   ; (CF kept)
         jc      .e
 .acc:   mov     ax, 5
@@ -1098,7 +1097,14 @@ f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         call    drv_dflt
         call    drv_present
         jc      .bad
-        call    cwd_of
+        cmp     word [si+D_CWD], -1     ; unknown: found first, as MS-DOS's
+        jne     .k                      ;  ValidateCDS (unreadable: the name
+        push    ax                      ;  kept, as it was)
+        call    drv_ready
+        jc      .k0
+        call    cwd_find
+.k0:    pop     ax
+.k:     call    cwd_of
         lea     si, [di+1]              ; (without the leading '\')
         mov     es, [bp+F_DS]
         mov     di, [bp+F_SI]

@@ -3431,7 +3431,7 @@ def t_swaps():
     d6 = bytearray(d1); d6[0x2B:0x36] = b'ELSEWHERE  '; d6 = bytes(d6)        # disk 1 labelled on another machine
     last = {}
     aw = mkf('AW.TXT', b'a' * 3000)
-    def run(script, a24='', ce=False, nocl=False, cd=None, exe=False):
+    def run(script, a24='', ce=False, nocl=False, cd=None, exe=False, ta=None):
         com = c
         if exe:                                     # from the Executive, no handler of its own: the kernel's
             com = os.path.join(OUT, 'SWAPSX.COM')
@@ -3455,7 +3455,9 @@ def t_swaps():
             if ch == 'L': st['land'] = 1; return                         # the next root write lands, fails (20h)
             if ch == 'Z': pc.drives[1].changed = False; return          # the change line cleared
             if ch == 'E':
-                pc.drives[1].empty = True; pc.drives[1].changed = True; return
+                pc.drives[1].empty = True; pc.drives[1].changed = True
+                if ta: pc.keys.append(ta)                               # a key typed ahead meanwhile
+                return
             if ch in 'PU':                                              # the write-protect tab on, off
                 pc.drives[1].wp = ch == 'P'; return
             if ch == 'T':                                               # 3 s later (the BIOS's ticks)
@@ -3727,6 +3729,20 @@ def t_swaps():
                   'clusters, the entry the 3,000 bytes its failed close left: rule 2, CHKDSK /F\'s)',
                   'Put the disk back in drive B:' in q and dirty == 0
                   and [p for p in probs if 'chain has 8' in p], (q, dirty, probs))
+    # a key typed ahead while the program ran (ESC) never answers the question (ui_int24 lets keys typed before
+    # it go, as COMMAND's 0C01h): the changes kept, the question still up; and the Executive's look before a
+    # program's EXEC is the program's attributes (43h: its drive's FAT wanted), not 36h's whole-FAT count
+    o, im = run('oewE', exe=True, ta=0x011B); k = last['k']; pc = k.pc
+    q = k.band(); dirty = pc.rd(0x60, k.Y['fat_dirty'], 1)[0]
+    check('run from the Executive: B:K.TXT grown, B: emptied, an ESC typed ahead while it ran: the Executive asks '
+          '("Put the disk back in drive B:") and waits, the ESC not taken for the answer: B:\'s changes kept',
+          'Put the disk back in drive B:' in q and dirty == 1, (q, dirty))
+    k = ktest.KPC(image('sw_a.img', lcmd), b=b1); k.start(); pc = k.pc; ahs = []
+    k.hooks.append(lambda pc: ahs.append(pc.r('ah')) if k.addr == k.i21 and pc.r('ah') in (0x36, 0x43, 0x4B) else None)
+    k.code_p(); k.run_for(2)
+    check('Shift-CODE-P: the Executive asks for LCMD.COM\'s attributes (43h) before its EXEC, not the drive\'s free '
+          'space (36h: the whole FAT counted, ~90 ms on a 1.44 MB floppy)', ahs[:2] == [0x43, 0x4B]
+          and 0x36 not in ahs, ahs[:6])
     o, im = run('OSdoewEV1c/a')
     fa = fatcheck.read_files(last['a'])
     check('A:\\AW.TXT grown, 0Dh, B:K.TXT grown, B: emptied, AW.TXT closed (its drive\'s current directory to be '
@@ -3872,11 +3888,31 @@ def t_cwdfind():
           and not fatcheck.check(bytes(pc.drives[1].img))[0], (o[-120:], len(f.get('A:\\K.TXT', b''))))
     o1 = cmd('dir b:'); o2 = cmd('dir b:\\'); o3 = cmd('copy b:\\k.txt a:\\kc.txt'); o4 = cmd('cd b:\\')
     o5 = cmd('b:'); o6 = cmd('dir'); fa = fatcheck.read_files(bytes(pc.drives[0].img))
-    check('... B:\'s directory unknown, not the root: DIR B: (relative) asks and finds nothing; DIR B:\\ lists the '
-          'root, COPY B:\\K.TXT copies it off, CD B:\\ goes there: the drive usable, B:\\ its directory after',
-          'Data error' in o1 and 'K        TXT' not in o1 and 'K        TXT' in o2 and '1 File(s) copied' in o3
+    check('... B:\'s directory unknown, not the root: DIR B: (relative) asks and finds nothing; DIR B:\\ asks too '
+          '(any path call looks for it, MS-DOS\'s ValidateCDS) and lists the root, COPY B:\\K.TXT copies it off, '
+          'CD B:\\ goes there: the drive usable, B:\\ its directory after',
+          'Data error' in o1 and 'K        TXT' not in o1 and 'Data error' in o2 and 'K        TXT' in o2
+          and '1 File(s) copied' in o3
           and len(fa.get('A:\\KC.TXT', b'')) == 3600 and 'B:\\>' in o5 and 'K        TXT' in o6,
           [x[-90:] for x in (o1, o2, o3, o4, o5, o6)])
+    # ... RMDIR of another directory while it is so: 3, the current directory couldn't be found (ValidateCDS's)
+    rdx = os.path.join(OUT, 'RDX.COM')
+    open(os.path.join(OUT, 'RDX.ASM'), 'w').write(
+        'org 100h\n mov ah, 3Ah\n mov dx, p\n int 21h\n jc e\n xor ax, ax\ne: mov bx, ax\n mov cx, 4\n'
+        'h: rol bx, 4\n mov dl, bl\n and dl, 0Fh\n add dl, \'0\'\n cmp dl, \'9\'\n jbe o\n add dl, 7\n'
+        'o: mov ah, 2\n int 21h\n loop h\n mov ax, 4C00h\n int 21h\np db \'B:\\OTHER\', 0\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', rdx, os.path.join(OUT, 'RDX.ASM')], check=True)
+    b7 = image('cf_b7.img', mkf('K.TXT', b'k' * 3000), 'SUB\\', 'SUB\\DEEP\\', 'OTHER\\')
+    d7 = open(b7, 'rb').read(); i = d7.find(b'SUB        ', 19 * 512)
+    sub7 = 33 + struct.unpack('<H', d7[i + 26:i + 28])[0] - 2
+    k = ktest.KPC(image('cf_a.img', lcmd, 'Z0D.COM=' + z0d, 'RDX.COM=' + rdx), b=b7); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('b:'); sh.run('cd sub\\deep'); sh.run('a:'); sh.run('a:z0d')
+    pc.drives[1].bad = {sub7}
+    o = cmd('rdx')
+    check('B:\\SUB\\DEEP current, 0Dh, SUB\'s sector unreadable: RD B:\\OTHER asks ("Data error"), Fail: 3 (its '
+          'current directory couldn\'t be found, MS-DOS\'s ValidateCDS), OTHER still there',
+          'Data error' in o and '0003' in o and bytes(pc.drives[1].img).find(b'OTHER      ') >= 0, o[-120:])
     # RMDIR of the current directory while it is unknown (after 0Dh): found first by its name, refused (16)
     b4 = image('cf_b4.img', mkf('K.TXT', b'k' * 100), 'SUB\\', 'SUB\\DEEP\\')
     k = ktest.KPC(image('cf_a.img', lcmd, 'Z0D.COM=' + z0d), b=b4); k.start()
@@ -3898,6 +3934,83 @@ def t_cwdfind():
     check('B:\\BAD\'s entry cluster FFFFh: CD B:\\BAD refused ("Invalid directory"), B:\\ still current, DIR '
           'lists it (no hang)', 'Invalid directory' in o and 'K        TXT' in o and o.rstrip().endswith('B:\\>')
           and 'B:\\BAD' not in o.split('Invalid directory')[-1], o[-200:])
+    # a broken first cluster in the middle of a path (FFFFh, 1, past the disk's end): 3, nothing read or written
+    # where it points (33 + FFFDh wrapped into the root)
+    for cl in (0xFFFF, 1, 3000):
+        bf = bytearray(open(image('cf_bf.img', mkf('K.TXT', b'k' * 100), 'BAD\\'), 'rb').read())
+        i = bf.find(b'BAD        ', 19 * 512); bf[i + 26:i + 28] = struct.pack('<H', cl)
+        open(bfp, 'wb').write(bf)
+        k = ktest.KPC(image('cf_a.img', lcmd), b=bfp); k.start()
+        sh = Shell(k); pc = k.pc
+        o = sh.run('md b:\\bad\\new') + sh.run('dir b:\\bad')
+        im = bytes(pc.drives[1].img)
+        check('B:\\BAD\'s entry cluster %04Xh: MD B:\\BAD\\NEW refused, nothing written (no NEW entry anywhere, the '
+              'disk as it was)' % cl, 'Unable to create directory' in o and im.find(b'NEW        ') < 0
+              and im[512:] == bytes(bf[512:]), o[-160:])
+    # an unknown current directory is found again at any path call, absolute too (MS-DOS's ValidateCDS), and
+    # at 47h: another disk, no SUB on it, an absolute TYPE; then CD B:, the prompt, a program's name all B:\'s
+    pn = os.path.join(OUT, 'PNAME.COM')
+    open(os.path.join(OUT, 'PNAME.ASM'), 'w').write(
+        'org 100h\n mov es, [2Ch]\n xor di, di\n xor al, al\ns: cmp byte [es:di], 0\n je d\n mov cx, 0FFFFh\n'
+        ' repne scasb\n jmp s\nd: add di, 3\np: mov dl, [es:di]\n or dl, dl\n jz x\n mov ah, 2\n int 21h\n inc di\n'
+        ' jmp p\nx: mov ax, 4C00h\n int 21h\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', pn, os.path.join(OUT, 'PNAME.ASM')], check=True)
+    b8 = image('cf_b8.img', mkf('K.TXT', b'k' * 100), 'SUB\\')
+    d9 = bytearray(open(image('cf_b9.img', mkf('OTH.TXT', b'o' * 30), 'PNAME.COM=' + pn), 'rb').read())
+    d9[0x27:0x2B] = b'\x12\x34\x56\x78'
+    k = ktest.KPC(image('cf_a.img', lcmd), b=b8); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('cd b:\\sub')
+    other = pcemu.Floppy(d9); other.changed = True; pc.drives[1] = other
+    o = sh.run('type b:\\oth.txt') + sh.run('cd b:') + sh.run('b:pname') + sh.run('b:')
+    check('B:\\SUB current, another disk (no SUB) in, TYPE B:\\OTH.TXT (absolute): the directory found again then '
+          '(not there: the root), CD B: says B:\\, B:PNAME\'s name is B:\\PNAME.COM, the prompt B:\\>',
+          'B:\\SUB' not in o and 'B:\\PNAME.COM' in o and o.rstrip().endswith('B:\\>'), o[-200:])
+    # a disk taken for the same one may have changed elsewhere (its FAT's first sector and root's first as
+    # they were): its current directory found again by name (MS-DOS's "don't know": FATREAD_CDS's -1)
+    bm = image('cf_bm.img', mkf('K.TXT', b'k' * 3000), mkf('PAD.BIN', b'p' * (400 * 512)), 'A\\', 'A\\SUB\\',
+               mkf('A\\SUB\\F.TXT', b'f' * 100))
+    k = ktest.KPC(image('cf_a.img', lcmd), b=bm); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('b:'); sh.run('cd a\\sub'); sh.run('a:')
+    d = pc.drives[1].img
+    def sec(c): return (33 + c - 2) * 512
+    def fset(c, v):
+        for base in (512, 512 + 9 * 512):
+            o_ = base + c * 3 // 2; w = d[o_] | d[o_ + 1] << 8
+            w = (w & 0x000F) | (v << 4) if c & 1 else (w & 0xF000) | v
+            d[o_] = w & 255; d[o_ + 1] = w >> 8
+    ia = bytes(d).find(b'A          ', 19 * 512); A = struct.unpack('<H', d[ia + 26:ia + 28])[0]
+    isub = bytes(d).find(b'SUB        ', sec(A)); X = struct.unpack('<H', d[isub + 26:isub + 28])[0]; Y = 1000
+    d[sec(Y):sec(Y) + 512] = d[sec(X):sec(X) + 512]; d[sec(Y) + 26:sec(Y) + 28] = struct.pack('<H', Y)
+    d[isub + 26:isub + 28] = struct.pack('<H', Y)
+    j = sec(A) + 32
+    while d[j] not in (0, 0xE5): j += 32
+    ent = bytearray(d[isub:isub + 32]); ent[0:11] = b'NEW     TXT'; ent[11] = 0x20
+    ent[26:28] = struct.pack('<H', X); ent[28:32] = struct.pack('<I', 512)
+    d[j:j + 32] = ent; d[sec(X):sec(X) + 512] = b'N' * 512; fset(Y, 0xFFF); fset(X, 0xFFF)
+    pc.drives[1].changed = True
+    o = sh.run('dir b:\\') + sh.run('b:') + sh.run('dir') + sh.run('copy b:\\k.txt z.txt')
+    im = bytes(pc.drives[1].img); f = fatcheck.read_files(im)
+    check('B:\\A\\SUB current; the disk taken out, SUB moved elsewhere (another cluster, the old one NEW.TXT\'s, all '
+          'past FAT sector 0 and the root\'s first), put back: the same disk, SUB found again by name: DIR lists '
+          'F.TXT, COPY into it, NEW.TXT whole, the disk consistent', 'F        TXT' in o
+          and f.get('A:\\A\\SUB\\Z.TXT') == b'k' * 3000 and f.get('A:\\A\\NEW.TXT') == b'N' * 512
+          and not fatcheck.check(im)[0], (o[-200:], fatcheck.check(im)[0][:3]))
+    # after 0Dh, the next access looks at the disk once (one boot sector read, not two)
+    b0 = image('cf_b0.img', mkf('K.TXT', b'k' * 3000), 'SUB\\', 'SUB\\DEEP\\')
+    k = ktest.KPC(image('cf_a.img', lcmd, 'Z0D.COM=' + z0d), b=b0); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('b:'); sh.run('cd sub\\deep'); sh.run('a:'); sh.run('a:z0d')
+    rd = {'boot': 0}
+    o13 = pc.int13
+    def i13():
+        if pc.r('ah') == 2 and pc.r('dl') == 1 and pc.r('cx') == 1 and pc.r('dx') >> 8 == 0: rd['boot'] += 1
+        return o13()
+    pc.int13 = i13
+    sh.run('dir b:\\'); n1 = rd['boot']; sh.run('dir b:\\')
+    check('B:\\SUB\\DEEP current, 0Dh, DIR B:\\ twice: the disk looked at once (one boot sector read), the next '
+          'none', n1 == 1 and rd['boot'] == 1, (n1, rd['boot']))
 
 def t_batswap():
     """A batch file is opened for each line and closed again (as COMMAND's), at its whole name and place, so
