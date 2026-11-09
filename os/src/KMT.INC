@@ -1443,7 +1443,7 @@ mt_emsget:
 ; Each floppy's mount (mgen) goes with the task's current directories
 ; (TX_MG): not that mount's if a look is due that finds them again (D_CHK
 ; 2).  Back, another mount's are found again by name at the next access
-; (D_CHK 2: drv_ready's cwd_find), else the root
+; (D_CHK 2: unknown, resolve's cwd_find), else the root
 mt_vsave:
         mov     bx, 2 * (NFLOP - 1)
 .g:     mov     ax, [mgen+bx]

@@ -470,9 +470,11 @@ saver_set:
 
 ; INT 24h while the UI runs: fail the call, remember why (UI_CRITERR).
 ; But an invalid disk change (0Fh: the disk taken out with its files open
-; or changes to go) is asked about, as MS-DOS does, the UI's screen in
-; front: the disk put back, RETURN tries again (Retry); ESC fails.  Keys
-; only, through the BIOS (no INT 21h, saver or switch meanwhile)
+; or changes to go) and a FAT's write (AH: 1Bh, another floppy's changes
+; that can't go out: its look, KDISK.INC fat_out) are asked about, as
+; MS-DOS does, the UI's screen in front: the disk put back, RETURN tries
+; again (Retry); ESC fails, the user's (the changes given up, rule 4).
+; Keys only, through the BIOS (no INT 21h, saver or switch meanwhile)
 ui_int24:
         push    ax
         mov     ax, di
@@ -481,7 +483,13 @@ ui_int24:
         mov     [cs:crit_err], ax
         cmp     al, 0Fh + 1
         pop     ax
+        je      .q
+        push    ax
+        and     ah, 7
+        cmp     ah, 3                   ; (a write, the FAT's)
+        pop     ax
         jne     .f
+.q:
         pusha
         push    ds
         push    es
@@ -3937,7 +3945,14 @@ ui_run: push    es
         mov     ax, 11
         stc
         jmp     short .x
-.dos:   call    hide_cursor
+.dos:   mov     dl, 0                   ; its drive's free space first, our
+        cmp     byte [si+1], ':'        ;  INT 24h in and our screen in
+        jne     .d                      ;  front: another floppy's changes
+        mov     dl, [si]                ;  that can't go out asked about
+        and     dl, 1Fh                 ;  here, not its load failed by the
+.d:     mov     ax, 3600h               ;  kernel's for nobody (KDISK.INC
+        int     21h                     ;  rule 4)
+        call    hide_cursor
         call    mouse_off
         mov     ax, 0003h
         int     10h

@@ -54,9 +54,10 @@ fat_drv     resb 1              ; whose FAT is in fatbuf (FFh: none)
 fat_dirty   resb 1
 fk_dirty    resb 1              ; fat_keep: the two as they were
 fat_sv      resb 1              ; bit n: fat_sum's for floppy n is known
-cwd_redo    resb 1              ; 1: this drv_ready calls cwd_find (2: and its
-                                ;  mount may keep unmount's number, rule 9; the name
-cwd_nmk     resb 11             ;  kept), and cwd_find's nm11
+cwd_redo    resb 1              ; 1: this drv_ready leaves the current directory
+                                ;  unknown (2: and its mount may keep unmount's
+                                ;  number, rule 9)
+            resb 1              ; (sd_lba even)
 sd_err      resb 1              ; same_disk: 1 if a read failed (not another
                                 ;  disk: its sector at sd_lba); 2 while it runs
 c24_ans     resb 1              ; crit_disk: the handler's answer as it gave it
@@ -370,11 +371,12 @@ raw_bounce:
 ;     vouches for a disk.  A read that fails there is INT 24h's for that
 ;     read, not another disk.  INT 21h 0Dh forgets a floppy's sum when it
 ;     has nothing to go and no file open (a program may rewrite the disk
-;     then: CHKDSK /F, DEFRAG), and its current directory is found again
-;     by name at the next access, as after any mount of another disk
-;     (cwd_find; the disk unreadable then, or another floppy's changed FAT
-;     that can't go out first: that call fails, the name kept, never the
-;     root for it).  (Kept, a rewrite would be another disk: 0Dh is all a
+;     then: CHKDSK /F, DEFRAG), and its current directory is unknown at the
+;     next access, as after any mount of another disk, found again by name
+;     when a relative path wants it (MS-DOS's -1: resolve's cwd_find; the
+;     disk unreadable then, or another floppy's changed FAT that can't go
+;     out first: that path's 3, the name kept, never the root for it; a
+;     handle call, an absolute path, CD to one, never read it).  (Kept, a rewrite would be another disk: 0Dh is all a
 ;     DOS program tells of one.  A copy of the disk put in then is taken
 ;     for it.)  With a file open it is kept: another disk with the same
 ;     BPB put in is "Invalid disk change", not the same disk; a rewrite
@@ -415,7 +417,11 @@ raw_bounce:
 ;     a text task in front; a task's behind a graphics screen, mt_c24; a
 ;     screen capture's; LCMD's in its own work, the utilities', CLAUDE's;
 ;     the kernel's own int24, which answers 3 and sets the bit itself, so
-;     a handler that chains to it sees 3) drops nothing: "Invalid disk
+;     a handler that chains to it sees 3.  One that calls it and then
+;     asks its user has that user's Fail taken for nobody's: Retry with
+;     the disk back, or Abort at "Invalid disk change", still gives the
+;     changes their way; a handler whose own INT 21h meets a second INT
+;     24h leaves that one's answer in the byte) drops nothing: "Invalid disk
 ;     change" leaves the old disk mounted, its changes kept, and the call
 ;     fails (34), as fat_out's look does (its changes kept, the call
 ;     failing; INT 21h 0Dh keeps them too), the drive looked at again at
@@ -613,7 +619,7 @@ drv_ready:
 .um:    mov     byte [cwd_redo], 1      ; nothing to go: the disk in is
         mov     al, [act]               ;  mounted, the current directory
         call    unmount                 ;  found again by its name (as
-                                        ;  MS-DOS's FATREAD_CDS: cwd_find)
+                                        ;  MS-DOS's FATREAD_CDS: unknown)
         jmp     short .same
 .nc:    mov     byte [si+D_PRES], 1     ; "not changed": a change line, what-
                                         ;  ever AH=15h said (D_PRES 3 only
@@ -656,10 +662,10 @@ drv_ready:
         call    raw_bounce              ;  disk has it (rule 1; none known
         mov     al, [act]               ;  if it can't be read now: CF)
         call    rt_put
-.rd:    cmp     byte [cwd_redo], 0
-        je      .ok
-        call    cwd_find                ; (unreadable: D_CWD unknown, the
-.ok:    clc                             ;  call goes on, rule 1)
+.rd:    cmp     byte [cwd_redo], 0      ; (the current directory to be
+        je      .ok                     ;  found again by its name: unknown,
+        or      word [si+D_CWD], -1     ;  resolve's when a relative path
+.ok:    clc                             ;  wants it, MS-DOS's -1, rule 1)
 .x:     ret
 .mf:    push    ax                      ; not mounted: what this look had to
         mov     al, [cwd_redo]          ;  settle is the next one's (the
@@ -688,7 +694,7 @@ unmount:
         call    use_drive
         mov     byte [si+D_MNT], 0
         mov     word [si+D_CWD], 0      ; (its current directory's name kept,
-        mov     byte [si+D_CHK], 3      ;  found at the next mount: cwd_find)
+        mov     byte [si+D_CHK], 3      ;  unknown after the next mount)
         cmp     al, NFLOP
         jb      .g
         call    sft_lose
@@ -726,7 +732,7 @@ dsk_own:
         or      byte [si+D_CHK], 1      ; the drive looked at at its next
         call    buf_inval               ;  access, taken or not (the caller's
         xor     bx, bx                  ;  own INT 13h read may have cleared
-                                        ;  the line; 2's cwd_find kept: 3)
+                                        ;  the line; 2 kept: 3)
         mov     cx, [bp+F_CX]
         jcxz    .boot
         cmp     cx, [si+D_ROOT]
@@ -890,25 +896,21 @@ gen_of: mov     ah, 0
         pop     bx
 .x:     ret
 
-; drive [act], mounted afresh (another disk, nothing of the old one's to
-; go): its current directory as its name says, if this disk has it, else
-; the root (MS-DOS's FATREAD_CDS).  The disk unreadable (its FAT or a
-; directory: another floppy's FAT that can't go out first, fat_out, too):
-; CF, AX = the error, the name kept, never the root for it, and D_CWD
-; FFFFh, unknown: found when a relative path wants it (resolve), the
-; drive's other calls going on (a handle call, an absolute path, CD to
-; one; MS-DOS's CDS kept unknown, -1, till it's used).  nm11 kept (a
-; resolve's r_name, maybe).  All else kept
+; drive [act], its current directory unknown (D_CWD FFFFh: another
+; disk mounted, a look after INT 21h 0Dh or another mount's task, drv_ready;
+; MS-DOS's CDS's -1): found as its name says, if this disk has it, else
+; the root (MS-DOS's FATREAD_CDS).  Only when a relative path wants it
+; (resolve, RMDIR's check): a handle call, an absolute path, CD to one
+; never read it.  The disk unreadable (its FAT or a directory, another
+; floppy's FAT that can't go out first too): CF, AX = the error, the name
+; kept, never the root for it, D_CWD still unknown.  Never FFFFh found
+; (a directory entry's cluster that: the root).  nm11, de, d_lba and
+; d_off are its own after.  All else kept
 cwd_find:
         pusha
         push    es
         push    cs
         pop     es
-        mov     byte [cwd_redo], 0
-        mov     si, nm11
-        mov     di, cwd_nmk
-        mov     cx, 11
-        rep     movsb
         call    fat_load
         jc      .err
         mov     al, [act]
@@ -929,13 +931,13 @@ cwd_find:
         jbe     .root                   ;  read that failed: .err)
 .err:   mov     bp, sp
         mov     [bp+2+14], ax           ; (AX: pusha's, past ES)
-        mov     si, [actp]
-        or      word [si+D_CWD], -1     ; (unknown: resolve's to find)
-        stc
+        stc                             ; (D_CWD unknown still)
         jmp     short .nm
 .d:     test    byte [de+11], A_DIR
         jz      .root
         mov     ax, [de+26]
+        cmp     ax, -1                  ; (FFFFh: unknown's, never found)
+        je      .root
         cmp     byte [si], '\'
         jne     .c
         inc     si
@@ -945,13 +947,8 @@ cwd_find:
         mov     word [di], '\'
         xor     ax, ax                  ; (the root: D_CWD 0 too, whatever
 .end:   mov     si, [actp]              ;  it held, the same disk's or not)
-        mov     [si+D_CWD], ax
-        mov     byte [si+D_CHK], 0      ; (found: no more to do; NC)
-.nm:    mov     si, cwd_nmk
-        mov     di, nm11
-        mov     cx, 11
-        rep     movsb
-        pop     es
+        mov     [si+D_CWD], ax          ; (NC)
+.nm:    pop     es
         popa
         ret
 
@@ -1137,9 +1134,8 @@ fat_sum0:
 ; files with changes pending SF_LOST), and this call goes on; a look that
 ; fails (a read: "Not ready", INT 24h's Fail) keeps them (rule 3) and
 ; fails this call (the cache can't be given up: CF, AX), the drive looked
-; at again before they go.  Its current
-; directory, if that look wants it found again, is the next access's (a
-; caller's directory search mustn't meet cwd_find).  [act] and [actp]
+; at again before they go (its current directory, if that look
+; wants it found again, unknown: resolve's).  [act] and [actp]
 ; kept.  CF: AX = fat_flush's error (C:'s with KHD.INC)
 fat_out:
         mov     al, [fat_drv]
@@ -1156,21 +1152,10 @@ fat_outt:
         push    ax
         call    cl_fresh                ; (no change line, used < 2 s ago: not
         jnc     .y                      ;  looked at, as a handle call: rule 9)
-        call    use_drive
-        mov     cl, [si+D_CHK]          ; (2: 1, a look without cwd_find, its
-        and     cl, 2                   ;  2 put back after: the next
-        jz      .l                      ;  access's)
-        mov     byte [si+D_CHK], 1
-.l:     push    cx
         mov     byte [wlook], 1         ; (its INT 24h a write's: drv_ready;
         call    drv_ready               ;  an Abort there that ends the
         dec     byte [wlook]            ;  program leaves it 1 till the next)
-        pop     cx
-        pushf
-        mov     si, [actp]
-        or      [si+D_CHK], cl
-        popf
-        jnc     .y
+        jnc     .y                      ; (DEC: CF kept)
         cmp     byte [fat_drv], 0FFh    ; (another disk, Fail: its changes
         je      .y                      ;  dropped with its mount, rule 4)
         test    byte [c24_ans], 80h     ; unreadable, the user's Fail: given
@@ -1179,9 +1164,10 @@ fat_outt:
         call    fat_drop                ;  goes on
         jmp     short .y
 .kf:    mov     bp, sp                  ; a Fail nobody was asked for: kept
-        mov     [bp+16], ax             ;  changed, rule 3, looked at again
+        mov     word [bp+16], 5         ;  changed, rule 3, looked at again
         pop     ax                      ;  next time (.mf), and this call
-        mov     al, ah                  ;  fails with that look's error (AX)
+        mov     al, ah                  ;  fails: 5, a handle call's (rule
+                                        ;  4; resolve's 3 for a path call)
         call    use_drive
         popa
         stc
