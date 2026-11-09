@@ -1440,10 +1440,13 @@ mt_emsget:
 ; changed).  .r: the
 ; ranges at CS:BX, DS:x to ES:DI (mw_save's too), or ES:x from DS:SI with
 ; DS and ES swapped back after (mw_load_ctx's)
-; Each floppy's mount (mgen) goes with the task's current directories
-; (TX_MG): not that mount's if a look is due that finds them again (D_CHK
-; 2).  Back, another mount's are found again by name at the next access
-; (D_CHK 2: unknown, resolve's cwd_find), else the root
+; Each floppy's mount (mgen; its high byte moved on at each look that
+; takes the disk for the same one, which may have changed elsewhere) goes
+; with the task's current directories (TX_MG): not that mount's if a look
+; is due that finds them again (D_CHK 2).  Back, another's are unknown,
+; found again by name at the next path call (resolve's cwd_find, KDISK.INC
+; rule 1), else the root: no look forced (which would move the byte on
+; for the others)
 mt_vsave:
         mov     bx, 2 * (NFLOP - 1)
 .g:     mov     ax, [mgen+bx]
@@ -1467,23 +1470,25 @@ mt_vsave:
         jmp     .r
 .x:     ret
 mt_vload:
-        mov     bx, 2 * (NFLOP - 1)
-.g:     mov     ax, [es:TX_MG+bx]
-        cmp     ax, [mgen+bx]
-        je      .g1
-        mov     si, bx
-        shl     si, 4
-        or      byte [drvtab+si+D_CHK], 2   ; (3 kept: rule 9)
-.g1:    dec     bx
-        dec     bx
-        jns     .g
         push    ds
         push    es
         pop     ds                      ; (from the TX: DS)
         pop     es                      ; (to KSEG: ES)
         mov     bx, mt_ranges
         mov     si, V_INDOS
-.r:     mov     di, [cs:bx]
+        call    .r
+        mov     bx, 2 * (NFLOP - 1)     ; (after: D_CWD is the task's now)
+.g:     mov     ax, [es:TX_MG+bx]
+        cmp     ax, [mgen+bx]
+        je      .g1
+        mov     si, bx
+        shl     si, 4
+        or      word [drvtab+si+D_CWD], -1
+.g1:    dec     bx
+        dec     bx
+        jns     .g
+        ret
+.r:     mov     di, [cs:bx]             ; (KMW.INC's mw_load_ctx's too)
         or      di, di
         jz      .x
         mov     cx, [cs:bx+2]

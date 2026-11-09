@@ -511,13 +511,18 @@ ui_int24:
         mov     di, s_confirm
         call    band_up
         mov     bl, 3                   ; (ESC: Fail, the user's)
+.dr:    mov     ah, 11h                 ; keys typed before it asked, and
+        int     16h                     ;  with another one, go (as
+        jz      .k                      ;  COMMAND's INT 21h 0C01h): an ESC
+        call    read_key                ;  typed for something else must not
+        jmp     .dr                     ;  give a disk's changes up unseen
 .k:     call    read_key
         cmp     ax, K_ESC
         je      .n
         cmp     ax, K_ENTER
         je      .y
         cmp     ax, K_CODE_ENTER
-        jne     .k
+        jne     .dr
 .y:     mov     bl, 1                   ; Retry (asked again if it isn't
         mov     [crit_err], bh          ;  back; BH 0)
 .n:     call    band_down
@@ -3945,13 +3950,15 @@ ui_run: push    es
         mov     ax, 11
         stc
         jmp     short .x
-.dos:   mov     dl, 0                   ; its drive's free space first, our
-        cmp     byte [si+1], ':'        ;  INT 24h in and our screen in
-        jne     .d                      ;  front: another floppy's changes
-        mov     dl, [si]                ;  that can't go out asked about
-        and     dl, 1Fh                 ;  here, not its load failed by the
-.d:     mov     ax, 3600h               ;  kernel's for nobody (KDISK.INC
-        int     21h                     ;  rule 4)
+.dos:   mov     dx, si                  ; the program's attributes first,
+        mov     ah, 43h                 ;  our INT 24h in and our screen in
+        mov     al, 0                   ;  (AH, AL: what follows even)
+        int     21h                     ;  front: another floppy's changes
+                                        ;  that can't go out asked about
+                                        ;  here (its drive's FAT wanted,
+                                        ;  whichever: A:, B:, M:, R:), not
+                                        ;  its load failed by the kernel's
+                                        ;  for nobody (KDISK.INC rule 4)
         call    hide_cursor
         call    mouse_off
         mov     ax, 0003h

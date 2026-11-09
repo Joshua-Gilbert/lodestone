@@ -1138,8 +1138,9 @@ f_F0:   mov     al, [bp+F_AX]
         cmp     al, 8
         je      .own
         cmp     al, 1
-        jne     f_bad
-        jmp     .open
+        je      .op
+.bad:   jmp     f_bad                   ; (.hdn's too)
+.op:    jmp     .open
 ; AL=8: floppy DL's sector CX (0: the boot sector; the root's first)
 ; written by the caller through INT 13h (LABEL), ES:BX: the sector as it
 ; read it, then as it wrote it; the disk taken as written, so the next look
@@ -1147,6 +1148,10 @@ f_F0:   mov     al, [bp+F_AX]
 .own:   mov     al, [bp+F_DX]
         call    dsk_own
         jmp     ret_cf
+; AL=4: the UI segment has moved to BX (where the root process restarts)
+.useg:  mov     ax, [bp+F_BX]
+        mov     [ui_seg], ax
+        jmp     ok
 ; AL=2: lend the disk cache's memory to the caller (windows' save-under):
 ; ES = its segment, CX = bytes.  CF if there is no cache or it is lent.
 ; (KEMS.INC: with the cache in EMS, ems_lend and ems_back instead)
@@ -1181,13 +1186,9 @@ f_F0:   mov     al, [bp+F_AX]
 ; AL=7: the internal hard disk's own name (IDENTIFY's words 27-46: 40
 ; characters, blanks after it) -> ES:BX.  CF: AX = 1 (no C:, KHD.INC)
 .hdn:   cmp     byte [C_DT + D_PRES], 0
-        je      f_bad
+        je      .bad
         mov     [bp+F_ES], cs
         mov     word [bp+F_BX], hd_idn
-        jmp     ok
-; AL=4: the UI segment has moved to BX (where the root process restarts)
-.useg:  mov     ax, [bp+F_BX]
-        mov     [ui_seg], ax
         jmp     ok
 .open:  mov     dl, [bp+F_DX]
         xor     cx, cx
