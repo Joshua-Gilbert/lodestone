@@ -88,7 +88,12 @@ start:  mov     sp, stack_top
         mov     dx, crit
         mov     ax, 2524h
         int     21h
-        mov     word [ohandle], 0FFFFh
+        mov     ax, 0F000h              ; Lodestone?  (its kernel takes 83h,
+        int     21h                     ;  a Fail nobody was asked for;
+        cmp     ax, 4F47h               ;  another DOS's answers are 0-3)
+        jne     .nl
+        mov     byte [crit_a], 83h
+.nl:    mov     word [ohandle], 0FFFFh
         call    args
         jc      fail
         call    source
@@ -156,9 +161,10 @@ ctrlc:  push    cs
         call    print
         mov     ax, 4C02h
         int     21h
-crit:   mov     al, 83h                 ; (a critical error: Fail, said as
-        iret                            ;  the call's own; 83h, nobody asked:
-                                        ;  the kernel drops nothing)
+crit:   mov     al, [cs:crit_a]         ; (a critical error: Fail, said as
+        iret                            ;  the call's own; on Lodestone 83h,
+crit_a  db      3                       ;  nobody asked: its kernel drops
+                                        ;  nothing)
 
 ; ---------------------------------------------------------------------
 ; command tail: source, destination, switches.  CF: DX
