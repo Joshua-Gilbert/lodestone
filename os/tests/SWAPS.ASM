@@ -12,8 +12,9 @@
 ; of those (the sector as read, then as written; none: the boot sector,
 ; zeros); q open B:\K.TXT (absolute); F find next; N create A:\NEW.TXT,
 ; write 600, close; O open A:\AW.TXT, S to its end and write 600, V close
-; it.  Anything else is a sync: INT 21h AH=30h with BX=5A5Ah, CL the
-; character (the test swaps disks there).  -DSCR="...": that script when
+; it; u 47h for B: (its current directory).  Anything else is a sync:
+; INT 21h AH=30h with BX=5A5Ah, CL the character (the test swaps disks
+; there).  -DSCR="...": that script when
 ; the tail is empty (run from the Executive); -DNOH24: no INT 24h handler
 ; of its own (the one it was started with answers)
 org 100h
@@ -172,6 +173,8 @@ ops:    db 'o'
         dw op_S
         db 'V'
         dw op_V
+        db 'u'
+        dw op_u
         db 0
 op_q:   mov     dx, kabs
         mov     ax, 3D02h
@@ -363,6 +366,11 @@ op_f:   mov     dx, fdta                ; (its own DTA: PSP:80h holds the
         mov     dx, wild
         mov     cx, 0
         mov     ah, 4Eh
+        int     21h
+        ret
+op_u:   mov     si, fdta                ; (47h: B:'s current directory)
+        mov     dl, 2
+        mov     ah, 47h
         int     21h
         ret
 op_g:   mov     ah, 36h

@@ -65,6 +65,9 @@ c24_ans     resb 1              ; crit_disk: the handler's answer as it gave it
 sd_lba      resw 1
 mgen        resw NFLOP          ; each floppy's mount (an SFT's S_GEN: its low
                                 ;  byte, rule 9; all of a task's, KMT.INC)
+mlook       resw 1              ; looks that took a disk for the same one
+                                ;  (same_disk: a task's floppy directories
+                                ;  found again by name, KMT.INC's TX_ML)
 cl_tick     resd NFLOP          ; the BIOS tick of each floppy's last use by
                                 ;  a handle call (sft_chk: no change line)
 fat_ncl     resw 1              ; the cached FAT's D_NCL (fat_get, fat_set)
@@ -380,7 +383,14 @@ raw_bounce:
 ;     ValidateCDS: resolve's cwd_find, f_47's; the disk unreadable then,
 ;     or another floppy's changed FAT that can't go out first: a relative
 ;     path's 3, an absolute one goes on, the name kept, never the root
-;     for it; a handle call never reads it).  (Kept, a rewrite would be another disk: 0Dh is all a
+;     for it; 47h's look failing, 15 as MS-DOS's; RMDIR meanwhile 3, a
+;     deliberate difference: ValidateCDS would take the root and remove;
+;     a handle call never reads it).  Each task's are its own (KMT.INC:
+;     TX_MG, and mlook, a 16-bit count of looks that took a disk for the
+;     same one: 65536 of them while a task waits would be taken for none);
+;     RMDIR refuses any task's current directory (16, as MS-DOS's check of
+;     every CDS: mt_rd; another mount's or an unknown one is no cluster:
+;     found again by name, a directory gone is the root).  (Kept, a rewrite would be another disk: 0Dh is all a
 ;     DOS program tells of one.  A copy of the disk put in then is taken
 ;     for it.)  With a file open it is kept: another disk with the same
 ;     BPB put in is "Invalid disk change", not the same disk; a rewrite
@@ -458,7 +468,10 @@ raw_bounce:
 ;  7. Chain walks stop on an entry below 2 (free, reserved) as a broken
 ;     chain, never as its end: fat_get gives 1 for reserved and bad ones
 ;     (FF0h-FF7h), a link past the disk's end and a cluster past it; a
-;     directory longer than the disk (a loop) is 5 (dir_entry).
+;     directory longer than the disk (a loop) is 5 (dir_entry).  A
+;     directory whose first cluster is 1, FFFFh or past the disk's end
+;     is 3, asked about nowhere (MS-DOS's UNPACK asks, HURTFAT's INT 24h;
+;     reading the sector it names would wrap or run past the disk).
 ;  8. A path call flushes its own drive's FAT only (fat_flush_act).
 ;  9. Each floppy mount has a number (mgen: 16 bits), its low byte kept
 ;     in the SFT of a file opened on it (S_GEN).  A mount after unmount
@@ -473,14 +486,17 @@ raw_bounce:
 ;     leaves that to the next look, as does a read that fails as it looks,
 ;     INT 24h's first.)  Read, write, commit and close with
 ;     changes of a file another mount's, or SF_LOST, are refused (5,
-;     sft_chk); each first looks at the drive (drv_ready; without a change
-;     line, only if unused for ~2 s: D_PRES 3 from AH=15h's answer, taken
-;     back at the first "not changed" from AH=16h, which such a drive
-;     never gives).  A close without changes just lets the file go; the
+;     sft_chk); each first looks at the drive, as a path call does
+;     (drv_look; without a change line, only if unused for ~2 s, as
+;     MS-DOS's: D_PRES 3 from AH=15h's answer, taken back at the first
+;     "not changed" from AH=16h, which such a drive never gives; a BIOS
+;     whose line says "changed" every time has every call look, the
+;     current directory found again each time, as MS-DOS rebuilds).  A close without changes just lets the file go; the
 ;     last close of a changed one writes it while it is still open (so
 ;     another disk in by then is "Invalid disk change", Retry writes it).
 ;     Each task's current directories are its own, of the mount they were
-;     found on (KMT.INC: TX_MG): another mount's, found again by name.
+;     found on and the looks since (KMT.INC: TX_MG, TX_ML; rule 1):
+;     another mount's, or a look since, found again by name.
 ; ---------------------------------------------------------------------
 ; The change line says the disk may have changed: is it the same one?
 ; Same boot sector BPB and, if our FAT cache is this drive's, a first FAT
@@ -488,7 +504,7 @@ raw_bounce:
 ; unreadable).  With no sum to compare, cwd_redo 1 (a mount after unmount
 ; takes it for another disk).  The same: its current directory unknown,
 ; found again by name (rule 4: it may have changed elsewhere), and each
-; task's (mgen's high bytes).  Nothing cached is dropped (the caller's:
+; task's (mlook).  Nothing cached is dropped (the caller's:
 ; drv_ready, chg_ask)
 same_disk:
         pusha
@@ -545,12 +561,11 @@ same_disk:
         call    rt_chk
         jc      .diff
         or      word [si+D_CWD], -1     ; the same (SI: [actp]), changed
-        inc     byte [mgen+1]           ;  maybe: its current directory
-        inc     byte [mgen+3]           ;  found again by name, as MS-DOS's
+        inc     word [mlook]            ;  maybe: its current directory
+                                        ;  found again by name, as MS-DOS's
                                         ;  "don't know" (FAT_GOT_DPB:
                                         ;  FATREAD_CDS's -1), each task's
-                                        ;  too (TX_MG's high byte, never an
-.same:  xor     al, al                  ;  SFT's, rule 9: both floppies').
+.same:  xor     al, al                  ;  too (mlook: the floppies' all).
                                         ;  (CF clear)
         jmp     short .x
 .rerr:  mov     [sd_lba], dx            ; a read error, not another disk:
@@ -563,6 +578,16 @@ same_disk:
         popa
         ret
 
+; drv_ready, but a floppy without a change line used less than 2 s ago
+; (cl_fresh) not looked at, as MS-DOS's 2 s (rule 9): path and handle
+; calls.  Its last use: now
+drv_look:
+        cmp     al, NFLOP
+        jae     drv_ready
+        call    cl_fresh
+        jc      drv_ready
+        jmp     use_drive               ; (CF clear)
+        times ($ - $$) & 1 db 90h
 ; get drive AL ready: present, media change noticed, mounted.  Sets
 ; [act]/[actp], SI = entry.  CF: AX = error.
 drv_ready:
