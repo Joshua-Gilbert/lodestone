@@ -1098,16 +1098,17 @@ f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         call    drv_dflt
         call    drv_present
         jc      .bad
-        cmp     word [si+D_CWD], -1     ; unknown: found first, as MS-DOS's
-        jne     .k                      ;  ValidateCDS (unreadable: the name
-        push    ax                      ;  kept, as it was; its look failed,
-        call    drv_ready               ;  INT 24h's Fail: 15, as MS-DOS's
-        jc      .k0                     ;  $CURRENT_DIR)
-        call    cwd_find
-        clc
+        mov     cx, [si+D_CWD]          ; unknown: found first, as MS-DOS's
+        inc     cx                      ;  ValidateCDS (unreadable: the name
+        jnz     .k                      ;  kept, as it was; its look failed,
+        push    ax                      ;  INT 24h's Fail: 15, as MS-DOS's
+        call    drv_ready               ;  $CURRENT_DIR, the name kept given
+        jc      .k0                     ;  all the same: LCMD's prompt, CD
+        call    cwd_find                ;  and COPY's relative names go on
+        clc                             ;  with it, not the root)
 .k0:    pop     ax
-        jc      .bad
-.k:     call    cwd_of
+.k:     pushf
+        call    cwd_of
         lea     si, [di+1]              ; (without the leading '\')
         mov     es, [bp+F_DS]
         mov     di, [bp+F_SI]
@@ -1115,6 +1116,8 @@ f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         stosb
         or      al, al
         jnz     .c
+        popf
+        jc      .bad
         mov     ax, 0100h               ; (DOS returns this)
         jmp     ok_ax
 .bad:   mov     ax, 15

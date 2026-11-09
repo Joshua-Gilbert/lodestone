@@ -4589,11 +4589,12 @@ do_cd:  call    getarg1
         jne     .set
         mov     al, [path1]
         call    upcase
-        sub     al, 'A' - 1             ; (A = 1; "@:" and past Z: none)
-        jz      .bd
-        cmp     al, 26
-        ja      .bd
-        jmp     .sh
+        sub     al, 'A'                 ; (A = 0; "@:" and past Z: none,
+        mov     dl, al                  ;  drv_chk's)
+        call    drv_chk
+        jc      .bd
+        inc     dx
+        jmp     .sh1
 .set:   mov     si, path1               ; a \ last (Tab puts one after a
         call    strend                  ;  directory's name) cut, not the
         dec     di                      ;  root's (\, X:\): DOS says 3 for
@@ -4614,14 +4615,15 @@ do_cd:  call    getarg1
         int     21h
         inc     al
 .sh:    mov     dl, al
-        call    cwd_puts
-        jc      .bd
+.sh1:   call    cwd_puts
         jmp     crlf
 .bd:    jmp     vol_bad
 .x:     ret
 
-; "X:\DIR", the current directory of drive DL (1 = A), printed.  CF (and
-; nothing printed) if DOS says no
+; "X:\DIR", the current directory of drive DL (1 = A, there: drv_chk),
+; printed.  The disk unreadable (47h's look failed): the name the kernel
+; kept, as it gives it, as MS-DOS's "no longer valid" would cost ROM 1
+; room
 cwd_puts:
         mov     al, dl
         add     al, 'A' - 1
@@ -4629,13 +4631,11 @@ cwd_puts:
         mov     [si], al
         mov     word [si+1], ':\'
         add     si, 3
+        mov     byte [si], 0
         mov     ah, 47h
         int     21h
-        jc      .x
         mov     si, cdbuf
-        call    puts
-        clc
-.x:     ret
+        jmp     puts
 
 do_cls: mov     ah, 0Fh
         int     10h
@@ -5050,22 +5050,19 @@ vol_bad:
         mov     si, e_drive
         jmp     err
 
-; drive DL (0 = A) there?  CF if not (INT 21h 47h: 15, no disk read;
-; past Z:, or "@:" (FFh), without asking).  DL kept
+; drive DL (0 = A) there?  CF if not (INT 21h 4408h: 15; it reads no
+; disk, so a drive whose disk can't be read is there; past Z:, or "@:"
+; (FFh), without asking).  DL kept
 drv_chk:
         cmp     dl, 26
         cmc
         jc      .x
-        push    dx
-        push    si
-        sub     sp, 68
-        mov     si, sp
-        inc     dl
-        mov     ah, 47h
+        push    bx
+        mov     bl, dl
+        inc     bx
+        mov     ax, 4408h
         int     21h
-        lea     sp, [si+68]
-        pop     si
-        pop     dx
+        pop     bx
 .x:     ret
 
 do_rem: ret

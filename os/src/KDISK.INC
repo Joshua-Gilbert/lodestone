@@ -68,8 +68,8 @@ mgen        resw NFLOP          ; each floppy's mount (an SFT's S_GEN: its low
 mlook       resw 1              ; looks that took a disk for the same one
                                 ;  (same_disk: a task's floppy directories
                                 ;  found again by name, KMT.INC's TX_ML)
-cl_tick     resd NFLOP          ; the BIOS tick of each floppy's last use by
-                                ;  a handle call (sft_chk: no change line)
+cl_tick     resd NFLOP          ; the BIOS tick of each floppy's last transfer
+                                ;  (dio.bok: cl_fresh, no change line)
 fat_ncl     resw 1              ; the cached FAT's D_NCL (fat_get, fat_set)
 fat_dmask   resw 1              ; which FAT sectors changed (bit n = sector n)
 fk_dmask    resw 1
@@ -487,8 +487,10 @@ raw_bounce:
 ;     INT 24h's first.)  Read, write, commit and close with
 ;     changes of a file another mount's, or SF_LOST, are refused (5,
 ;     sft_chk); each first looks at the drive, as a path call does
-;     (drv_look; without a change line, only if unused for ~2 s, as
-;     MS-DOS's: D_PRES 3 from AH=15h's answer, taken back at the first
+;     (drv_look; without a change line, only if not read or written for
+;     ~2 s, as MS-DOS's driver times it: from the disk's last transfer,
+;     dio.bok, calls answered from the caches not counted; D_PRES 3 from
+;     AH=15h's answer, taken back at the first
 ;     "not changed" from AH=16h, which such a drive never gives; a BIOS
 ;     whose line says "changed" every time has every call look, the
 ;     current directory found again each time, as MS-DOS rebuilds).  A close without changes just lets the file go; the
@@ -578,9 +580,9 @@ same_disk:
         popa
         ret
 
-; drv_ready, but a floppy without a change line used less than 2 s ago
-; (cl_fresh) not looked at, as MS-DOS's 2 s (rule 9): path and handle
-; calls.  Its last use: now
+; drv_ready, but a floppy without a change line read or written less than
+; 2 s ago (cl_fresh) not looked at, as MS-DOS's 2 s (rule 9): path and
+; handle calls
 drv_look:
         cmp     al, NFLOP
         jae     drv_ready
@@ -1949,7 +1951,17 @@ dio:    push    bx
         je      .bfail                  ;  Fail, as MS-DOS, not a stale BPB)
         mov     byte [io_ign], 1
         call    .wfail
-.bok:   clc
+.bok:   mov     al, [io_drv]            ; a floppy's transfer: its last use,
+        cmp     al, NFLOP               ;  cl_fresh's 2 s from here (rule 9:
+        jae     .bk                     ;  from the disk's last access, as
+        pusha                           ;  MS-DOS's driver, not a call's
+        push    es                      ;  answered from what is cached)
+        call    cl_at
+        mov     [di], ax
+        mov     [di+2], cx
+        pop     es
+        popa
+.bk:    clc
         ret
 ; the [io_n] sectors at ES:BX read one by one, 3 tries each.  CF if one
 ; can't be read ([io_bios] = its error).  Keeps BX, ES

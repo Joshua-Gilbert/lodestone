@@ -64,10 +64,14 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (1 byte after 482Fh on
-# 2026-11-09, with fat_out's kept changes), and a change past it moves image_end and bss_end.  The UI's pads,
-# UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4850, 'bss_end': 0x7CB0, 'ui_keep_end': 0x6894}  # (4860h/7CC0h/6874h before the
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 485Dh on
+# 2026-11-09, with the 2 s timed from a floppy's last transfer), and a change past it moves image_end and bss_end.
+# The UI's pads, UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
+OFF_MAP ={'image_end': 0x4860, 'bss_end': 0x7CC0, 'ui_keep_end': 0x6894}  # (4850h/7CB0h before the 2 s
+                                        #  without a change line was timed from the disk's last
+                                        #  transfer (dio.bok, as MS-DOS's driver) and 47h whose
+                                        #  look fails gave the name kept: 16 bytes more, the KB
+                                        #  figures as they were, 2026-11-09; 4860h/7CC0h/6874h before the
                                         #  current directory was only marked unknown, found by
                                         #  resolve alone, and the Executive asked about a FAT's
                                         #  write and asked for a program's drive's free space
@@ -8116,6 +8120,24 @@ def t_rdmt():
         else:
             check('task 1\'s LCMD in C:\\SUB: task 2\'s RD C:\\SUB refused (the hard disk\'s too), task 1\'s COPY '
                   'into it', refused and 'C:\\SUB>' in s1 and '1 File(s) copied' in s1, (s2[-300:], s1[-300:]))
+    # M: has one current directory for all tasks (no TX's: the kernel's own test): mt_rd leaves it alone.  Task
+    # 1 in A:\ABCDEFGH\IJKLMNO\C, its A: string's bytes 18-19 "C",0 (43h): read as an M: cluster, M:\X's (a
+    # pad of 65 clusters first) would be another task's
+    dirs = ['ABCDEFGH\\', 'ABCDEFGH\\IJKLMNO\\', 'ABCDEFGH\\IJKLMNO\\C\\']
+    files = ['LODEMT.SYS=' + MTSYS, A.LCMD, MTL, ini(b'MULTITASK=1\r\nMDISK=512\r\n'), mkf('PAD', b'p' * 65 * 1024)]
+    k = ktest.KPC(A.image('mt_rdm.img', *(files + dirs)), None, ems_pages=128)
+    k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc
+    ret(k, 'LCMD.COM', 2.0); k.run_for(1.0)
+    line(k, 'cd \\abcdefgh\\ijklmno\\c')
+    front(k, 0); k.run_for(0.5)
+    ret(k, 'LCMD.COM', 2.0); k.run_for(1.0)
+    line(k, 'cls')
+    for c in ['copy a:pad m:\\pad', 'md m:\\x', 'rd m:\\x', 'dir m:\\']: line(k, c); k.run_for(1.0)
+    s2 = pc.text_screen()
+    check('M: (one current directory for all tasks): task 2\'s MD M:\\X and RD M:\\X removes it, whatever task 1\'s '
+          'A: directory\'s name holds where an M: entry would be (mt_rd skips drives past NDRV)',
+          'Invalid path, not directory' not in s2 and '1 File(s) copied' in s2 and '<DIR>' not in s2.split('dir m:')[-1]
+          and 'PAD' in s2.split('dir m:')[-1], s2[-500:])
 
 def asks(band):
     """The Executive's question about a floppy's changes that can't go out (UICORE.INC ui_int24) in its band"""
