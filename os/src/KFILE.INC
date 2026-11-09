@@ -613,9 +613,13 @@ sft_commit:
         mov     di, si
         pop     si
         jc      .e
-        cmp     byte [di], 0            ; (a slot never used: the entry's
-        je      .dn                     ;  write Ignored, its sector read
-                                        ;  again: not made a nameless one)
+        mov     bx, 10                  ; (not this file's name there: the
+.nm:    mov     al, [si+S_NAME+bx]      ;  entry's write Ignored, its sector
+        cmp     al, [di+bx]             ;  read again, the slot unused or
+        jne     .dn                     ;  another file's since: left alone,
+        dec     bx                      ;  not made a nameless one or the
+        jns     .nm                     ;  other's, rule 6.  Open, its name
+                                        ;  is kept: RENAME refuses it)
         mov     ax, [si+S_CLU]          ; (field by field: a rep movsw would
         mov     [di+26], ax             ;  need ES set up, close_all's PSP
         mov     ax, [si+S_SIZE]         ;  here, and be no faster)

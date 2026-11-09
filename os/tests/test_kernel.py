@@ -3427,10 +3427,12 @@ def t_swaps():
     d8 = open(p8, 'rb').read()
     d6 = bytearray(d1); d6[0x2B:0x36] = b'ELSEWHERE  '; d6 = bytes(d6)        # disk 1 labelled on another machine
     last = {}
-    def run(script, a24='', ce=False, nocl=False):
-        k = ktest.KPC(image('sw_a.img', lcmd, 'SWAPS.COM=' + c), b=b1)
+    def run(script, a24='', ce=False, nocl=False, cd=None):
+        k = ktest.KPC(image('sw_a.img', lcmd, 'SWAPS.COM=' + c, 'SUB\\', mkf('SUB\\S.TXT', b's' * 10)), b=b1)
         k.pc.drives[1].no_changeline = nocl                                # (from boot: D_PRES 3, AH=15h's)
         k.start(); Shell(k); pc = k.pc; last['k'] = k
+        if cd: k.key('cd ' + cd); k.key(ktest.ENTER)
+        um = 0x600 + k.Y['unmount']; last['um'] = []
         D = {'1': pc.drives[1], '2': pcemu.Floppy(bytearray(d2)), '3': pcemu.Floppy(bytearray(d1)),
              '4': pcemu.Floppy(bytearray(d4)), '5': pcemu.Floppy(bytearray(d5)), '8': pcemu.Floppy(bytearray(d8)),
              '6': pcemu.Floppy(bytearray(d6))}
@@ -3449,6 +3451,7 @@ def t_swaps():
             for f in D.values(): f.empty = False
             D[ch].changed = True; pc.drives[1] = D[ch]
         def hook(pc):
+            if k.addr == um: last['um'].append(pc.r('al'))
             if k.addr == k.i21 and pc.r('ah') == 0x30 and pc.r('bx') == 0x5A5A:
                 if chr(pc.r('cl')) in D or chr(pc.r('cl')) in 'EPUTLZ': put(chr(pc.r('cl')))
             a = pc.u16(0, 0x24 * 4) + pc.u16(0, 0x24 * 4 + 2) * 16
@@ -3466,9 +3469,9 @@ def t_swaps():
             return o13()
         pc.int13 = i13
         k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
-        k.key('swaps ' + script); k.key(ktest.ENTER, settle=False)
+        k.key('\\swaps ' + script); k.key(ktest.ENTER, settle=False)
         pc.run_until(lambda: ''.join(pc.tty)[n0:].count('>') >= 2 or pc.crash, 60); k.settle()
-        o = ''.join(pc.tty)[n0 + len(script) + 7:]
+        o = ''.join(pc.tty)[n0 + len(script) + 8:]
         return o, {n: bytes(f.img) for n, f in D.items()}
     def sane(img):
         return not [p for p in fatcheck.check(img)[0] if 'lost clusters' not in p]
@@ -3618,15 +3621,40 @@ def t_swaps():
     o, im = run('oew2awc/3', '', False, True)
     check('... a drive without a change line, within 2 s of its last use: not looked at (MS-DOS\'s rule, KDISK.INC '
           'rule 9): B:\'s FAT written to the disk in, nothing asked', '2 a+' in o and '[' not in o and im['2'] != d2, o)
-    for sc, nocl, why in (('oewEa1wc/3333', False, ''), ('oewEa1wc/3333', True, ', a drive without a change line '
-                          '(within 2 s: written blind, the write failing)')):
-        o, im = run(sc, '', False, nocl)
+    o, im = run('oewEa1wc/3333')
+    f = fatcheck.read_files(im['1'])
+    check('B:K.TXT grown, the drive emptied, an A: call (A:\'s FAT loaded): B: looked at first, "Not ready" as a '
+          'write\'s (its FAT\'s: [021B]), the user\'s Fail: B:\'s changes given up (as MS-DOS\'s buffer whose write '
+          'fails), the A: call done; the disk back: the file refused (w-0005, c-0005), K.TXT as it was, the disk '
+          'consistent', 'E a[021B]+' in o and ' 1 w-0005 c-0005' in o
+          and f.get('A:\\K.TXT') == kk and sane(im['1']), (o, len(f.get('A:\\K.TXT', b''))))
+    for sc, a24, nocl, why in (('oewEa1wc/a333', '', False, 'a Fail nobody was asked for (83h: the Executive\'s, '
+                                'a task\'s behind a graphics screen): B:\'s changes kept (rule 3), the A: call fails'),
+                               ('oewEa1wc/1', '1', False, 'the disk put back at the question, Retry: B:\'s FAT '
+                                'written there, the A: call done'),
+                               ('oewEa1wc/3333', '', True, 'a drive without a change line, within 2 s: written blind, '
+                                'the write failing, Fail: kept (rule 3), the A: call fails')):
+        o, im = run(sc, a24, False, nocl)
         f = fatcheck.read_files(im['1'])
-        check('B:K.TXT grown, the drive emptied, an A: call (A:\'s FAT loaded)%s: B: "Not ready", Fail: B:\'s '
-              'changes kept (rule 3), the A: call fails; the disk back: the file written on, K.TXT 4,200 bytes, the '
-              'disk consistent' % why, 'E a[021A]-' in o or 'E a[023F]-' in o, (o,))
-        check('... (the write and close after it)', ' 1 w+0258 c+' in o and len(f.get('A:\\K.TXT', b'')) == 4200
-              and sane(im['1']), (o, len(f.get('A:\\K.TXT', b''))))
+        check('... %s; the file written on after, K.TXT 4,200 bytes, the disk consistent' % why,
+              ('E a[021B]' in o or 'E a[023F]-' in o) and ' 1 w+0258 c+' in o
+              and len(f.get('A:\\K.TXT', b'')) == 4200 and sane(im['1']), (o, len(f.get('A:\\K.TXT', b''))))
+    o, im = run('oew2a1wc/a')
+    f = fatcheck.read_files(im['1'])
+    check('B:K.TXT grown, another disk in, an A: call: "Invalid disk change", a Fail nobody was asked for (a text '
+          'task in front of the Executive): nothing dropped, the A: call fails; the first disk back: the file '
+          'written on (K.TXT 4,200 bytes), the other disk untouched', 'a[0F1B]-' in o and ' 1 w+0258 c+' in o
+          and len(f.get('A:\\K.TXT', b'')) == 4200 and sane(im['1']) and im['2'] == d2,
+          (o, len(f.get('A:\\K.TXT', b''))))
+    o, im = run('doewEa1wc/a', cd='\\sub')
+    check('A:\\SUB current, INT 21h 0Dh (its directory to be found again), B:K.TXT grown, B: emptied, an A: call: '
+          'A:\'s FAT can\'t come in (B:\'s kept, nobody asked): the call fails, A:\'s directory kept by name, not '
+          'taken for the root; B:\'s disk back: found again (the prompt A:\\SUB>)', 'E a[021B]-' in o
+          and 'A:\\SUB>' in o, o)
+    o, im = run('oewYxwc')
+    check('B:K.TXT open and grown, its boot sector\'s label written by the program and F008h: taken, the disk '
+          'still mounted (no unmount, nothing dropped), the file written on', 'x+' in o and 'w+0258 c+' in o
+          and last['um'] == [], (o, last['um']))
     o, im = run('oewLnTTPnU1wc/3333')
     f = fatcheck.read_files(im['1'])
     check('B:K.TXT grown, a create whose root write lands but is reported failed (the root\'s new sector kept as the '
@@ -3665,6 +3693,30 @@ def t_swaps():
     check('COPY A:LCMD.COM B:NEW.DAT, another disk in B: at its close: "Invalid disk change", Fail: "Write error", '
           '0 File(s) copied, the other disk untouched', 'Invalid disk change' in o and 'Write error' in o
           and '0 File(s) copied' in o and bytes(other.img) == d2, o[-200:])
+    # a create's entry dropped by the disk (Ignored), its slot another file's since: left alone at the close
+    rc = os.path.join(OUT, 'REUSE.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', rc, os.path.join(HERE, 'REUSE.ASM')], check=True)
+    zf = mkf('Z.TXT', b'z' * 10).split('=')[1]
+    k = ktest.KPC(image('sw_r.img', lcmd, 'REUSE.COM=' + rc, 'SUB\\', *['SUB\\Z%02d.TXT=%s' % (i, zf)
+                  for i in range(40)]), b=image('sw_rb.img', mkf('K.TXT', kk)))
+    k.start(); Shell(k); pc = k.pc; st = {'drop': False}
+    def hook(pc):
+        if k.addr == k.i21 and pc.r('ah') == 0x30 and pc.r('bx') == 0x5A5A: st['drop'] = chr(pc.r('cl')) == 'V'
+    k.hooks.append(hook)
+    o13 = pc.int13
+    def i13():                                      # the root's writes dropped (sector not found) while 'V'
+        if st['drop'] and pc.r('ah') == 3 and pc.r('dl') == 1:
+            cx, dx = pc.r('cx'), pc.r('dx'); lba = ((cx >> 8) * 2 + (dx >> 8)) * 18 + (cx & 63) - 1
+            if lba <= 19 < lba + pc.r('al'): pc.w('ax', 0x0400); pc.cf(1); return
+        return o13()
+    pc.int13 = i13
+    k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
+    k.key('reuse'); k.key(ktest.ENTER); k.settle()
+    o = ''.join(pc.tty)[n0:]; im = bytes(pc.drives[1].img); f = fatcheck.read_files(im)
+    check('B:N.TXT created, its entry\'s write dropped by the disk and Ignored, the buffer gone; B:X.TXT made in '
+          'that slot (free on the disk), written, closed; N then written and closed: X.TXT\'s entry left alone '
+          '(not N\'s name there: 100 bytes of X), N\'s chain lost clusters, K.TXT whole',
+          f.get('A:\\X.TXT') == b'X' * 100 and f.get('A:\\K.TXT') == kk and sane(im), (o, sorted(f)))
 
 def t_cwdfind():
     """A floppy's current directory after another disk (KDISK.INC rule 1, cwd_find): B:\\SUB current, INT 21h 0Dh

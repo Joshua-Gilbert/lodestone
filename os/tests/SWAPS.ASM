@@ -1,6 +1,7 @@
 ; SWAPS.COM script[/answers] (test_kernel t_swaps): each op of the script
 ; (the command tail) printed, then + or -, AX in hex; INT 24h prints
-; [DI AH] and answers the next digit after '/' (Fail when none is left).
+; [DI AH] and answers the next digit after '/' (Fail when none is left;
+; 'a': 83h, the Fail a Lodestone handler gives with nobody asked).
 ; Ops: o p open B:K.TXT, B:L.TXT; r R read 1; w W write 600; c C close;
 ; n create B:N.TXT; e b seek to the end, the start; m commit (68h); d INT
 ; 21h 0Dh; f find B:*.*; g a free space on B:, A:; v 59h; k B:'s root's
@@ -339,6 +340,9 @@ h24:    push    ax
         mov     al, '3'
 .s:     mov     [cs:ansp], si
         sub     al, '0'
+        cmp     al, 'a' - '0'           ; ('a': 83h, a Fail nobody was asked
+        jne     .d                      ;  for, as the Executive's)
+        mov     al, 83h
 .d:     pop     si
         iret
 h1      dw 0

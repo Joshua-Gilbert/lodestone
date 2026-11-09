@@ -492,16 +492,17 @@ ui_int24:
         xor     bx, bx                  ; (a text screen in front: a task's,
         mov     es, bx                  ;  MULTITASK=1: nowhere to ask)
         mov     al, [es:449h]
-        mov     bl, 3
-        cmp     al, 7
-        je      .a
-        cmp     al, bl
+        mov     bl, 83h                 ; (Fail with nobody asked: the
+        cmp     al, 7                   ;  kernel keeps the disk's changes,
+        je      .a                      ;  KDISK.INC rule 4)
+        cmp     al, 3
         jbe     .a
         push    cs
         pop     es
         mov     si, s_dchg
         mov     di, s_confirm
         call    band_up
+        mov     bl, 3                   ; (ESC: Fail, the user's)
 .k:     call    read_key
         cmp     ax, K_ESC
         je      .n
@@ -518,7 +519,7 @@ ui_int24:
         pop     ds
         popa
         iret
-.f:     mov     al, 3                   ; Fail
+.f:     mov     al, 83h                 ; Fail, nobody asked (rule 4)
         iret
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 

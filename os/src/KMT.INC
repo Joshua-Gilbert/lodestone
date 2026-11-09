@@ -2031,8 +2031,11 @@ mt_i24: sti
         mov     si, s_24e               ; what: by the error's code (DI)
         mov     ax, di
         cmp     al, 2
-        jne     .w
+        jne     .i
         mov     si, s_24n
+.i:     cmp     al, 0Fh                 ; (as MS-DOS's COMMAND says it)
+        jne     .w
+        mov     si, s_24i
 .w:     or      al, al
         jnz     .m
         mov     si, s_24w
@@ -2071,6 +2074,7 @@ mt_i24: sti
         pop     ds
         popa
         iret
+        nop                             ; (never run: what follows as it was)
 .pr:    lodsb
         or      al, al
         jz      .x
@@ -2089,6 +2093,7 @@ s_24c   db      13, 10, 0
 s_24e   db      'Disk error', 0
 s_24n   db      'Not ready', 0
 s_24w   db      'Write protect error', 0
+s_24i   db      'Invalid disk change', 0
 s_24r   db      ' reading drive ', 0
 s_24wr  db      ' writing drive ', 0
 s_24q   db      ': Abort, Retry, Fail? ', 0
@@ -6218,8 +6223,8 @@ mt_c24: push    ds                      ; (a task not in front, a graphics
         jbe     .p
         pop     ax
         pop     ds
-        mov     al, 3
-        retf
+        mov     al, 83h                 ; (Fail, nobody asked: the disk's
+        retf                            ;  changes kept, KDISK.INC rule 4)
 .p:     pop     ax
         pop     ds
 .f:     mov     si, crit_dev

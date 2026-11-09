@@ -67,7 +67,14 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (1 byte after 482Fh on
 # 2026-11-09, with fat_out's kept changes), and a change past it moves image_end and bss_end.  The UI's pads,
 # UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4830, 'bss_end': 0x7C90, 'ui_keep_end': 0x6874}  # (4810h/7C70h before a floppy's FAT
+OFF_MAP ={'image_end': 0x4870, 'bss_end': 0x7CD0, 'ui_keep_end': 0x6874}  # (4830h/7C90h before a Fail nobody
+                                        #  was asked for was kept apart (83h), a FAT's look was a
+                                        #  write's and the user's Fail gave its changes up, a
+                                        #  directory wasn't taken for the root when its disk can't
+                                        #  be read, a close's slot was checked by name: 64 bytes,
+                                        #  0.1 KB less (562.2, 578.3; 554.0 with MULTITASK=1, its
+                                        #  0Fh prompt's text 28 more), 2026-11-09;
+                                        #  4810h/7C70h before a floppy's FAT
                                         #  changes were kept when the look at its drive can't
                                         #  read it, F008h left a look due, a root read by the
                                         #  kernel settled which sum, an Ignored entry left alone
@@ -7098,7 +7105,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 578.4 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '578.4', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 578.3 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '578.3', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
@@ -8008,17 +8015,69 @@ def t_cwdmount():
                   'again by name, NEW.TXT there, the other disk untouched', f.get('A:\\SUB\\NEW.TXT') == b'hello\r\n'
                   and not probs and bytes(other.img) == d2 and 'B:\\SUB>cd\nB:\\SUB\n' in scr, (scr[-200:], probs))
 
+def t_dkeep():
+    """A floppy's changed FAT and an INT 24h nobody answered (KDISK.INC rule 4): MTKEEP, a task, writes B:K.TXT and
+    waits for a key; the Executive in front, B: emptied, MTADLY started: the Executive's own A: calls (A:'s FAT
+    loaded: B:'s looked at first, "Not ready") are failed at once, nobody asked: B:'s changes kept; MTADLY's own
+    look asks in its text screen, "Not ready writing drive B" (the FAT's: a write's); the disk back, Retry: its
+    create goes, and MTKEEP's next write and close (K.TXT 4,200 bytes).  A text task's own prompt (mt_i24) for
+    another disk in says "Invalid disk change writing drive B", as COMMAND does; its Fail, the user's, drops the
+    changes (the write refused), the other disk untouched."""
+    import mkimg, fatcheck
+    kp = os.path.join(A.OUT, 'dk_k.txt'); open(kp, 'wb').write(b'k' * 3000)
+    b1 = open(mkimg.build(os.path.join(A.OUT, 'dk_b1.img'), ['K.TXT=' + kp]), 'rb').read()
+    b2 = open(mkimg.build(os.path.join(A.OUT, 'dk_b2.img'), ['O.TXT=' + kp]), 'rb').read()
+    files = ['LODEMT.SYS=' + MTSYS, A.LCMD, MTL, os.path.join(HERE, 'MTKEEP.COM'), os.path.join(HERE, 'MTADLY.COM'),
+             ini(b'MULTITASK=1\r\n')]
+    k = ktest.KPC(A.image('mt_dk.img', *files), b1, ems_pages=88)
+    k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc; d1 = pc.drives[1]
+    cd, auto = 0x600 + k.Y['crit_disk'], []
+    def hk(pc):
+        if k.addr == cd: auto.append(pc.rd(mt_seg(k), k.Y['mt_cur'], 1)[0])
+    k.hooks.append(hk)
+    ret(k, 'MTKEEP.COM', 1.0)
+    front(k, 0)
+    d1.empty = True; d1.changed = True
+    ret(k, 'MTADLY.COM', 0.3); front(k, 0); k.run_for(4.0)
+    crit, tail = pc.rd(mt_seg(k), k.Y['mt_crit'], 1)[0], ''.join(pc.tty)[-60:]
+    d1.empty = False; d1.changed = True
+    pc.keys.append(ord('r')); k.run_for(2.0)
+    n = [t for t, s, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
+    if n: front(k, n[0])
+    pc.keys.append(ord(' ')); k.run_for(4.0)
+    f = fatcheck.read_files(bytes(d1.img))
+    check('MTKEEP\'s B:K.TXT grown, the Executive in front, B: emptied, MTADLY started: the Executive\'s own A: '
+          'calls fail at once (nobody asked), B:\'s changes kept; MTADLY asks "Not ready writing drive B: Abort, '
+          'Retry, Fail?"; the disk back, Retry: its RES.TXT made, MTKEEP\'s write and close go, K.TXT 4,200 bytes, '
+          'the disk consistent', 0 in auto and crit == 1 and 'Not ready writing drive B: Abort, Retry, Fail?' in tail
+          and A.disk_file(k, 'RES.TXT') == b'ok' and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'+0258 +')
+          and len(f.get('A:\\K.TXT', b'')) == 4200 and not fatcheck.check(bytes(d1.img))[0],
+          (auto, crit, tail, A.disk_file(k, 'RES.TXT'), A.disk_file(k, 'RES2.TXT'), len(f.get('A:\\K.TXT', b''))))
+    # MTKEEP in front (a text task, no INT 24h of its own: mt_i24 asks), another disk in B:
+    k = ktest.KPC(A.image('mt_dk2.img', *files), b1, ems_pages=88)
+    k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc
+    ret(k, 'MTKEEP.COM', 1.0)
+    o = pcemu.Floppy(bytearray(b2)); o.changed = True; pc.drives[1] = o
+    pc.keys.append(ord(' ')); k.run_for(3.0)
+    scr = pc.text_screen()
+    pc.keys.append(ord('f')); k.run_for(3.0)
+    check('... MTKEEP in front, another disk in B:, its write: asked "Invalid disk change writing drive B: Abort, '
+          'Retry, Fail?"; Fail: the write refused (5), its changes dropped, the other disk untouched',
+          'Invalid disk change writing drive B: Abort, Retry, Fail?' in scr and bytes(o.img) == b2
+          and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'-0005'), (scr[-300:], A.disk_file(k, 'RES2.TXT')))
+
 if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST', 'MTCLI'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST', 'MTCLI',
+              'MTKEEP', 'MTADLY'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/', '-i', HERE + '/',     # (MTLIB.INC)
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
