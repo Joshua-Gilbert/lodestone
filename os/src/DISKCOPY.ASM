@@ -90,6 +90,7 @@ start:  mov     sp, stack_top
         mov     byte [dst], 0FFh
         call    args
         jc      init_fail
+        xor     dx, dx                  ; (DL 0, as XCOPY's: NetWare's F0h)
         mov     ax, 0F000h              ; Lodestone?
         int     21h
         cmp     ax, 4F47h

@@ -128,6 +128,7 @@ start:  mov     sp, stack_top
 .nd:    cmp     [unit], cl
         mov     dx, s_baddrv
         jae     fail_msg
+        xor     dx, dx                  ; (DL 0, as XCOPY's: NetWare's F0h)
         mov     ax, 0F000h              ; Lodestone?  (its own call)
         int     21h
         cmp     ax, 4F47h
@@ -1481,6 +1482,7 @@ hd_main:
         or      al, [nspt]
         or      al, [tset]
         jnz     fail_msg
+        xor     dx, dx                  ; (DL 0, as XCOPY's: NetWare's F0h)
         mov     ax, 0F000h              ; Lodestone?
         int     21h
         cmp     ax, 4F47h
