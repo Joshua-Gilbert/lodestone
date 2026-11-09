@@ -135,6 +135,9 @@ drv_init:
         cmp     ah, 1
         jne     .np
         mov     byte [di+D_PRES], 3
+        mov     byte [di+D_CHK], 1      ; (looked at, so mounted, at its
+                                        ;  first access: cl_fresh's 2 s
+                                        ;  from tick 0 aren't a transfer)
 .np:    mov     si, bx
         imul    si, si, CWDLEN
         mov     byte [cwdstr+si], '\'
@@ -158,6 +161,7 @@ drv_init:
         cmp     byte [bootdrv], NDRV    ; booted from a floppy: we have its BPB
         jae     .x
         call    use_drive
+        mov     byte [si+D_CHK], 0      ; (mounted here: no look due)
         mov     si, bootbpb
         call    mount_bpb
 .x:     ret

@@ -3406,7 +3406,8 @@ def t_swaps():
     drive is looked at; a look that can't read the disk keeps the changes (the call fails).  A root write that lands
     but is reported failed, read back by the kernel: that sector the disk's.  A create's entry Ignored: no nameless
     entry at the close.  Without a change line (from boot), within 2 s of the disk's last transfer nothing is looked
-    at (MS-DOS's rule; calls answered from the caches don't hold the 2 s open).  The
+    at (MS-DOS's rule; calls answered from the caches don't hold the 2 s open), but a drive not used since boot is,
+    whatever the clock says.  The
     kernel's own default INT 24h (a program run from the Executive with none of its own) is a Fail nobody was asked
     for, as 83h: B:'s changes kept; so are 0Dh's; a handle call goes on while the current directory can't be found
     again; a search's next with a look due looks first."""
@@ -3463,12 +3464,13 @@ def t_swaps():
                 pc.drives[1].wp = ch == 'P'; return
             if ch in 'Tt':                                              # 3 s, 1 s later (the BIOS's ticks)
                 pc.wr(0, 0x46C, struct.pack('<H', (pc.u16(0, 0x46C) + (55 if ch == 'T' else 18)) & 0xFFFF)); return
+            if ch == 'z': pc.wr(0, 0x46C, struct.pack('<I', 5)); return    # the BIOS tick 5 (just after midnight)
             for f in D.values(): f.empty = False
             D[ch].changed = True; pc.drives[1] = D[ch]
         def hook(pc):
             if k.addr == um: last['um'].append(pc.r('al'))
             if k.addr == k.i21 and pc.r('ah') == 0x30 and pc.r('bx') == 0x5A5A:
-                if chr(pc.r('cl')) in D or chr(pc.r('cl')) in 'EPUTtLZ': put(chr(pc.r('cl')))
+                if chr(pc.r('cl')) in D or chr(pc.r('cl')) in 'EPUTtLZz': put(chr(pc.r('cl')))
             a = pc.u16(0, 0x24 * 4) + pc.u16(0, 0x24 * 4 + 2) * 16
             if k.addr == a and k.addr != k.i21:
                 st['land'] = 0
@@ -3721,6 +3723,10 @@ def t_swaps():
           'untouched (boot sector reads: %d)' % last['boot'], o.count('f+') == 6 and 'c+' in o
           and f.get('A:\\OTH.TXT') == b'o' * 3000 and len(f.get('A:\\N.TXT', b'')) == 600 and sane(im['2'])
           and im['1'] == d1, (o, sorted(f)))
+    o, im = run('zforc', nocl=True)
+    check('... not used since boot, the BIOS tick under 2 s (just after midnight, or a machine without a clock): '
+          'looked at, so mounted, at its first use: B:\'s search and open by path find its files (not 3, "path not '
+          'found")', 'f+' in o and 'o+' in o and 'c+' in o, o)
     o, im = run('oewEN1wc', exe=True)
     f = fatcheck.read_files(im['1'])
     check('run from the Executive with no INT 24h handler of its own (the kernel\'s default answers, nobody asked: '
