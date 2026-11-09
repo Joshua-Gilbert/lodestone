@@ -570,16 +570,19 @@ f_3E:   mov     bx, [bp+F_BX]           ; CLOSE
         jmp     ret_cf
 .e:     jmp     fail
 
-; one user less for SFT SI; the last one writes the directory entry back
+; one user less for SFT SI; the last one writes the directory entry back,
+; while it still counts as open: another disk in by then is "Invalid disk
+; change" (drv_pend), as MS-DOS's, so Retry with this one back writes it.
+; CF: AX = error (the file let go all the same)
 sft_release:
-        cmp     byte [si+S_REF], 0
-        je      .x
-        dec     byte [si+S_REF]
-        jnz     .x
-        test    byte [si+S_FLAGS], SF_DEV
-        jnz     .x
-        jmp     sft_commit
-.x:     clc
+        cmp     byte [si+S_REF], 1
+        jb      sft_commit.ok           ; (none: nothing to do)
+        clc                             ; (JA: ZF alone now)
+        ja      .d
+        test    byte [si+S_FLAGS], SF_DEV       ; (CF clear)
+        jnz     .d
+        call    sft_commit
+.d:     dec     byte [si+S_REF]         ; (CF kept)
         ret
 
 ; written file SI: directory entry and FAT to disk.  CF: AX = error
@@ -588,9 +591,10 @@ sft_commit:
         jz      .ok
         call    sft_chk                 ; (the disk it was opened on still)
         jnc     .go
-        cmp     ax, 5
-        je      .lost
-        ret
+        test    byte [si+S_FLAGS], SF_LOST
+        jnz     .lost                   ; (else kept changed: the same disk
+        stc                             ;  back, Retry or a later close
+        ret                             ;  writes it)
 .go:    push    bx
         push    dx
         push    di
@@ -652,7 +656,9 @@ sft_commit:
 ; one without a change line only if not used for ~2 s (MS-DOS's rule: the
 ; BIOS says "changed" every time, and each look reads the disk; path calls
 ; look every time).  Another mount's file, or one SF_LOST: SF_LOST, CF,
-; AX = 5 (rule 9).  CF: AX = drv_ready's error otherwise.  SI kept
+; AX = 5 (rule 9).  The look failing (INT 24h's Fail, "Invalid disk
+; change" or not ready): CF, AX = 5 too, the file as it was (KDISK.INC
+; rule 9: a handle call's code for it).  SI kept
 sft_chk:
         test    byte [si+S_FLAGS], SF_LOST
         jnz     .lost
@@ -666,19 +672,14 @@ sft_chk:
         call    drv_ready
 .f:     pop     es
         pop     si
-        pushf
-        push    ax
+        jc      .lost                   ; (another mount's: SF_LOST then)
         mov     al, [si+S_DRV]
         call    gen_of
         cmp     ah, [si+S_GEN]
-        pop     ax
-        je      .k
-        popf
+        je      .ok
         or      byte [si+S_FLAGS], SF_LOST
 .lost:  mov     ax, 5
         stc
-        ret
-.k:     popf
         ret
 .ok:    clc
         ret
