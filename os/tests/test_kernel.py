@@ -3405,7 +3405,8 @@ def t_swaps():
     it, the disk is just forgotten.  A floppy's changed FAT is written, from another drive's call, only after its
     drive is looked at; a look that can't read the disk keeps the changes (the call fails).  A root write that lands
     but is reported failed, read back by the kernel: that sector the disk's.  A create's entry Ignored: no nameless
-    entry at the close.  Without a change line (from boot), within 2 s nothing is looked at (MS-DOS's rule).  The
+    entry at the close.  Without a change line (from boot), within 2 s of the disk's last transfer nothing is looked
+    at (MS-DOS's rule; calls answered from the caches don't hold the 2 s open).  The
     kernel's own default INT 24h (a program run from the Executive with none of its own) is a Fail nobody was asked
     for, as 83h: B:'s changes kept; so are 0Dh's; a handle call goes on while the current directory can't be found
     again; a search's next with a look due looks first."""
@@ -3460,14 +3461,14 @@ def t_swaps():
                 return
             if ch in 'PU':                                              # the write-protect tab on, off
                 pc.drives[1].wp = ch == 'P'; return
-            if ch == 'T':                                               # 3 s later (the BIOS's ticks)
-                pc.wr(0, 0x46C, struct.pack('<H', (pc.u16(0, 0x46C) + 55) & 0xFFFF)); return
+            if ch in 'Tt':                                              # 3 s, 1 s later (the BIOS's ticks)
+                pc.wr(0, 0x46C, struct.pack('<H', (pc.u16(0, 0x46C) + (55 if ch == 'T' else 18)) & 0xFFFF)); return
             for f in D.values(): f.empty = False
             D[ch].changed = True; pc.drives[1] = D[ch]
         def hook(pc):
             if k.addr == um: last['um'].append(pc.r('al'))
             if k.addr == k.i21 and pc.r('ah') == 0x30 and pc.r('bx') == 0x5A5A:
-                if chr(pc.r('cl')) in D or chr(pc.r('cl')) in 'EPUTLZ': put(chr(pc.r('cl')))
+                if chr(pc.r('cl')) in D or chr(pc.r('cl')) in 'EPUTtLZ': put(chr(pc.r('cl')))
             a = pc.u16(0, 0x24 * 4) + pc.u16(0, 0x24 * 4 + 2) * 16
             if k.addr == a and k.addr != k.i21:
                 st['land'] = 0
@@ -3712,6 +3713,14 @@ def t_swaps():
         o, im = run(scr, nocl=True)
         check('B: without a change line (from boot): %s (boot sector reads: %d)' % (what, last['boot']),
               last['boot'] == n and o.count('c+') == 3, (o, last['boot']))
+    o, im = run('ftftf2tftftfnwc', nocl=True)
+    f = fatcheck.read_files(im['2'])
+    check('... searches of B: 1 s apart, answered from the caches, another disk put in meanwhile, then B:N.TXT '
+          'created, written, closed: the 2 s timed from the disk\'s last transfer, not the last call (MS-DOS\'s '
+          'driver): the other disk noticed, N.TXT on it, its OTH.TXT intact, the disk consistent; the first '
+          'untouched (boot sector reads: %d)' % last['boot'], o.count('f+') == 6 and 'c+' in o
+          and f.get('A:\\OTH.TXT') == b'o' * 3000 and len(f.get('A:\\N.TXT', b'')) == 600 and sane(im['2'])
+          and im['1'] == d1, (o, sorted(f)))
     o, im = run('oewEN1wc', exe=True)
     f = fatcheck.read_files(im['1'])
     check('run from the Executive with no INT 24h handler of its own (the kernel\'s default answers, nobody asked: '
@@ -4022,6 +4031,45 @@ def t_cwdfind():
     sh.run('dir b:\\'); n1 = rd['boot']; sh.run('dir b:\\')
     check('B:\\SUB\\DEEP current, 0Dh, DIR B:\\ twice: the disk looked at once (one boot sector read), the next '
           'none', n1 == 1 and rd['boot'] == 1, (n1, rd['boot']))
+
+def t_cwdgone():
+    """LCMD in B:\\SUB, another, unformatted disk put in B:: the kernel's look can't find SUB again and 47h fails
+    (15, as MS-DOS's), giving the name it kept all the same.  B: is still a drive that is there for DIR, VOL and CD
+    (LCMD's drv_chk: 4408h, which reads no disk), as before 47h looked: DIR's header and "File not found", VOL, CD
+    and the prompt with B:\\SUB.  COPY to a relative name then, the first disk put back between its 47h and the
+    copy: Y.TXT in B:\\SUB, never in the root (the destination opened by its relative name, found again by name;
+    COPY's whole name from 47h, the name kept, is only for its "onto itself" test)."""
+    t = os.path.join(OUT, 'cg_K.TXT'); open(t, 'wb').write(b'k' * 300)
+    aw = os.path.join(OUT, 'AW.TXT'); open(aw, 'wb').write(b'a' * 700)
+    b1 = image('cg_b.img', 'SUB\\', 'SUB\\K.TXT=' + t)
+    k = ktest.KPC(image('cg_a.img', os.path.join(GOS, 'src', 'LCMD.COM'), aw), b=b1); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('b:'); sh.run('cd sub')
+    first = pc.drives[1]
+    other = pcemu.Floppy(bytearray(len(first.img))); other.changed = True; pc.drives[1] = other
+    o = {c: sh.run(c) for c in ('dir', 'vol', 'cd')}
+    check('B:\\SUB current, an unformatted disk put in: DIR shows its header ("Directory of  B:\\SUB", the name the '
+          'kernel kept) and "File not found", not "Invalid drive specification" (B: is there: 4408h)',
+          'Directory of  B:\\SUB' in o['dir'] and 'File not found' in o['dir'] and 'Invalid drive' not in o['dir'],
+          o['dir'])
+    check('... VOL: "no label", CD: B:\\SUB, the prompt B:\\SUB> (47h\'s 15 with the name kept), as before 47h looked',
+          'Volume in drive B has no label' in o['vol'] and o['cd'].split('\n')[0] == 'B:\\SUB'
+          and o['cd'].rstrip().endswith('B:\\SUB>'), (o['vol'], o['cd']))
+    st = {'n': 0}
+    def hook(pc):
+        if k.addr != k.i21: return
+        if st['n'] == 0 and pc.r('ah') == 0x47 and pc.r('dl') == 2: st['n'] = 1
+        elif st['n'] == 1 and pc.r('ah') != 0x47:
+            first.changed = True; pc.drives[1] = first; st['n'] = 2
+    k.key('cls'); k.key(ktest.ENTER); k.key('copy a:aw.txt y.txt')
+    k.hooks.append(hook)                            # (after the prompt's own 47h)
+    k.key(ktest.ENTER)
+    k.hooks.remove(hook)
+    s = pc.text_screen()
+    f = fatcheck.read_files(bytes(first.img))
+    check('... COPY A:AW.TXT Y.TXT, B:\'s 47h failing, the first disk back before the copy: Y.TXT in B:\\SUB, '
+          'not the root', f.get('A:\\SUB\\Y.TXT') == b'a' * 700
+          and 'A:\\Y.TXT' not in f and st['n'] == 2, (s[-300:], sorted(f), st))
 
 def t_batswap():
     """A batch file is opened for each line and closed again (as COMMAND's), at its whole name and place, so
@@ -5402,7 +5450,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

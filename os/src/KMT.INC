@@ -7791,12 +7791,14 @@ mt_rd:  push    ax
         push    di
         push    es
         xchg    dx, ax                  ; DX = the cluster
+        xor     cx, cx                  ; CH: 1 if a task has it
         mov     al, [act]
+        cmp     al, NDRV                ; (M:'s, R:'s: one for all tasks, no
+        jae     .e                      ;  TX's, the kernel's own test)
         cbw
         shl     ax, 1
         xchg    di, ax                  ; DI = 2 * the drive
         xor     ax, ax
-        xor     cx, cx                  ; CH: 1 if a task has it
 .t:     cmp     al, [cs:mt_cur]         ; (AL: the task)
         je      .n
         call    mt_ent
@@ -7817,7 +7819,7 @@ mt_rd:  push    ax
 .n:     inc     al
         cmp     al, MT_TASKS
         jb      .t
-        or      ch, ch
+.e:     or      ch, ch
         pop     es
         pop     di
         pop     dx

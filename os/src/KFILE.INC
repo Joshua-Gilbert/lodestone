@@ -696,28 +696,19 @@ sft_chk:
         times ($ + 1 - $$) & 1 db 90h   ; (what follows odd: its hot
                                         ;  labels even)
 ; floppy AL without a change line (D_PRES 3), no look due (D_CHK), its
-; last use by a handle call less than 2 s ago (36 ticks)?  NC if so.  Its
-; last use: now.  All kept
+; last transfer (dio.bok: a read or write that reached the disk, a look's
+; too) less than 2 s ago (36 ticks)?  NC if so.  Only compares: calls
+; answered from the caches don't hold the 2 s open, as MS-DOS's driver
+; times from its own last access.  All kept
 cl_fresh:
         pusha
         push    es
-        xor     bx, bx
-        mov     es, bx
-        mov     bl, al
-        mov     di, bx
-        shl     di, 2
-        mov     ax, [es:46Ch]
-        mov     dx, ax
-        xchg    dx, [cl_tick+di]
-        sub     ax, dx                  ; ticks since (all 32 bits: an hour
-        mov     cx, [es:46Eh]           ;  later isn't 0 ticks later, nor
-        mov     dx, cx                  ;  is a day's end)
-        xchg    dx, [cl_tick+di+2]
-        sbb     cx, dx
-        neg     cx                      ; (the high part not 0: FFFFh)
-        sbb     dx, dx
-        or      ax, dx
-        shl     bx, 5                   ; (DRVSZ)
+        call    cl_at
+        sub     ax, [di]                ; ticks since (all 32 bits: an hour
+        sbb     cx, [di+2]              ;  later isn't 0 ticks later, nor
+        jcxz    .t                      ;  is a day's end: the high part not
+        mov     ah, 1                   ;  0, 256 or more)
+.t:     shl     bx, 5                   ; (DRVSZ)
         cmp     byte [drvtab+bx+D_PRES], 3
         jb      .x                      ; (a change line: CF, looked at)
         cmp     byte [drvtab+bx+D_CHK], 0
@@ -731,6 +722,17 @@ cl_fresh:
 %if DRVSZ != 32
 %error "cl_fresh: DRVSZ"
 %endif
+; AL a floppy: BX = AL, DI = its cl_tick, CX:AX = the BIOS tick, ES = 0
+cl_at:  push    0
+        pop     es
+        cbw
+        mov     bx, ax
+        xchg    di, ax
+        shl     di, 2
+        add     di, cl_tick
+        mov     ax, [es:46Ch]
+        mov     cx, [es:46Eh]
+        ret
 
 ; use_drive for AL keeping SI
 use_drive_si:
