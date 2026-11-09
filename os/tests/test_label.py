@@ -252,10 +252,45 @@ def t_redirect():
         check('... the file written on after it (the same disk)', 'more' in o and 'Fail' not in o
               and fatcheck.check(bytes(k.pc.drives[1].img))[0] == [], o)
 
+def t_swapq():
+    # the disk swapped at LABEL's question, its output sent to a file on that disk and its answer a pipe from A:
+    # (each read of it loads A:'s FAT, B:'s changed): the kernel's FAT of the first disk isn't written onto the
+    # disk in (B:'s FAT goes to B: only after a look there: "Invalid disk change", LABEL's handler's Fail).  (LABEL
+    # itself reads the disk in again after its question, the kernel having looked at it, and labels it)
+    for x in ('2', '4'):
+        p = disk('sq1.img', files=('K.TXT=' + os.path.join(SRC, 'LCMD.COM'),))
+        d1 = open(p, 'rb').read()
+        if x == '2':
+            d = bytearray(open(disk('sq2.img', files=('SUB\\',)), 'rb').read()); d[0x27:0x2B] = b'\x12\x34\x56\x78'
+        else:
+            d = bytearray(d1); i = d.find(b'K       TXT', 19 * 512); d[i:i + 11] = b'Q       TXT'
+        d = bytes(d); other = pcemu.Floppy(bytearray(d))
+        k = boot(p); pc = k.pc; first = pc.drives[1]
+        st = {'sw': 0}
+        def hook(pc):
+            if k.addr == k.i21 and pc.r('ah') == 0x0A and not st['sw']:
+                st['sw'] = 1; other.changed = True; pc.drives[1] = other
+        k.hooks.append(hook)
+        pc.tty.clear()
+        k.key('echo newlab| label b: > b:out.txt'); k.key(ktest.ENTER, settle=False)
+        for _ in range(8):
+            n = out(k).count('Fail?')
+            pc.run_until(lambda: out(k).count('Fail?') > n or out(k).rstrip().endswith('>'), 40)
+            if out(k).count('Fail?') == n: break
+            k.key('f', settle=False)
+        k.settle()
+        o = out(k); probs = fatcheck.check(bytes(first.img))[0]; im = bytes(other.img)
+        po = [q for q in fatcheck.check(im)[0] if 'lost clusters' not in q]
+        check('the disk swapped at LABEL\'s question (%s), its output on it, its answer from A:: that disk\'s FAT '
+              'and data not written (B:\'s FAT not put on it), the disk consistent; the first one with no '
+              'cross-links' % ('another disk' if x == '2' else 'a copy, a name changed elsewhere'),
+              st['sw'] and im[512:19 * 512] == d[512:19 * 512] and im[33 * 512:] == d[33 * 512:] and not po
+              and not [q for q in probs if 'cross' in q], (o[-600:], probs, po))
+
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_floppy, t_spaces, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review, t_redirect):
+    for t in (t_floppy, t_spaces, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review, t_redirect, t_swapq):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

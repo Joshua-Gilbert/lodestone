@@ -21,8 +21,9 @@
 ; line; or, when it says changed or the drive has none, its boot sector
 ; and the root sector as read), and INT 21h 0Dh comes before and after,
 ; so the kernel reads the disk again; its current directory there is
-; kept.  After the writes INT 21h F008h has the kernel take the disk as
-; it now is, so a file open on it (LABEL's output sent there) goes on.
+; kept.  After each write INT 21h F008h has the kernel take the disk as
+; written (given the sector as read and as written), so a file open on it
+; (LABEL's output sent there) goes on.
 ; INT 26h tells the kernel for C:.  With multitasking, nothing is written
 ; while other tasks are there (Shift-Return with no others: alone).
 ;
@@ -526,6 +527,11 @@ write:  cmp     byte [hadlab], 0        ; a new entry: room for it?
         call    wrsec
         mov     byte [chkroot], 0
         jc      .werr
+        mov     ax, [rootlba]           ; (the kernel told: as read, as
+        add     ax, [esec]              ;  written)
+        mov     si, rootcp
+        call    own
+        jc      .nown
         cmp     byte [boot+26h], 29h    ; DOS 4's BPB: its label too
         jne     .ok
         mov     si, boot
@@ -543,7 +549,14 @@ write:  cmp     byte [hadlab], 0        ; a new entry: room for it?
         xor     dx, dx
         call    wrsec
         jc      .werr
+        xor     ax, ax
+        mov     si, boot
+        call    own
+        jc      .nown
 .ok:    clc
+        ret
+.nown:  mov     dx, s_nown
+        stc
         ret
 .werr:  mov     dx, s_dchg
         cmp     byte [dchg], 0
@@ -605,19 +618,38 @@ stamp:  push    di
         mov     [di+18h], ax
         ret
 
-; after writes: a floppy taken by the kernel as it is now (INT 21h F008h:
-; its BPB's label and its root's first sector are what it knows the disk
-; by, and a file of the kernel's may be open on it, LABEL's output sent
-; there), then read again (INT 21h 0Dh), and its current directory there
-; as it was
+; a floppy's sector AX just written from [sec], SI: as it was read: the
+; kernel told (INT 21h F008h), so it takes the disk as written (its BPB's
+; label and its root's first sector are what it knows the disk by, and a
+; file of the kernel's may be open on it, LABEL's output sent there).  CF:
+; the kernel's disk isn't the one read (its files were on another)
+own:    cmp     byte [kind], K_FL
+        jne     .x
+        push    ax
+        push    cs
+        pop     es
+        mov     di, xbuf
+        mov     cx, 256
+        rep     movsw
+        mov     si, [sec]
+        mov     cx, 256
+        rep     movsw
+        pop     cx
+        mov     dl, [drv]
+        mov     bx, xbuf
+        mov     ax, 0F008h
+        int     21h
+        ret
+.x:     clc
+        ret
+
+; after writes: the disk read again by the kernel (INT 21h 0Dh), and its
+; current directory there as it was
 told:   cmp     byte [wrote], 0
         je      .x
         mov     byte [wrote], 0
         cmp     byte [kind], K_FL
         jne     .x
-        mov     ax, 0F008h              ; (before 0Dh: its flush looks at
-        mov     dl, [drv]               ;  the disk)
-        int     21h
         mov     ah, 0Dh
         int     21h
         mov     dx, curdir
@@ -908,6 +940,8 @@ s_full  db 'The root directory is full: no room for a label', 13, 10, '$'
 s_wprot db 'Write protect error: the label as it was', 13, 10, '$'
 s_wrerr db 'Disk error writing the label', 13, 10, '$'
 s_dchg  db 'The disk was changed: the label not written', 13, 10, '$'
+s_nown  db 'Label written, but files open on the drive are on another disk'
+        db 13, 10, '$'
 s_bs    db 8, ' ', 8, '$'
 s_crlf  db 13, 10, '$'
 
@@ -945,6 +979,7 @@ seen    resb 1
 boot    resb 512
 rootcp  resb 512
 wsave   resb 512
+xbuf    resb 1024                       ; (INT 21h F008h's: as read, written)
         alignb 16
 sb1     resb 512
 sb2     resb 512

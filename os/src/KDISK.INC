@@ -72,6 +72,8 @@ fat_sum     resw 2 * NFLOP      ; each floppy's FAT sector 0 as its disk last
                                 ;  same_disk's, kept when the cache goes
 rt_sum      resw 2 * NFLOP      ; and its root's first sector (rt_chk; 0: none
                                 ;  known)
+rt_alt      resw 2 * NFLOP      ; the one a write that failed or was Ignored
+                                ;  may have left there instead (0: none)
 ; the cylinder cache: places [tc_lo, tc_hi) of the cylinder starting at
 ; LBA tc_cyl on drive tc_drv (place = head * sectors per track + sector,
 ; from 0), each at place * 512 in the block at tc_seg:0 (KMEM puts it in
@@ -331,12 +333,15 @@ raw_bounce:
 ;     read, or as written by copy 1; while a flush is part done, the
 ;     cache's own sector 0 may be that disk's too), and the same root's
 ;     first sector (rt_sum: read at each mount, taken from each write of
-;     it, forgotten at one that fails or is Ignored; none kept, the boot
-;     disk's or after 0Dh: kept at the next look; a disk changed
-;     elsewhere, its FAT's first sector as it was, is another disk so).
-;     A program that writes the disk's boot sector or root itself (INT
-;     13h: LABEL) says so with INT 21h F008h (dsk_own): the BPB and the
-;     root's sum are taken again from the disk.  (One that doesn't, with
+;     it; after one that fails or is Ignored, the old one or that one,
+;     rt_alt; none kept, the boot disk's or after 0Dh: kept at the next
+;     look; a disk changed elsewhere, its FAT's first sector as it was, is
+;     another disk so).  A program that writes the disk's boot sector or
+;     root's first sector itself (INT 13h: LABEL) says so with INT 21h
+;     F008h (dsk_own), with the sector as it read it and as it wrote it:
+;     what it read the kernel's disk (the BPB, the root's sum), only a
+;     boot sector's label changed, and the disk is known by what was
+;     written; else nothing taken.  (One that doesn't, with
 ;     a file of the kernel's open on that floppy, finds it another disk at
 ;     the next look after 0Dh: "Invalid disk change", where MS-DOS, the
 ;     change line not set, reads on.)  A changed cache never
@@ -368,7 +373,8 @@ raw_bounce:
 ;     path call's 3, as MS-DOS's measured; a handle call's 5, sft_chk,
 ;     its documented code, assumed; 59h says the same, MS-DOS's maybe 83);
 ;     a changed cache dropped otherwise (INT 21h 0Dh or a screen capture's reset
-;     after a failed flush): the drive's open files with changes pending
+;     after a failed flush; another drive's call or a program's end, its
+;     drive looked at first, Fail, fat_out): the drive's open files with changes pending
 ;     are SF_LOST (sft_pend): their writes and close refused (5), their
 ;     entries as the disk has them.  With nothing open and nothing to go
 ;     another disk is just mounted.  A transfer the BIOS fails with 06h
@@ -644,44 +650,93 @@ unmount:
         pop     ax
         ret
 
-; INT 21h F008h (f_F0): floppy AL's disk just written by the caller itself
-; through INT 13h, and still the disk the kernel has mounted (the caller
-; checked: LABEL, its boot sector's label and the root's label entry).
-; What tells the disk apart (rule 1) is taken from it as it is now: its
-; BPB and its root's first sector's sum (none if it can't be read), and
-; the kernel's sectors of it are dropped; so the next look, with its files
-; open, doesn't take it for another disk.  Not its FAT (the cache's is the
-; disk's).  Not a mounted floppy: nothing.  AX, BX, CX, DX, DI changed
+; INT 21h F008h (f_F0): floppy AL's sector CX (0: its boot sector; its
+; root's first) just written by the caller itself through INT 13h; the
+; caller's ES:BX (frame BP): 1,024 bytes, the sector as it read it before,
+; then as it wrote it.  The caller's part: the disk it wrote is the one it
+; read (LABEL's same).  The kernel's: what was read is what it knows its
+; disk by (the BPB kept, the root's sum kept or the one a failed write may
+; have left), and only a boot sector's label changed; then it knows the
+; disk by what was written (the BPB; the root's sum), so the next look
+; takes it (rule 1), and any other disk in now or later is another.
+; Nothing read from the disk here (a disk swapped since is the next look's).
+; The kernel's sectors of it dropped.  Not a floppy, not mounted, another
+; sector: nothing, NC.  CF, AX = 5: what was read isn't the kernel's disk,
+; or more than the label changed: nothing taken.  BX, CX, DX, SI, DI, ES
+; changed
 dsk_own:
         cmp     al, NFLOP
-        jae     .x
+        jae     .ok
         call    use_drive               ; ([act], SI)
         cmp     byte [si+D_MNT], 0
-        je      .x
+        je      .ok
         call    buf_inval
-        xor     dx, dx
-        call    raw_bounce
-        jc      .r
-        push    si
-        push    es
+        xor     bx, bx                  ; (what was read)
+        mov     cx, [bp+F_CX]
+        jcxz    .boot
+        cmp     cx, [si+D_ROOT]
+        jne     .ok
+        mov     dx, cx
+        call    .get
+        call    rt_chk                  ; (none kept: kept now)
+        jc      .no
+        mov     bx, 512                 ; (what was written)
+        call    .get
+        clc                             ; (kept)
+        jmp     rt_put
+.boot:  call    .get
+        call    bpb_slot
+        mov     si, bounce + 0Bh
+        repe    cmpsb
+        jne     .no
+        mov     bx, 512
+        call    .get
+        call    bpb_slot
+        mov     si, bounce + 0Bh
+        mov     cl, 2Bh - 0Bh           ; (to the label, and past it)
+        repe    cmpsb
+        jne     .no
+        add     si, 11
+        add     di, 11
+        mov     cl, 0Bh + BPBLEN - 36h
+        repe    cmpsb
+        jne     .no
+        call    bpb_slot
+        mov     si, bounce + 0Bh
+        rep     movsb
+.ok:    clc
+        ret
+.no:    mov     ax, 5
+        stc
+        ret
+; the caller's 512 bytes at its ES:BX + BX -> bounce, BX = bounce, AL =
+; [act]; ES = CS
+.get:   push    ds
         push    cs
         pop     es
-        mov     si, bounce + 0Bh
-        call    bpb_slot
-        rep     movsb
-        pop     es
-        pop     si
-.r:     mov     dx, [si+D_ROOT]
-        call    raw_bounce              ; (CF: rt_put forgets it)
+        mov     di, bounce
+        add     bx, [bp+F_BX]
+        mov     si, bx
+        mov     ds, [bp+F_ES]
+        mov     cx, 256
+        rep     movsw
+        pop     ds
+        mov     bx, bounce
         mov     al, [act]
-        jmp     short rt_put
-.x:     ret
+        ret
+        times   -(0Bh + BPBLEN < 36h) db 0
 
 ; floppy AL's root's first sector (its sector DX, at BX, as the disk
-; has it: read or written there): rt_put keeps its sum (CF: forgets it),
-; rt_chk compares it with the one kept (CF if it differs; none kept: kept
-; now).  Not the root's first sector, or not a floppy: nothing, NC.  All
-; kept (rule 1)
+; has it: read or written there): rt_put keeps its sum (CF: forgets it);
+; rt_try keeps it as one the disk may have instead of the one kept (a
+; write that failed or was Ignored: the old sector or this one there, or
+; neither if it was cut short); rt_chk compares it with those kept (CF if
+; it is neither; none kept: kept now; the other one kept, it is the
+; disk's: the one kept).  Not the root's first sector, or not a floppy:
+; nothing, NC.  All kept (rule 1)
+rt_try: pusha
+        mov     di, 2
+        jmp     short rt_chk.go
 rt_put: pusha
         sbb     di, di                  ; (FFFFh: forget, 0: keep)
         jmp     short rt_chk.go
@@ -698,18 +753,27 @@ rt_chk: pusha
         cmp     dx, [drvtab+bx+D_ROOT]
         jne     .r0
         call    sec_sum
-        shr     bx, 3                   ; (rt_sum's)
-        or      di, di
-        jz      .k
+        shr     bx, 3                   ; (rt_sum's, rt_alt's)
+        cmp     di, 1
+        jb      .k
+        ja      .t
         mov     cx, [rt_sum+bx]
         or      cx, [rt_sum+bx+2]
         jz      .k
         cmp     ax, [rt_sum+bx]
-        jne     .d
+        jne     .a
         cmp     dx, [rt_sum+bx+2]
+        je      .k
+.a:     cmp     ax, [rt_alt+bx]
+        jne     .d
+        cmp     dx, [rt_alt+bx+2]
         jne     .d
 .k:     mov     [rt_sum+bx], ax
         mov     [rt_sum+bx+2], dx
+        xor     ax, ax                  ; (the other one: none now)
+        cwd
+.t:     mov     [rt_alt+bx], ax
+        mov     [rt_alt+bx+2], dx
 .r0:    clc
         db      0B1h                    ; (MOV CL, imm8: skips the STC)
 .d:     stc
@@ -952,7 +1016,7 @@ fat_load:
 .hk:                                    ; (KHD.INC: C:'s is always there)
         cmp     [fat_drv], al
         je      .ok
-        call    fat_flush
+        call    fat_out
         jc      .x
         push    bx
         push    cx
@@ -1002,6 +1066,49 @@ fat_sum0:
 .x:     popa
         ret
 
+; the cache's changes to its disk, from another drive's call (fat_load)
+; or a program's end (fat_outt: terminate's, any drive): a floppy's FAT
+; changed is written only after its drive is looked at (rule 4, as INT 21h
+; 0Dh does: drv_ready), so another disk there is "Invalid disk change",
+; Retry looks again, Fail drops the changes (fat_drop, rule 4: the files
+; with changes pending SF_LOST), and this call goes on.  Its current
+; directory, if that look wants it found again, is the next access's (a
+; caller's directory search mustn't meet cwd_find).  [act] and [actp]
+; kept.  CF: AX = fat_flush's error (C:'s with KHD.INC)
+fat_out:
+        mov     al, [fat_drv]
+        cmp     al, [act]               ; (the call's own drive: looked at)
+        je      fat_flush
+fat_outt:
+        mov     al, [fat_drv]
+        cmp     al, NFLOP
+        jae     fat_flush
+        cmp     byte [fat_dirty], 0
+        je      fat_flush
+        pusha
+        mov     ah, [act]
+        push    ax
+        call    cl_fresh                ; (no change line, used < 2 s ago: not
+        jnc     .y                      ;  looked at, as a handle call: rule 9)
+        call    use_drive
+        mov     cl, [si+D_CHK]          ; (2: 1, a look without cwd_find, its
+        and     cl, 2                   ;  2 put back after: the next
+        jz      .l                      ;  access's)
+        mov     byte [si+D_CHK], 1
+.l:     push    cx
+        call    drv_ready
+        pop     cx
+        pushf
+        mov     si, [actp]
+        or      [si+D_CHK], cl
+        popf
+        jnc     .y
+        mov     al, [fat_drv]           ; (not the disk, or none to be seen:
+        call    fat_drop                ;  its changes dropped, rule 4)
+.y:     pop     ax
+        mov     al, ah
+        call    use_drive
+        popa
 ; write the FAT sectors that changed to every FAT copy: each copy in one
 ; transfer, from the first changed sector to the last (rule 3)
 ; (KHD.INC: C:'s changed ones first)
@@ -1452,9 +1559,12 @@ buf_put:
         pushf
         xchg    ax, cx                  ; (CX: disk_io's AX)
         jc      .f                      ; written: a floppy's root's first
-        cmp     byte [io_ign], 1        ;  sector's sum is this one now; a
-        cmc                             ;  failed or Ignored write: forgotten
-.f:     call    rt_put                  ;  (rt_put, rule 1; DX, BX kept)
+        cmp     byte [io_ign], 0        ;  sector's sum is this one now; a
+        jne     .f                      ;  failed or Ignored write: this one
+        call    rt_put                  ;  or the one kept, whichever the
+        jmp     short .g                ;  disk has (rule 1; DX, BX kept)
+.f:     call    rt_try
+.g:
         xchg    ax, cx
         popf
         pop     bx
