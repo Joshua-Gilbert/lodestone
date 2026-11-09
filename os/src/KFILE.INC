@@ -678,10 +678,8 @@ sft_chk:
         jae     .ok
         push    si
         push    es
-        call    cl_fresh
-        jnc     .f
-        call    drv_ready
-.f:     pop     es
+        call    drv_look
+        pop     es
         pop     si
         jc      .lost                   ; (another mount's: SF_LOST then)
         mov     al, [si+S_DRV]
@@ -695,6 +693,8 @@ sft_chk:
 .ok:    clc
         ret
 
+        times ($ + 1 - $$) & 1 db 90h   ; (what follows odd: its hot
+                                        ;  labels even)
 ; floppy AL without a change line (D_PRES 3), no look due (D_CHK), its
 ; last use by a handle call less than 2 s ago (36 ticks)?  NC if so.  Its
 ; last use: now.  All kept

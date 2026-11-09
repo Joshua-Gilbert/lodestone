@@ -217,7 +217,7 @@ resolve_si:
         mov     [r_name], al            ;  RMDIR read them)
         call    path_drv
         push    si
-        call    drv_ready
+        call    drv_look
         mov     bx, si
         pop     si
         jc      .dr                     ; (invalid, or not ready: 3, MS-DOS's)
@@ -925,8 +925,9 @@ f_3A:   call    get_path                ; RMDIR
         cmp     word [si+D_CWD], -1     ;  root from it): 16, as MS-DOS
         je      .np3                    ;  (unknown: resolve found it first,
         cmp     ax, [si+D_CWD]          ;  by its name; still unknown, it
-        je      .cur                    ;  couldn't be read: 3, ValidateCDS's)
-        cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
+        je      .cur                    ;  couldn't be read: 3, ValidateCDS's;
+                                        ;  another task's: MT's mt_rd, here)
+.mt:    cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
         je      .acc                    ;  doesn't look the name up, so
         cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
         je      .acc                    ;  (".." it finds, but is refused too)
@@ -1099,11 +1100,13 @@ f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         jc      .bad
         cmp     word [si+D_CWD], -1     ; unknown: found first, as MS-DOS's
         jne     .k                      ;  ValidateCDS (unreadable: the name
-        push    ax                      ;  kept, as it was)
-        call    drv_ready
-        jc      .k0
+        push    ax                      ;  kept, as it was; its look failed,
+        call    drv_ready               ;  INT 24h's Fail: 15, as MS-DOS's
+        jc      .k0                     ;  $CURRENT_DIR)
         call    cwd_find
+        clc
 .k0:    pop     ax
+        jc      .bad
 .k:     call    cwd_of
         lea     si, [di+1]              ; (without the leading '\')
         mov     es, [bp+F_DS]

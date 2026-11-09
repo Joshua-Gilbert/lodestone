@@ -3475,7 +3475,9 @@ def t_swaps():
                 st['n24'] += 1
         k.hooks.append(hook)
         o13 = pc.int13
+        last['boot'] = 0
         def i13():                                  # 'L': a root write that lands but is reported failed
+            if pc.r('ah') == 2 and pc.r('dl') == 1 and pc.r('cx') == 1 and pc.r('dh') == 0: last['boot'] += 1
             if st.get('land') and pc.r('ah') == 3 and pc.r('dl') == 1:
                 cx, dx = pc.r('cx'), pc.r('dx'); lba = ((cx >> 8) * 2 + (dx >> 8)) * 18 + (cx & 63) - 1
                 if lba <= 19 < lba + pc.r('al'):
@@ -3701,6 +3703,15 @@ def t_swaps():
     check('... its entry, never written (Ignored), not made a nameless one at the close (no entry with a 00h first '
           'byte and a chain); the disk consistent but for lost clusters', not [e for e in ents if e[0] == 0 and e[26:32]
           != b'\0' * 6] and sane(im['1']), [e.hex() for e in ents[:6]])
+    o, im = run('dgEu')
+    check('INT 21h 0Dh, B: looked at (its current directory unknown then), the drive emptied: 47h for B: finds it '
+          'first ("Not ready"), Fail: CF, 15, as MS-DOS\'s $CURRENT_DIR (its ValidateCDS), not the name kept',
+          'u[' in o and 'u[' in o and '-000F' in o.split('u[')[-1][:12], o)
+    for scr, n, what in (('qcqcqc', 1, 'three opens by path within 2 s: one look (the first), as MS-DOS\'s 2 s'),
+                         ('qcTqcTqc', 3, '... 3 s apart each: each looked at')):
+        o, im = run(scr, nocl=True)
+        check('B: without a change line (from boot): %s (boot sector reads: %d)' % (what, last['boot']),
+              last['boot'] == n and o.count('c+') == 3, (o, last['boot']))
     o, im = run('oewEN1wc', exe=True)
     f = fatcheck.read_files(im['1'])
     check('run from the Executive with no INT 24h handler of its own (the kernel\'s default answers, nobody asked: '

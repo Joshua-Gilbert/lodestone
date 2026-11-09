@@ -8031,7 +8031,7 @@ def t_cwdmount():
                   and not probs and bytes(other.img) == d2 and 'B:\\SUB>cd\nB:\\SUB\n' in scr, (scr[-200:], probs))
     # the same disk, changed elsewhere (SUB moved to another cluster, its old one NEW.TXT's, all past FAT sector 0
     # and the root's first), seen by task 0's look: task 1's B:\A\SUB found again by name when it runs (each look
-    # that takes a disk for the same one moves the mount's high byte on: TX_MG not that anymore)
+    # that takes a disk for the same one counts in mlook: TX_ML not that anymore)
     bm = mkimg.build(os.path.join(A.OUT, 'mcm.img'), [mkf('K.TXT', b'k' * 3000), mkf('PAD.BIN', b'p' * (400 * 512)),
                                                       'A\\', 'A\\SUB\\', mkf('A\\SUB\\F.TXT', b'f' * 100)])
     k = boot('mt_cwd.img', b'MULTITASK=1\r\n', 88, b=bm)
@@ -8065,6 +8065,57 @@ def t_cwdmount():
           'SUB found again by name (DIR lists F.TXT), COPY into it, NEW.TXT whole, the disk consistent',
           'F        TXT' in scr and f.get('A:\\A\\SUB\\Z.TXT') == b'k' * 3000 and f.get('A:\\A\\NEW.TXT') == b'N' * 512
           and not fatcheck.check(im)[0], (scr[-200:], fatcheck.check(im)[0][:3]))
+
+def t_rdmt():
+    """RMDIR of another task's current directory refused (16, as MS-DOS's: it checks every CDS; KMT.INC mt_rd):
+    task 1's LCMD in B:\\SUB (and C:\\SUB on a hard disk; and B:\\SUB with task 1 parked in EMS), task 2's LCMD
+    deletes SUB's file and removes SUB: refused ("Invalid path, not directory, or directory not empty"), then a
+    file over the cluster SUB would have freed; back in task 1, DIR and a COPY into its directory: SUB's, the
+    other file whole, the disk consistent.  SUB another task's no more (task 1 in B:\\): removed."""
+    import mkimg, fatcheck, test_hd as H
+    def mkf(n, b):
+        p = os.path.join(A.OUT, 'rd_' + n.replace('\\', '_')); open(p, 'wb').write(b); return n + '=' + p
+    lc = open(A.LCMD.split('=')[-1], 'rb').read()
+    for drv, how in (('b', ''), ('c', ''), ('b', 'parked'), ('b', 'moved')):
+        b1 = mkimg.build(os.path.join(A.OUT, 'rdb1.img'), [mkf('K.TXT', b'k' * 3000), 'SUB\\', mkf('SUB\\F.TXT', b'f' * 100)])
+        files = ['LODEMT.SYS=' + MTSYS, A.LCMD, MTL, ini(b'MULTITASK=1\r\n')]
+        kw = {'ata': H.drive(H.std()[0])} if drv == 'c' else {}
+        k = ktest.KPC(A.image('mt_rd.img', *files), open(b1, 'rb').read(), ems_pages=128, **kw)
+        k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc
+        ret(k, 'LCMD.COM', 2.0); k.run_for(1.0)
+        pre = ['md c:\\sub', 'echo f>c:\\sub\\f.txt'] if drv == 'c' else []
+        for c in pre + [drv + ':', 'cd sub'] + (['cd \\'] if how == 'moved' else []): line(k, c)
+        front(k, 0); k.run_for(0.5)
+        ret(k, 'LCMD.COM', 2.0); k.run_for(1.0)
+        if how == 'parked':
+            line(k, 'mtlaunch /p:1'); k.run_for(1.0)
+        line(k, 'cls')
+        for c in ['del %s:\\sub\\f.txt' % drv, 'rd %s:\\sub' % drv, 'copy a:lcmd.com %s:\\big.txt' % drv]:
+            line(k, c); k.run_for(1.0)
+        s2 = pc.text_screen()
+        st = tstate(k)[0]
+        if how == 'parked':
+            line(k, 'mtlaunch /u:1'); k.run_for(1.0)
+        t1 = [t for t, s_, nm in st if nm.startswith('LCMD')][0]
+        front(k, t1); k.run_for(1.0)
+        for c in ['cls', 'cd', 'dir', 'copy %s:\\big.txt z.txt' % drv]: line(k, c); k.run_for(1.0)
+        s1 = pc.text_screen()
+        refused = 'Invalid path, not directory' in s2
+        tag = {'': '', 'parked': ', task 1 parked in EMS meanwhile', 'moved': ''}[how]
+        if drv == 'b':
+            im = bytes(pc.drives[1].img); f = fatcheck.read_files(im); probs = fatcheck.check(im)[0]
+            if how == 'moved':
+                check('task 1\'s LCMD in B:\\ again: task 2\'s RD B:\\SUB removes it (no task\'s current directory)',
+                      not refused and 'A:\\SUB\\F.TXT' not in f and f.get('A:\\Z.TXT') == lc and not probs,
+                      (s2[-300:], sorted(f), probs))
+            else:
+                check('task 1\'s LCMD in B:\\SUB%s: task 2\'s RD B:\\SUB refused as MS-DOS refuses another CDS\'s '
+                      '(16, mt_rd), BIG.TXT whole, task 1\'s COPY into SUB, the disk consistent' % tag,
+                      refused and f.get('A:\\BIG.TXT') == lc and f.get('A:\\SUB\\Z.TXT') == lc and not probs,
+                      (s2[-300:], s1[-300:], sorted(f), probs))
+        else:
+            check('task 1\'s LCMD in C:\\SUB: task 2\'s RD C:\\SUB refused (the hard disk\'s too), task 1\'s COPY '
+                  'into it', refused and 'C:\\SUB>' in s1 and '1 File(s) copied' in s1, (s2[-300:], s1[-300:]))
 
 def asks(band):
     """The Executive's question about a floppy's changes that can't go out (UICORE.INC ui_int24) in its band"""
@@ -8189,7 +8240,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
