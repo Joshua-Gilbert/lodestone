@@ -2928,9 +2928,9 @@ def t_mount():
         o2 = sh.run('dir b:') + sh.run('echo x> b:zz.txt')
         img = bytes(first.img); probs = fatcheck.check(img)[0]; f = fatcheck.read_files(img)
         check('%s, another disk (the same boot sector) in B:: "Invalid disk change" asked, Fail: the write refused '
-              '(B-R: 34), %s; the other disk untouched; the first back: K.TXT as it was, the disk consistent'
+              '(B-5: 5, a handle call\'s code), %s; the other disk untouched; the first back: K.TXT as it was, the disk consistent'
               % (what, 'its close too, the other disk mounted for it (C-5)' if not defs else 'its close lets it go (C+)'),
-              'Fail?' in o and 'B-R' in o and ('C-5' if not defs else 'C+') in o and bytes(other.img) == d2
+              'Fail?' in o and 'B-5' in o and ('C-5' if not defs else 'C+') in o and bytes(other.img) == d2
               and f.get('A:\\K.TXT') == kk and not [p for p in probs if 'lost clusters' not in p]
               and f.get('A:\\ZZ.TXT') == b'x\r\n', (o, o2[-200:], probs))
     # a file open on B: (nothing to go), another disk in B:, Retry with it still there: asked again
@@ -2941,7 +2941,7 @@ def t_mount():
         other.changed = True; pc.drives[1] = other
     o = run_swap(k, 'mntswb', swap2, 'rf')
     check('... Retry with the other disk still in: asked again, then Fail: the write refused, nothing written to it',
-          o.count('Fail?') == 2 and 'B-R' in o and bytes(other.img) == d2, (o,))
+          o.count('Fail?') == 2 and 'B-5' in o and bytes(other.img) == d2, (o,))
     # B:K.TXT open, another disk with a K.TXT in the same directory slot: DEL B:K.TXT asks, Fail (the old disk
     # dropped); again: the new disk's K.TXT deleted, not refused for the old disk's file still open (sft_busy
     # skips SF_LOST: another mount's)
@@ -3299,14 +3299,14 @@ def t_mntback():
             f = fatcheck.read_files(bytes(first.img)).get('A:\\K.TXT')
             clean = bytes(other.img) == b2 and not fatcheck.check(bytes(first.img))[0]
             if not mid:
-                ok = ('[P]R-R' in o and ('S+k' if not defs else 'S+') in o and 'Z+' in o and clean
+                ok = ('[P]R-5' in o and ('S+k' if not defs else 'S+') in o and 'Z+' in o and clean
                       and f == (kdat if not defs else b'AS' + kdat[2:]))
-                check('B:K.TXT open (%s), another disk in, "Invalid disk change", Fail: that call fails (34); the '
+                check('B:K.TXT open (%s), another disk in, "Invalid disk change", Fail: that call fails (5); the '
                       'first disk back: the file %s on (S+), its close done%s, the other disk untouched'
                       % (what, 'reads' if not defs else 'is written', '' if not defs else ', K.TXT "AS" then the rest'),
                       ok, (o[-120:], None if f is None else f[:4]))
             else:
-                ok = ('[P]R-R' in o and 'M+' in o and 'S-5' in o and ('Z+' if not defs else 'Z-5') in o and clean
+                ok = ('[P]R-5' in o and 'M+' in o and 'S-5' in o and ('Z+' if not defs else 'Z-5') in o and clean
                       and f == (kdat if not defs else b'A' + kdat[1:]))
                 check('... (%s) the other disk mounted between (a search of B:): another mount, the file refused (S-5)%s'
                       % (what, '' if not defs else ', its close too (Z-5), K.TXT with A alone'), ok,
@@ -3385,11 +3385,109 @@ def t_mntback():
         o = run(k, 'mntbk', at, 2)
         if hour:
             check('B: without a change line, another disk in, the BIOS tick an hour (65536 ticks) on: the read looks, '
-                  '"Invalid disk change" (R-R), the first back: S+', '[P]R-R' in o and 'S+k' in o
+                  '"Invalid disk change" (R-5), the first back: S+', '[P]R-5' in o and 'S+k' in o
                   and bytes(other.img) == b2, o[-120:])
         else:
             check('... (the same at once, under 2 s: no look, no question: the rule as MS-DOS\'s)',
                   '[' not in o and 'R+' in o, o[-120:])
+
+def t_swaps():
+    """Disks swapped around a file's calls (SWAPS.COM; KDISK.INC rules 1, 4, 9).  After "Invalid disk change" and
+    Fail, the close and the commit of a changed file fail (CF, 5: a handle call's code), and COPY says so; the last
+    close of a changed file is asked about with another disk in (it counts as open till its entry is written), and
+    Retry with the disk back writes it.  A disk with the same boot sector but another FAT doesn't get the old
+    mount back after INT 21h 0Dh, nor after 0Dh with a file open and no Fail; an empty drive while the old disk is
+    looked for is "Not ready" (Retry with it back: the file reads on; Fail: the same, at the next call)."""
+    def mkf(n, b):
+        t = os.path.join(OUT, 'sw_' + n.replace('\\', '_')); open(t, 'wb').write(b); return n + '=' + t
+    c = os.path.join(OUT, 'SWAPS.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', c, os.path.join(HERE, 'SWAPS.ASM')], check=True)
+    lcmd = os.path.join(GOS, 'src', 'LCMD.COM')
+    kk = b'k' * 3000
+    b1 = image('sw_b1.img', mkf('K.TXT', kk), mkf('L.TXT', b'l' * 3000), mkf('PAD.TXT', b'p' * 700))
+    d1 = open(b1, 'rb').read()
+    d2 = bytearray(open(image('sw_b2.img', mkf('OTH.TXT', b'o' * 3000), mkf('K.TXT', b'K2' * 2000)), 'rb').read())
+    d2[0x27:0x2B] = b'\x12\x34\x56\x78'; d2 = bytes(d2)                    # (another serial)
+    d4 = bytearray(open(image('sw_b4.img', mkf('BIG.TXT', b'B' * 9000), mkf('Q.TXT', b'q' * 100)), 'rb').read())
+    d4[0:512] = d1[0:512]; d4 = bytes(d4)                                  # (the same boot sector, another FAT)
+    def run(script, a24=''):
+        k = ktest.KPC(image('sw_a.img', lcmd, 'SWAPS.COM=' + c), b=b1); k.start()
+        Shell(k); pc = k.pc
+        D = {'1': pc.drives[1], '2': pcemu.Floppy(bytearray(d2)), '4': pcemu.Floppy(bytearray(d4))}
+        st = {'n24': 0}
+        def put(ch):
+            if ch == '.': return
+            if ch == 'E':
+                pc.drives[1].empty = True; pc.drives[1].changed = True; return
+            for f in D.values(): f.empty = False
+            D[ch].changed = True; pc.drives[1] = D[ch]
+        def hook(pc):
+            if k.addr == k.i21 and pc.r('ah') == 0x30 and pc.r('bx') == 0x5A5A:
+                if chr(pc.r('cl')) in D or chr(pc.r('cl')) == 'E': put(chr(pc.r('cl')))
+            a = pc.u16(0, 0x24 * 4) + pc.u16(0, 0x24 * 4 + 2) * 16
+            if k.addr == a and k.addr != k.i21:
+                if st['n24'] < len(a24): put(a24[st['n24']])
+                st['n24'] += 1
+        k.hooks.append(hook)
+        k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
+        k.key('swaps ' + script); k.key(ktest.ENTER, settle=False)
+        pc.run_until(lambda: ''.join(pc.tty)[n0:].count('>') >= 2 or pc.crash, 60); k.settle()
+        o = ''.join(pc.tty)[n0 + len(script) + 7:]
+        return o, {n: bytes(f.img) for n, f in D.items()}
+    def sane(img):
+        return not [p for p in fatcheck.check(img)[0] if 'lost clusters' not in p]
+    o, im = run('oew2cv1')
+    check('B:K.TXT grown 600 bytes, another disk in: its close asked about ("Invalid disk change"), Fail: the close '
+          'fails, CF, 5 (59h: 5); the other disk untouched; K.TXT as it was', 'c[0F1B]-0005' in o and 'v+0005' in o
+          and im['2'] == d2 and fatcheck.read_files(im['1']).get('A:\\K.TXT') == kk and sane(im['1']), o)
+    o, im = run('oew2mv1c')
+    check('... its commit (68h) instead: fails, CF, 5; the first disk back: the close goes (its changes were the '
+          'cache\'s, dropped); K.TXT as it was, the disk consistent', 'm[0F1B]-0005' in o and ' 1 c+' in o
+          and im['2'] == d2 and fatcheck.read_files(im['1']).get('A:\\K.TXT') == kk and sane(im['1']), o)
+    o, im = run('oewa2cv1')
+    probs = fatcheck.check(im['1'])[0]
+    check('... B:\'s FAT written first (A:\'s loaded): nothing of the file dropped with the cache, its close fails all '
+          'the same (CF, 5); the first disk back: K.TXT as it was (its chain longer than its size: the entry wasn\'t '
+          'written, rule 2)', 'c[0F1B]-0005 v+0005' in o and im['2'] == d2
+          and fatcheck.read_files(im['1']).get('A:\\K.TXT') == kk and all('chain has' in p for p in probs), (o, probs))
+    o, im = run('oewa2c/1', '1')
+    f = fatcheck.read_files(im['1']).get('A:\\K.TXT')
+    check('B:K.TXT grown, B:\'s FAT written (A:\'s loaded), another disk in, the last close: asked ("Invalid disk '
+          'change"), the first disk put back, Retry: the close done, K.TXT 3,600 bytes, the disk consistent',
+          'c[0F1B]+' in o and f is not None and len(f) == 3600 and f[:3000] == kk and sane(im['1']) and im['2'] == d2,
+          (o, None if f is None else len(f)))
+    o, im = run('or2rd4rwc')
+    check('B:K.TXT open, another disk in, Fail, INT 21h 0Dh, a disk with K\'s boot sector but another FAT in: '
+          'another mount, the file refused (r-0005, w-0005), that disk untouched', 'd+0D00 4 r-0005 w-0005' in o
+          and im['4'] == d4 and im['2'] == d2, o)
+    o, im = run('ord4rwc')
+    check('B:K.TXT open (no Fail), INT 21h 0Dh, that disk in: the sum kept with a file open, "Invalid disk change" '
+          '(r[0F1B]-0005), the file refused after the Fail, that disk untouched',
+          '4 r[0F1B]-0005 w-0005' in o and im['4'] == d4, o)
+    o, im = run('or2rErr1rwc/31', '.1')
+    check('B:K.TXT open, another disk in, Fail, then the drive empty: "Not ready" as the old disk is looked for '
+          '(r[021A]); the first disk put in, Retry: the file reads on (r+), and is written', 'E r[021A]+0001 r+0001'
+          in o and ' 1 r+0001 w+0258 c+' in o and im['2'] == d2, o)
+    o, im = run('or2rEr1rwc')
+    check('... Fail at "Not ready": that call fails (5); the first disk back: the file reads on (r+)',
+          'E r[021A]-0005 1 r+0001 w+0258 c+' in o and im['2'] == d2, o)
+    # COPY's destination's close with another disk in: Write error, 0 copied
+    k = ktest.KPC(image('sw_c.img', lcmd), b=b1); k.start()
+    sh = Shell(k); pc = k.pc; other = pcemu.Floppy(bytearray(d2))
+    st = {'sw': False}
+    def hook(pc):
+        if k.addr == k.i21 and pc.r('ah') == 0x3E and pc.r('bx') > 4 and not st['sw']:
+            st['sw'] = True; other.changed = True; pc.drives[1] = other
+    k.hooks.append(hook)
+    k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
+    k.key('copy a:lcmd.com b:new.dat'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Fail?' in ''.join(pc.tty)[n0:] or pc.crash, 30)
+    pc.keys.append(ord('f'))
+    pc.run_until(lambda: 'copied' in ''.join(pc.tty)[n0:] or pc.crash, 30); k.settle()
+    o = ''.join(pc.tty)[n0:]
+    check('COPY A:LCMD.COM B:NEW.DAT, another disk in B: at its close: "Invalid disk change", Fail: "Write error", '
+          '0 File(s) copied, the other disk untouched', 'Invalid disk change' in o and 'Write error' in o
+          and '0 File(s) copied' in o and bytes(other.img) == d2, o[-200:])
 
 def t_cwdfind():
     """A floppy's current directory after another disk (KDISK.INC rule 1, cwd_find): B:\\SUB current, INT 21h 0Dh
@@ -4815,7 +4913,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_cwdfind, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

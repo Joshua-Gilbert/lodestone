@@ -330,13 +330,15 @@ raw_bounce:
 ;     cache's own sector 0 may be that disk's too).  A changed cache never
 ;     vouches for a disk.  A read that fails there is INT 24h's for that
 ;     read, not another disk.  INT 21h 0Dh forgets a floppy's sum when it
-;     has no changes to go (a program may rewrite the disk then: CHKDSK
-;     /F, DEFRAG), and its current directory is found again by name at the
-;     next access, as after any mount of another disk (cwd_find).  (Kept,
-;     a rewrite would be another disk, "Invalid disk change" for any file
-;     open on it, a redirection's say: 0Dh is all a DOS program tells of
-;     one.  A copy of the disk put in then is taken for it.)  Taken with no
-;     sum compared, its current directory is found again by name too.
+;     has nothing to go and no file open (a program may rewrite the disk
+;     then: CHKDSK /F, DEFRAG), and its current directory is found again
+;     by name at the next access, as after any mount of another disk
+;     (cwd_find).  (Kept, a rewrite would be another disk: 0Dh is all a
+;     DOS program tells of one.  A copy of the disk put in then is taken
+;     for it.)  With a file open it is kept: another disk with the same
+;     BPB put in is "Invalid disk change", not the same disk; a rewrite
+;     with a file open is too.  Taken with no sum compared, its current
+;     directory is found again by name too.
 ;  2. A chain goes to the disk before the entry that names it; an entry
 ;     before the frees it lets go of (do_create, a truncating write,
 ;     DELETE, RMDIR); dir_slot zeroes a directory's new cluster before it
@@ -350,8 +352,10 @@ raw_bounce:
 ;     cache changed, or a file open on it, as MS-DOS 3.30): INT 24h 0Fh,
 ;     "Invalid disk change", a write's (drv_ready); Retry looks again, so
 ;     the right disk back goes on as if nothing happened.  Fail or Abort:
-;     the old disk's cache dropped and the call fails (34); a changed
-;     cache dropped otherwise (INT 21h 0Dh or a screen capture's reset
+;     the old disk's cache dropped and the call fails (drv_ready's 34: a
+;     path call's 3, as MS-DOS's measured; a handle call's 5, sft_chk,
+;     its documented code, assumed; 59h says the same, MS-DOS's maybe 83);
+;     a changed cache dropped otherwise (INT 21h 0Dh or a screen capture's reset
 ;     after a failed flush): the drive's open files with changes pending
 ;     are SF_LOST (sft_pend): their writes and close refused (5), their
 ;     entries as the disk has them.  With nothing open and nothing to go
@@ -380,17 +384,22 @@ raw_bounce:
 ;  9. Each floppy mount has a number (mgen: 16 bits), its low byte kept
 ;     in the SFT of a file opened on it (S_GEN).  A mount after unmount
 ;     (D_CHK 3: no other mounted since) that finds the disk unmount let go
-;     (same_disk, as Retry takes it) keeps the number, and its files read
-;     on, as MS-DOS's after a Fail with the volume back (those whose
+;     (same_disk, as Retry takes it, its FAT sector 0 compared: a BPB alone
+;     is all two disks MS-DOS formatted, or copied, have) keeps the
+;     number, and its files read on, as MS-DOS's after a Fail with the
+;     volume back (those whose
 ;     changes were dropped are SF_LOST already, rule 4); any other mount
 ;     takes the next number, the old one's files SF_LOST (drv_ready), so
 ;     the byte coming round again is never theirs.  (A mount that fails
-;     leaves that to the next look.)  Read, write, commit and close with
+;     leaves that to the next look, as does a read that fails as it looks,
+;     INT 24h's first.)  Read, write, commit and close with
 ;     changes of a file another mount's, or SF_LOST, are refused (5,
 ;     sft_chk); each first looks at the drive (drv_ready; without a change
 ;     line, only if unused for ~2 s: D_PRES 3 from AH=15h's answer, taken
 ;     back at the first "not changed" from AH=16h, which such a drive
-;     never gives).  A close without changes just lets the file go.
+;     never gives).  A close without changes just lets the file go; the
+;     last close of a changed one writes it while it is still open (so
+;     another disk in by then is "Invalid disk change", Retry writes it).
 ;     Each task's current directories are its own, of the mount they were
 ;     found on (KMT.INC: TX_MG): another mount's, found again by name.
 ; ---------------------------------------------------------------------
@@ -508,20 +517,16 @@ drv_ready:
         pop     cx
         pop     bx
         jnc     .ck
-        mov     dl, [cwd_redo]          ; (Fail: the call fails, the drive
-        inc     dx                      ;  looked at again next time)
-        mov     [si+D_CHK], dl
-        pop     dx
-        add     sp, 2
-        stc
-        ret
+        pop     dx                      ; (Fail: the call fails, the drive
+        add     sp, 2                   ;  looked at again next time: .mf)
+        jmp     .mf
 .other: mov     al, [act]               ; another disk, and the old one has
         call    drv_pend                ;  changes to go or files open: INT
         jnc     .um                     ;  24h 0Fh, "Invalid disk change",
-        mov     [io_drv], al            ;  as MS-DOS (rule 4; Retry looks
-        mov     byte [io_bios], 6       ;  again: the right one back, nothing
-        mov     byte [io_crit], 2       ;  lost; a write's, as MS-DOS's)
-        mov     byte [io_op], 3
+        mov     ah, 3                   ;  as MS-DOS (rule 4; Retry looks
+        mov     [io_drv], ax            ;  again: the right one back, nothing
+        mov     byte [io_bios], 6       ;  lost; a write's, as MS-DOS's:
+        mov     byte [io_crit], 2       ;  io_op 3, after io_drv)
         call    crit_disk
         cmp     al, 1
         je      .ck
@@ -551,16 +556,21 @@ drv_ready:
         jae     .m                      ;  disk unmount let go back, the
         cmp     byte [cwd_redo], 2      ;  same as Retry would take (no other
         jne     .ng                     ;  mounted since), keeps its number
-        call    same_disk               ;  and files; else a new number, the
-        jnc     .m                      ;  old one's files SF_LOST (so the
-.ng:    cbw                             ;  number come round again, in the
+.sd:    call    same_disk               ;  and files; else a new number, the
+        jc      .sde                    ;  old one's files SF_LOST (so the
+        cmp     byte [cwd_redo], 2      ;  number come round again, in the
+        je      .m                      ;  SFT's byte, is never theirs).
+                                        ; (no sum compared, 1: the BPB alone
+                                        ;  is all a disk copied or formatted
+                                        ;  by MS-DOS has, another disk then)
+.ng:    cbw
         mov     bx, ax                  ;  SFT's byte, is never theirs)
         add     bx, bx
         inc     word [mgen+bx]
         call    sft_lose
 .m:     xor     dx, dx
         call    crit_bounce             ; no BPB yet: use a 9-sector guess
-        pop     dx
+.m3:    pop     dx
         pop     cx
         pop     bx
         jc      .mf
@@ -581,6 +591,12 @@ drv_ready:
         pop     ax
         stc
         ret
+.sde:   cmp     byte [sd_err], 0        ; unreadable: INT 24h for that read
+        je      .ng                     ;  (rule 1: not another disk), Retry
+        mov     dx, [sd_lba]            ;  looks again, Fail leaves it all
+        call    crit_bounce             ;  to the next look (.mf: D_CHK 3)
+        jnc     .sd
+        jmp     short .m3
 .inv:   mov     ax, 15                  ; invalid drive
         stc
         ret
@@ -809,9 +825,9 @@ disk_reset:
 .one:   pusha
         call    buf_inval
         mov     cl, al
-        mov     ah, 0
-        call    sft_pend
-        jc      .o1
+        call    drv_pend                ; (a file open on it: kept, so that
+        jc      .o1                     ;  another disk put in isn't taken
+                                        ;  for it on its BPB alone)
         mov     ah, 0FEh
         rol     ah, cl
         and     [fat_sv], ah

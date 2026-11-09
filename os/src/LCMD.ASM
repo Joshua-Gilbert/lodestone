@@ -366,7 +366,8 @@ crit:   sti
         cmp     cl, 0Ch
         jbe     .k
         cmp     cl, 0Fh                 ; (0Fh: the one after 0Ch's; the
-        mov     cl, 0Dh                 ;  rest, none in DOS 3.30: 0Ch's)
+        mov     cl, 0Dh                 ;  rest, SHARE's and the FCBs',
+                                        ;  never raised here: 0Ch's)
         je      .k
         dec     cx
 .k:     call    ce_msg
