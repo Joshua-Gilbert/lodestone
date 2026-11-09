@@ -88,8 +88,10 @@ start:  mov     sp, stack_top
         mov     dx, crit
         mov     ax, 2524h
         int     21h
-        mov     ax, 0F000h              ; Lodestone?  (its kernel takes 83h,
-        int     21h                     ;  a Fail nobody was asked for;
+        xor     dx, dx                  ; (DL 0: under NetWare's shell F000h
+        mov     ax, 0F000h              ;  sets the preferred server, 0 none)
+        int     21h                     ; Lodestone?  (its kernel takes 83h,
+                                        ;  a Fail nobody was asked for;
         cmp     ax, 4F47h               ;  another DOS's answers are 0-3)
         jne     .nl
         mov     byte [crit_a], 83h

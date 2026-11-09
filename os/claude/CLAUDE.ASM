@@ -286,8 +286,10 @@ snap_free:
         ret
 
 vec_ours:
-        mov     ax, 0F000h              ; Lodestone?  (its kernel takes 83h,
-        int     21h                     ;  a Fail nobody was asked for;
+        xor     dx, dx                  ; (DL 0: under NetWare's shell F000h
+        mov     ax, 0F000h              ;  sets the preferred server, 0 none)
+        int     21h                     ; Lodestone?  (its kernel takes 83h,
+                                        ;  a Fail nobody was asked for;
         cmp     ax, 4F47h               ;  MS-DOS's answers are 0-3)
         mov     al, 3
         jne     .a
