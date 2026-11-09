@@ -229,10 +229,33 @@ def t_review():
     check('LABEL with only a space after it, after a longer tail: the current drive, not a bad drive letter',
           'Invalid drive' not in o, o)
 
+def t_redirect():
+    # LABEL's output sent to a file on the disk it labels: the file open (the kernel's) while LABEL writes the
+    # root and the boot sector through INT 13h; INT 21h F008h has the kernel take the disk as it now is
+    for ext in (1, 0):
+        p = disk('rd%d.img' % ext, files=('K.TXT=' + os.path.join(SRC, 'LCMD.COM'),))
+        img = bytearray(open(p, 'rb').read())
+        if not ext: img[0x24:0x3E] = bytes(0x1A)                 # (DOS 3's BPB)
+        open(p, 'wb').write(img)
+        k = boot(p)
+        o = run(k, 'echo newlab| label b: > b:out.txt')
+        o2 = run(k, 'type b:out.txt')
+        im = bytes(k.pc.drives[1].img)
+        f = fatcheck.read_files(im).get('A:\\OUT.TXT', b'')
+        check('%s: "echo newlab| label b: > b:out.txt": the label set (root%s), OUT.TXT has LABEL\'s output, nothing '
+              'asked, the disk consistent' % ('a DOS 4 BPB' if ext else 'a DOS 3 disk', ' and boot sector' if ext else ''),
+              said(o, 'E0') and (root_label(im) or b'')[:11] == b'NEWLAB     ' and (not ext or im[0x2B:0x36] == b'NEWLAB     ')
+              and b'Volume label' in f and 'Volume label' in o2 and 'Fail' not in o + o2 and fatcheck.check(im)[0] == [],
+              (o, o2, f[:80], fatcheck.check(im)[0]))
+        o = run(k, 'echo more>> b:out.txt')
+        o = run(k, 'type b:out.txt')
+        check('... the file written on after it (the same disk)', 'more' in o and 'Fail' not in o
+              and fatcheck.check(bytes(k.pc.drives[1].img))[0] == [], o)
+
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_floppy, t_spaces, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review):
+    for t in (t_floppy, t_spaces, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt, t_review, t_redirect):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
