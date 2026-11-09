@@ -3400,8 +3400,12 @@ def t_swaps():
     looked for is "Not ready" (Retry with it back: the file reads on; Fail: the same, at the next call).  The disk
     changed on another machine with its FAT's first sector as it was is told apart by its root's first sector, also
     after a write of it that failed.  INT 21h F008h takes a sector the program wrote itself only if what it read is the
-    kernel's disk and only a boot sector's label changed, and then knows the disk by what was written.  A floppy's
-    changed FAT is written, from another drive's call, only after its drive is looked at."""
+    kernel's disk and only a boot sector's label changed (a boot sector's label never makes another disk), and then
+    knows the disk by what was written; either way the drive is looked at at its next access; with nothing open on
+    it, the disk is just forgotten.  A floppy's changed FAT is written, from another drive's call, only after its
+    drive is looked at; a look that can't read the disk keeps the changes (the call fails).  A root write that lands
+    but is reported failed, read back by the kernel: that sector the disk's.  A create's entry Ignored: no nameless
+    entry at the close.  Without a change line (from boot), within 2 s nothing is looked at (MS-DOS's rule)."""
     def mkf(n, b):
         t = os.path.join(OUT, 'sw_' + n.replace('\\', '_')); open(t, 'wb').write(b); return n + '=' + t
     c = os.path.join(OUT, 'SWAPS.COM')
@@ -3424,8 +3428,9 @@ def t_swaps():
     d6 = bytearray(d1); d6[0x2B:0x36] = b'ELSEWHERE  '; d6 = bytes(d6)        # disk 1 labelled on another machine
     last = {}
     def run(script, a24='', ce=False, nocl=False):
-        k = ktest.KPC(image('sw_a.img', lcmd, 'SWAPS.COM=' + c), b=b1); k.start()
-        Shell(k); pc = k.pc; last['k'] = k
+        k = ktest.KPC(image('sw_a.img', lcmd, 'SWAPS.COM=' + c), b=b1)
+        k.pc.drives[1].no_changeline = nocl                                # (from boot: D_PRES 3, AH=15h's)
+        k.start(); Shell(k); pc = k.pc; last['k'] = k
         D = {'1': pc.drives[1], '2': pcemu.Floppy(bytearray(d2)), '3': pcemu.Floppy(bytearray(d1)),
              '4': pcemu.Floppy(bytearray(d4)), '5': pcemu.Floppy(bytearray(d5)), '8': pcemu.Floppy(bytearray(d8)),
              '6': pcemu.Floppy(bytearray(d6))}
@@ -3433,6 +3438,8 @@ def t_swaps():
         st = {'n24': 0}
         def put(ch):
             if ch == '.': return
+            if ch == 'L': st['land'] = 1; return                         # the next root write lands, fails (20h)
+            if ch == 'Z': pc.drives[1].changed = False; return          # the change line cleared
             if ch == 'E':
                 pc.drives[1].empty = True; pc.drives[1].changed = True; return
             if ch in 'PU':                                              # the write-protect tab on, off
@@ -3443,12 +3450,21 @@ def t_swaps():
             D[ch].changed = True; pc.drives[1] = D[ch]
         def hook(pc):
             if k.addr == k.i21 and pc.r('ah') == 0x30 and pc.r('bx') == 0x5A5A:
-                if chr(pc.r('cl')) in D or chr(pc.r('cl')) in 'EPUT': put(chr(pc.r('cl')))
+                if chr(pc.r('cl')) in D or chr(pc.r('cl')) in 'EPUTLZ': put(chr(pc.r('cl')))
             a = pc.u16(0, 0x24 * 4) + pc.u16(0, 0x24 * 4 + 2) * 16
             if k.addr == a and k.addr != k.i21:
+                st['land'] = 0
                 if st['n24'] < len(a24): put(a24[st['n24']])
                 st['n24'] += 1
         k.hooks.append(hook)
+        o13 = pc.int13
+        def i13():                                  # 'L': a root write that lands but is reported failed
+            if st.get('land') and pc.r('ah') == 3 and pc.r('dl') == 1:
+                cx, dx = pc.r('cx'), pc.r('dx'); lba = ((cx >> 8) * 2 + (dx >> 8)) * 18 + (cx & 63) - 1
+                if lba <= 19 < lba + pc.r('al'):
+                    r = o13(); pc.w('ax', 0x2000); pc.cf(1); return r
+            return o13()
+        pc.int13 = i13
         k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
         k.key('swaps ' + script); k.key(ktest.ENTER, settle=False)
         pc.run_until(lambda: ''.join(pc.tty)[n0:].count('>') >= 2 or pc.crash, 60); k.settle()
@@ -3539,13 +3555,19 @@ def t_swaps():
           'K.TXT 4,200 bytes, M.TXT there, the disk consistent', 'r[0F1B]+' in o and 'w+0258 c+' in o
           and len(f.get('A:\\K.TXT', b'')) == 4200 and 'A:\\M.TXT' in f and sane(im['1']) and im['5'] == d5,
           (o, len(f.get('A:\\K.TXT', b''))))
-    for sc, ce, why in (('oew5kxwc/3', False, 'K\'s disk as changed on another machine put in, the program\'s '
-                         'own INT 13h read of its root, F008h with that'),
-                        ('oew4kxwc/3', False, '... a disk with K\'s boot sector and another FAT'),
-                        ('oew5kxdwc/33', False, '... then 0Dh (LABEL\'s order: its flush looks at the disk, asked '
-                         'there)'),
-                        ('oewEx5wc/3', False, 'the drive empty, F008h with nothing read (zeros as its boot sector)')):
-        o, im = run(sc, '', ce)
+    for sc, ce, nocl, why in (('oew5kxwc/3', False, False, 'K\'s disk as changed on another machine put in, the '
+                               'program\'s own INT 13h read of its root, F008h with that'),
+                              ('oew4kxwc/3', False, False, '... a disk with K\'s boot sector and another FAT'),
+                              ('oew5kxdwc/33', False, False, '... then 0Dh (LABEL\'s order: its flush looks at the '
+                               'disk, asked there)'),
+                              ('oew5kxwc/3', True, False, '... with an AT BIOS\'s 06h (the program\'s read cleared '
+                               'the change line: the look F008h leaves due)'),
+                              ('oew5kxdwc/33', True, False, '... and then 0Dh'),
+                              ('oew5kxwc/3', False, True, '... a drive without a change line (D_PRES 3 from boot), '
+                               'within its 2 s'),
+                              ('oewEx5wc/3', False, False, 'the drive empty, F008h with nothing read (zeros as its '
+                               'boot sector)')):
+        o, im = run(sc, '', ce, nocl)
         check(why + ': refused (x-0005: what was read isn\'t the kernel\'s disk), nothing taken; the next call '
               'asked about ("Invalid disk change"), Fail: the write refused, that disk untouched', 'x-0005' in o
               and ('w[0F1B]-0005' in o or '[0F1B]' in o and 'w-0005' in o) and im['5'] == d5 and im['4'] == d4, o)
@@ -3556,14 +3578,28 @@ def t_swaps():
     o, im = run('ocd8Yxnwc')
     f = fatcheck.read_files(im['8'])
     check('nothing open, 0Dh, a disk of another layout in (1.44 MB, 4-sector clusters, 7 root sectors), its label '
-          'written by the program and F008h: refused (its BPB isn\'t the kernel\'s), nothing taken; B:N.TXT then '
-          'made on that disk as its own layout has it (the disk consistent)', 'x-0005' in o and 'n+' in o
+          'written by the program and F008h: taken (nothing open, nothing to go: the drive unmounted, the disk in '
+          'taken as it is at the next access); B:N.TXT then made on that disk as its own layout has it (the disk '
+          'consistent)', 'x+' in o and 'n+' in o
           and 'c+' in o and len(f.get('A:\\N.TXT', b'')) == 600 and sane(im['8']), (o, sorted(f)))
     o, im = run('oew6Yxwc/3')
-    check('K\'s disk as labelled on another machine put in (its boot sector\'s label alone differs), the program\'s '
-          'own label written there, F008h: refused (what was read isn\'t the kernel\'s), the write after it asked '
-          'about, refused, nothing of that disk written but the program\'s own sector', 'x-0005' in o
-          and 'w[0F1B]-0005' in o and im['6'][512:] == d6[512:], o)
+    f = fatcheck.read_files(im['6'])
+    check('K\'s disk as labelled on another machine put in (its boot sector\'s label alone differs: the same disk, '
+          'the root\'s label is the one that counts), the program\'s own label written there, F008h: taken, the '
+          'file written on there (K.TXT 4,200 bytes), nothing asked', '[' not in o and 'x+' in o and 'w+0258 c+' in o
+          and len(f.get('A:\\K.TXT', b'')) == 4200 and sane(im['6']), (o, len(f.get('A:\\K.TXT', b''))))
+    o, im = run('oew5Yxdwc/1', '1')
+    f = fatcheck.read_files(im['1'])
+    check('K\'s disk as changed on another machine put in (the same boot sector, another root), its label written '
+          'by the program and F008h: taken (only the label changed), the look it leaves due finds another disk '
+          '(0Dh: "Invalid disk change"); the first disk put back, Retry: the same disk (its boot sector\'s label '
+          'aside), the file written on: K.TXT 4,200 bytes, that disk only the program\'s sector written',
+          'x+' in o and 'd[0F1B]+' in o and 'w+0258 c+' in o and len(f.get('A:\\K.TXT', b'')) == 4200
+          and sane(im['1']) and im['5'][512:] == d5[512:], (o, len(f.get('A:\\K.TXT', b''))))
+    o, im = run('oew5YxZdwc/3')
+    check('... the change line cleared after F008h: the look it left due all the same (0Dh asked), Fail: the write '
+          'refused, that disk only the program\'s sector written', 'x+' in o and 'd[0F1B]' in o and 'w-0005' in o
+          and im['5'][512:] == d5[512:], o)
     o, im = run('oGxrc')
     check('F008h with more than the boot sector\'s label changed (its sectors a track): refused, the file reads '
           'on', 'x-0005 r+0001 c+' in o, o)
@@ -3573,11 +3609,31 @@ def t_swaps():
           'sector), "Invalid disk change", the write refused, that disk untouched', '5 w[0F1B]-0005' in o
           and im['5'] == d5, o)
     for sc, nocl, ce, why in (('oew2awc/3', False, False, ''), ('oew2Tawc/3', True, False, ', a drive without a change '
-                              'line, 3 s after its last use'), ('oew2awc/3', False, True, ', an AT BIOS\'s 06h')):
+                              'line (D_PRES 3 from boot), 3 s after its last use'),
+                              ('oew2awc/3', False, True, ', an AT BIOS\'s 06h')):
         o, im = run(sc, '', ce, nocl)
         check('B:K.TXT grown (B:\'s FAT changed), another disk in, an A: call (36h, A:\'s FAT loaded)%s: B: looked '
               'at first, "Invalid disk change", Fail: B:\'s changes dropped, the A: call done; the write refused, '
               'the other disk untouched' % why, 'a[0F1B]+' in o and 'w-0005' in o and im['2'] == d2, o)
+    o, im = run('oew2awc/3', '', False, True)
+    check('... a drive without a change line, within 2 s of its last use: not looked at (MS-DOS\'s rule, KDISK.INC '
+          'rule 9): B:\'s FAT written to the disk in, nothing asked', '2 a+' in o and '[' not in o and im['2'] != d2, o)
+    for sc, nocl, why in (('oewEa1wc/3333', False, ''), ('oewEa1wc/3333', True, ', a drive without a change line '
+                          '(within 2 s: written blind, the write failing)')):
+        o, im = run(sc, '', False, nocl)
+        f = fatcheck.read_files(im['1'])
+        check('B:K.TXT grown, the drive emptied, an A: call (A:\'s FAT loaded)%s: B: "Not ready", Fail: B:\'s '
+              'changes kept (rule 3), the A: call fails; the disk back: the file written on, K.TXT 4,200 bytes, the '
+              'disk consistent' % why, 'E a[021A]-' in o or 'E a[023F]-' in o, (o,))
+        check('... (the write and close after it)', ' 1 w+0258 c+' in o and len(f.get('A:\\K.TXT', b'')) == 4200
+              and sane(im['1']), (o, len(f.get('A:\\K.TXT', b''))))
+    o, im = run('oewLnTTPnU1wc/3333')
+    f = fatcheck.read_files(im['1'])
+    check('B:K.TXT grown, a create whose root write lands but is reported failed (the root\'s new sector kept as the '
+          'one the disk may have), the kernel\'s own read of it (that one kept now), another create\'s root write '
+          'refused by a write-protected disk, the tab off: the disk is the same disk, the file written on (K.TXT '
+          '4,200 bytes)', 'U 1 w+0258 c+' in o and len(f.get('A:\\K.TXT', b'')) == 4200 and sane(im['1']),
+          (o, len(f.get('A:\\K.TXT', b''))))
     o, im = run('oew2a1wc/1', '1')
     f = fatcheck.read_files(im['1'])
     check('... the first disk put back at the question, Retry: B:\'s FAT written there, the A: call done, the '
@@ -3588,6 +3644,10 @@ def t_swaps():
     check('B: write-protected, B:N.TXT created and written, each INT 24h answered Ignore, the tab off, another disk '
           'and the same one back: still the same disk (the root\'s sum forgotten at the write Ignored, not kept '
           'as the cache had it): the file reads on (r+), closes', 'U 2 1 r+0000 c+' in o and im['2'] == d2, o)
+    ents = [im['1'][19 * 512 + 32 * j:19 * 512 + 32 * j + 32] for j in range(16)]
+    check('... its entry, never written (Ignored), not made a nameless one at the close (no entry with a 00h first '
+          'byte and a chain); the disk consistent but for lost clusters', not [e for e in ents if e[0] == 0 and e[26:32]
+          != b'\0' * 6] and sane(im['1']), [e.hex() for e in ents[:6]])
     # COPY's destination's close with another disk in: Write error, 0 copied
     k = ktest.KPC(image('sw_c.img', lcmd), b=b1); k.start()
     sh = Shell(k); pc = k.pc; other = pcemu.Floppy(bytearray(d2))

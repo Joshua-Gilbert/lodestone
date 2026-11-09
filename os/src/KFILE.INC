@@ -613,6 +613,9 @@ sft_commit:
         mov     di, si
         pop     si
         jc      .e
+        cmp     byte [di], 0            ; (a slot never used: the entry's
+        je      .dn                     ;  write Ignored, its sector read
+                                        ;  again: not made a nameless one)
         mov     ax, [si+S_CLU]          ; (field by field: a rep movsw would
         mov     [di+26], ax             ;  need ES set up, close_all's PSP
         mov     ax, [si+S_SIZE]         ;  here, and be no faster)
@@ -636,7 +639,7 @@ sft_commit:
         call    buf_put
         pop     si
         jc      .e
-        and     byte [si+S_FLAGS], ~(SF_DIRTY | SF_STAMP)
+.dn:    and     byte [si+S_FLAGS], ~(SF_DIRTY | SF_STAMP)
         pop     di
         pop     dx
         pop     bx
