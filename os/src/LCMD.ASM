@@ -354,9 +354,9 @@ crit:   sti
         push    cs
         pop     ds
         cmp     byte [crit_q], 0        ; (Tab looking: Fail, no prompt in
-        je      .ask                    ;  the line being edited)
-        mov     al, 3
-        jmp     .x
+        je      .ask                    ;  the line being edited; 83h: one
+        mov     al, 83h                 ;  nobody was asked for, so the
+        jmp     .x                      ;  kernel drops nothing, its rule 4)
 .ask:   mov     [crit_ah], ah
         mov     [crit_al], al
         mov     si, s_crlf

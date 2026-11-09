@@ -134,7 +134,7 @@ ctrlc:  push    cs
         int     21h
 crit:   mov     [cs:critcode], di       ; (DOS's I/O: fail it, the why kept)
         mov     byte [cs:crithit], 1
-        mov     al, 3
+        mov     al, 83h                 ; (Fail, nobody asked: KDISK rule 4)
         iret
 
 ; ---------------------------------------------------------------------

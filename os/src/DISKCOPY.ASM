@@ -198,8 +198,8 @@ stop1:
 ctrlc:  push    cs
         pop     ds
         jmp     stop1
-crit:   mov     al, 3
-        iret
+crit:   mov     al, 83h                 ; (Fail, nobody asked: the kernel
+        iret                            ;  drops nothing, its rule 4)
 
 ; DX ($) said, then a key: Y (ZF), or another (NZ; Ctrl-C stops)
 yesno:  call    print

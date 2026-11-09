@@ -234,8 +234,8 @@ alone:  mov     ax, 0F012h              ; (CF: multitasking is off)
 ctrlc:  push    cs
         pop     ds
         jmp     stop3
-crit:   mov     al, 3
-        iret
+crit:   mov     al, 83h                 ; (Fail, nobody asked: the kernel
+        iret                            ;  drops nothing, its rule 4)
 
 ; ---------------------------------------------------------------------
 ; one disk, from the drive's first touch to the figures.  CF: DX = why

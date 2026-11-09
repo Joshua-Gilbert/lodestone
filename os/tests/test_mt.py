@@ -8027,7 +8027,9 @@ def t_dkeep():
     look asks in its text screen, "Not ready writing drive B" (the FAT's: a write's); the disk back, Retry: its
     create goes, and MTKEEP's next write and close (K.TXT 4,200 bytes).  A text task's own prompt (mt_i24) for
     another disk in says "Invalid disk change writing drive B", as COMMAND does; its Fail, the user's, drops the
-    changes (the write refused), the other disk untouched."""
+    changes (the write refused), the other disk untouched.  The Fails of Lodestone's other handlers that ask nobody
+    keep them too: the kernel's own default (Shift-CODE-P's prompt loaded from A:, the Executive's EXEC) and LCMD's
+    while Tab looks (its own work, no prompt in the line being edited)."""
     import mkimg, fatcheck
     kp = os.path.join(A.OUT, 'dk_k.txt'); open(kp, 'wb').write(b'k' * 3000)
     b1 = open(mkimg.build(os.path.join(A.OUT, 'dk_b1.img'), ['K.TXT=' + kp]), 'rb').read()
@@ -8058,6 +8060,35 @@ def t_dkeep():
           and A.disk_file(k, 'RES.TXT') == b'ok' and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'+0258 +')
           and len(f.get('A:\\K.TXT', b'')) == 4200 and not fatcheck.check(bytes(d1.img))[0],
           (auto, crit, tail, A.disk_file(k, 'RES.TXT'), A.disk_file(k, 'RES2.TXT'), len(f.get('A:\\K.TXT', b''))))
+    for lfirst in (False, True):
+        fl = files + [os.path.join(HERE, 'MTKEEP2.COM')]
+        k = ktest.KPC(A.image('mt_dk3.img', *fl), b1, ems_pages=88)
+        k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc; d1 = pc.drives[1]
+        ret(k, 'MTKEEP2.COM' if lfirst else 'MTKEEP.COM', 1.0)
+        front(k, 0)
+        if lfirst:                                  # LCMD loaded first, then B:'s FAT changed again
+            k.code_p(); k.run_for(1.0)
+            n = [t for t, s_, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
+            front(k, n[0]); pc.keys.append(ord(' ')); k.run_for(2.0); front(k, 0); k.run_for(0.5)
+        d1.empty = True; d1.changed = True
+        if not lfirst: k.code_p(); k.run_for(2.0)
+        else:
+            k.key('type a:\\lc'); k.key(ktest.TAB); k.run_for(2.0)
+        kept = (pc.rd(0x60, k.Y['fat_drv'], 1)[0], pc.rd(0x60, k.Y['fat_dirty'], 1)[0])
+        if lfirst: k.key(ktest.ESC); k.key('exit'); k.key(ktest.ENTER); k.run_for(1.0)
+        d1.empty = False; d1.changed = True
+        n = [t for t, s_, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
+        if n: front(k, n[0])
+        pc.keys.append(ord(' ')); k.run_for(4.0)
+        f = fatcheck.read_files(bytes(d1.img))
+        check('MTKEEP\'s B:K.TXT grown, B: emptied, %s: B:\'s look "Not ready", the Fail nobody was asked for '
+              '(%s): B:\'s changes kept; the disk back, MTKEEP\'s writes and close go, K.TXT %s bytes, the disk '
+              'consistent' % (('LCMD started first, Tab after "type a:\\lc" (its files looked for)', 'LCMD\'s, '
+              'while Tab looks', '4,800') if lfirst else ('Shift-CODE-P (the prompt loaded from A:)', 'the kernel\'s '
+              'default handler\'s, the Executive\'s EXEC', '4,200')), kept == (1, 1)
+              and len(f.get('A:\\K.TXT', b'')) == (4800 if lfirst else 4200) and not fatcheck.check(bytes(d1.img))[0]
+              and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'+0258 +0258 +' if lfirst else b'+0258 +'),
+              (kept, len(f.get('A:\\K.TXT', b'')), A.disk_file(k, 'RES2.TXT')))
     # MTKEEP in front (a text task, no INT 24h of its own: mt_i24 asks), another disk in B:
     k = ktest.KPC(A.image('mt_dk2.img', *files), b1, ems_pages=88)
     k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc
@@ -8076,7 +8107,7 @@ if __name__ == '__main__':
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
               'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST', 'MTCLI',
-              'MTKEEP', 'MTADLY'):
+              'MTKEEP', 'MTKEEP2', 'MTADLY'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/', '-i', HERE + '/',     # (MTLIB.INC)
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)

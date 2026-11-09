@@ -1,6 +1,7 @@
 ; MTKEEP.COM (test_mt t_dkeep): open B:K.TXT, write 600 bytes at its end,
 ; wait for a key (INT 21h 08h), write 600 more, close; each result (+ or -,
-; AX in hex) into A:RES2.TXT
+; AX in hex) into A:RES2.TXT.  TWICE (MTKEEP2.COM): a key and 600 more
+; before the last ones
 org 100h
         mov     ax, 3D02h
         mov     dx, kn
@@ -18,6 +19,16 @@ org 100h
         mov     dx, buf
         int     21h
         jc      .e1
+%ifdef TWICE
+        mov     ah, 08h
+        int     21h
+        mov     bx, [h]
+        mov     ah, 40h
+        mov     cx, 600
+        mov     dx, buf
+        int     21h
+        call    rec
+%endif
         mov     ah, 08h
         int     21h
         mov     bx, [h]
