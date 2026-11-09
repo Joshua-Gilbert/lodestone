@@ -3413,9 +3413,10 @@ def t_swaps():
     d4[0:512] = d1[0:512]; d4 = bytes(d4)                                  # (the same boot sector, another FAT)
     d5 = bytearray(d1); i = d5.find(b'K       TXT', 19 * 512)               # disk 1 changed elsewhere: K.TXT's
     d5[i:i + 11] = b'Q       TXT'; d5[i + 28:i + 32] = struct.pack('<I', 10); d5 = bytes(d5)     # slot a small Q.TXT
+    last = {}
     def run(script, a24=''):
         k = ktest.KPC(image('sw_a.img', lcmd, 'SWAPS.COM=' + c), b=b1); k.start()
-        Shell(k); pc = k.pc
+        Shell(k); pc = k.pc; last['k'] = k
         D = {'1': pc.drives[1], '2': pcemu.Floppy(bytearray(d2)), '3': pcemu.Floppy(bytearray(d1)),
              '4': pcemu.Floppy(bytearray(d4)), '5': pcemu.Floppy(bytearray(d5))}
         st = {'n24': 0}
@@ -3423,11 +3424,18 @@ def t_swaps():
             if ch == '.': return
             if ch == 'E':
                 pc.drives[1].empty = True; pc.drives[1].changed = True; return
+            if ch in 'PU':                                              # the write-protect tab on, off
+                pc.drives[1].wp = ch == 'P'; return
+            im = pc.drives[1].img
+            if ch == 'X':                                               # the root's first sector rewritten
+                i = bytes(im).find(b'L       TXT', 19 * 512); im[i:i + 11] = b'M       TXT'; return   # (INT 13h)
+            if ch == 'Y':                                               # the boot sector's label
+                im[0x2B:0x36] = b'NEWLAB     '; return
             for f in D.values(): f.empty = False
             D[ch].changed = True; pc.drives[1] = D[ch]
         def hook(pc):
             if k.addr == k.i21 and pc.r('ah') == 0x30 and pc.r('bx') == 0x5A5A:
-                if chr(pc.r('cl')) in D or chr(pc.r('cl')) == 'E': put(chr(pc.r('cl')))
+                if chr(pc.r('cl')) in D or chr(pc.r('cl')) in 'EPUXY': put(chr(pc.r('cl')))
             a = pc.u16(0, 0x24 * 4) + pc.u16(0, 0x24 * 4 + 2) * 16
             if k.addr == a and k.addr != k.i21:
                 if st['n24'] < len(a24): put(a24[st['n24']])
@@ -3485,6 +3493,37 @@ def t_swaps():
     o, im = run('or2rEr1rwc')
     check('... Fail at "Not ready": that call fails (5); the first disk back: the file reads on (r+)',
           'E r[021A]-0005 1 r+0001 w+0258 c+' in o and im['2'] == d2, o)
+    o, im = run('or2rErwc/31', '.2')
+    check('... the drive empty at that look, another disk put in, Retry: that disk is another disk (its own mount '
+          'number, the old files refused: r-0005, w-0005), not written', 'E r[021A]-0005 w-0005' in o
+          and im['2'] == d2, o)
+    o, im = run('or2rEreewc/311', '.5')
+    check('... K\'s disk as changed on another machine put in at "Not ready", Retry: refused (w-0005), Q.TXT in '
+          'K\'s slot not written over', 'E r[021A]-0005 e+0BB8 e+0BB8 w-0005' in o and im['5'] == d5, o)
+    def opn(k):                                     # files of B: still counted as open (not devices)
+        sa = k.Y['sft']
+        return [i for i in range(24) if k.pc.rd(0x60, sa + 44 * i, 44)[0] and not k.pc.rd(0x60, sa + 44 * i, 44)[2] & 0x80]
+    o, im = run('oew2c/2')
+    check('B:K.TXT grown, another disk in, its close asked about, Abort: the program ends, its handle closed by '
+          'terminate (the SFT free again, not left in use), K.TXT as it was', 'c[0F1B]' in o
+          and not opn(last['k']) and fatcheck.read_files(im['1']).get('A:\\K.TXT') == kk and sane(im['1']),
+          (o, opn(last['k'])))
+    o, im = run('oewdXxdrc/1')
+    f = fatcheck.read_files(im['1'])
+    check('B:K.TXT open and grown, 0Dh, the root\'s first sector rewritten through INT 13h (L.TXT renamed M.TXT), '
+          'INT 21h F008h (the caller\'s own write: the disk taken as it is), 0Dh: the same disk, the file reads on '
+          'and closes (K.TXT 3,600 bytes, M.TXT kept), nothing asked', '[' not in o and 'r+' in o and 'c+' in o
+          and f.get('A:\\K.TXT', b'')[:3000] == kk and len(f.get('A:\\K.TXT', b'')) == 3600
+          and 'A:\\M.TXT' in f and sane(im['1']), (o, sorted(f)))
+    o, im = run('oewdYxdrc/1')
+    f = fatcheck.read_files(im['1'])
+    check('... the boot sector\'s label changed that way instead (as LABEL does), F008h: the same disk, K.TXT '
+          '3,600 bytes, nothing asked', '[' not in o and 'c+' in o and len(f.get('A:\\K.TXT', b'')) == 3600
+          and im['1'][0x2B:0x36] == b'NEWLAB     ' and sane(im['1']), (o, len(f.get('A:\\K.TXT', b''))))
+    o, im = run('PnwU21rc/000')
+    check('B: write-protected, B:N.TXT created and written, each INT 24h answered Ignore, the tab off, another disk '
+          'and the same one back: still the same disk (the root\'s sum forgotten at the write Ignored, not kept '
+          'as the cache had it): the file reads on (r+), closes', 'U 2 1 r+0000 c+' in o and im['2'] == d2, o)
     # COPY's destination's close with another disk in: Write error, 0 copied
     k = ktest.KPC(image('sw_c.img', lcmd), b=b1); k.start()
     sh = Shell(k); pc = k.pc; other = pcemu.Floppy(bytearray(d2))

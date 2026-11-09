@@ -1115,6 +1115,8 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
 ;   AL = 6: PrtSc's printer driver -> ES:BX = its path ("": files), CX =
 ;           its room (the caller changes it there)
+;   AL = 8: DL = a floppy (0 = A:) the caller has just written itself
+;           through INT 13h, still the kernel's disk: taken as it is now
 f_F0:   mov     al, [bp+F_AX]
         or      al, al
         jnz     .1
@@ -1133,9 +1135,17 @@ f_F0:   mov     al, [bp+F_AX]
         je      .saver
         cmp     al, 7
         je      .hdn
+        cmp     al, 8
+        je      .own
         cmp     al, 1
         jne     f_bad
         jmp     .open
+; AL=8: floppy DL's disk written by the caller through INT 13h (LABEL),
+; the disk the kernel has mounted: its BPB and root sum taken from it as
+; it is now, so the next look doesn't call it another disk (dsk_own)
+.own:   mov     al, [bp+F_DX]
+        call    dsk_own
+        jmp     ok
 ; AL=2: lend the disk cache's memory to the caller (windows' save-under):
 ; ES = its segment, CX = bytes.  CF if there is no cache or it is lent.
 ; (KEMS.INC: with the cache in EMS, ems_lend and ems_back instead)
