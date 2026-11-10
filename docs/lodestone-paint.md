@@ -2,7 +2,7 @@
 
 Paint (`PAINT.RUN`, on ROM 2) is a Lodestone application: a very fast painter that doubles as a BMP viewer, small, and built as much as possible from existing code. Under `MULTITASK=1` it runs in a window.
 
-§2-§6 are the design (2026-10-21). It is in parts: P1, the viewer and the core painter (pencil, brush, eraser, line, rectangles, patterns, undo, 1-bit load and save, View, the Executive's `.BMP` opener), is built; §9 says what was built and where it differs from the design. W0-W2 put Paint in a window (§9-§11). Not done yet: P2 (ellipse, flood fill, text, select / move / copy / flip, zoom) and P3 (deeper-colour BMPs, starting with 4-bit; PgUp / PgDn through a directory's BMPs).
+§2-§6 are the design (2026-10-21). It is in parts: P1, the viewer and the core painter (pencil, brush, eraser, line, rectangles, patterns, undo, 1-bit load and save, View, the Executive's `.BMP` opener), is built; §9 says what was built and where it differs from the design. W0-W2 put Paint in a window (§9-§11). Not done yet: P2, whose scope isn't fixed (the candidates: ellipse, flood fill, text, select / move / copy / flip, a magnified zoom, not the window zoom of CODE-F), and P3 (deeper-colour BMPs, starting with 4-bit; PgUp / PgDn through a directory's BMPs).
 
 ## 1. What "space" means here
 
@@ -87,7 +87,7 @@ If the second buffer can't be allocated (MT with a small region, a TSR in the wa
 | Opening `.BMP` from the Executive | `kinds` table + the existing "Write opens it" path, generalised | ~30 B resident (§6) |
 | Build | `mkrun.py`, `RUN_API equ 6` (no new API needed) | 0 |
 
-## 3. The speed design ("hyper fast")
+## 3. The speed design
 Every inner loop works on whole bytes or words where it can, and on the screen in place. Nothing is drawn twice.
 
 - **A line table in BSS:** 400 words, `y → bank offset`, filled at start from `row_di`'s formula. A pixel costs one table read, a mask read (an 8-byte `80h >> n` table) and one `or`/`and`/`xor` on `es:[di+bx]`. Lines step with `NEXTROW` and never recompute.

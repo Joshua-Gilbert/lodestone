@@ -333,7 +333,7 @@
 - **Size:** the first build counted the titles for the question, which needed a DTA a level and a second pass (+552 bytes). That was too much, so the count went: 186 bytes less.
 - **Guards for damaged disks:** a subject whose first entry isn't "." (a corrupt one pointing at the root or elsewhere) is left alone; a path longer than DOS allows stops the walk.
 - **Kernel fix (RMDIR, also the prompt's RD):** a subject Windows or Linux wrote long names into kept the long-name entries after its files were erased, and RMDIR took those as titles ("Access denied"). They no longer count.
-- **Checked:** no way was found for the walk to leave the subject on a sound disk. The fixes for long names and an unchecked CHDIR, and the damaged-disk guards, are in.
+- **Checked:** no way was found (in the first build) for the walk to leave the subject on a sound disk. The fixes for long names and an unchecked CHDIR, and the damaged-disk guards, are in.
 - **Cost:** LODE.SYS 37,002 bytes (+366). A DOS program gets 564.2 KB (−0.4 KB).
 - **Tests (`t_subdel`, 10 checks):** Root refused; the question; ESC; Return erasing a tree with a read-only title, a long-named one and empty subjects; the list after; an empty subject; a write-protected disk. Checked to fail without the RMDIR fix.
 
@@ -723,7 +723,7 @@ The aim: a calculator on the 80287, scriptable at the prompt (`CALC 4*4`) and a 
   7. **INT 16h AH=05h on the 1520:** confirmed in GRiD's BIOS source (`KbPlaceChar`, which puts the key at the buffer's tail).
   8. **API 5's two changes apply to older `.RUN`s too.** Left as is: every `.RUN` there is sets its redraw routine first and none returns 0FFFFh, and checking the header's API would cost resident bytes.
   9. **A stale strip after the Executive was redrawn under the window** (the saver, then a changed listing). The window counts its paints, and when it was repainted it exits with 0, so the Executive reads the disk and redraws.
-- **More fixes (2026-10-12):** the nine bugs below each have a test. Eight of those tests were run against the code before and failed; the ninth, the API stamp, fails by construction (the old `mkrun.py` wrote 05 into every header):
+- **More fixes (2026-10-12):** 17 findings after merging; ten were fixed, and the nine bugs among them, below, each have a test. Eight of those tests were run against the code before and failed; the ninth, the API stamp, fails by construction (the old `mkrun.py` wrote 05 into every header):
   1. **`name=` under a parent that isn't LCMD printed, set nothing and gave ERRORLEVEL 0,** so `:loop / calc i=i+1 / if not %i%==3 goto loop` would never end. Now "name= works only at the command prompt", ERRORLEVEL 1, and `ENVPARA` comes from one file (`LCMDENV.INC`) for LCMD and CALC.
   2. **`mkrun.py` stamped every `.RUN` with the current API,** so 0.4.4's SYSTEM.RUN would be "Not a program" on a floppy with an older LODE.SYS. Now `RUN_API` (above).
   3. **Misuse looked like success:** `CALC /X`, `CALC %UNSET%` and a bare `CALC` printed the usage to standard output with ERRORLEVEL 0. Now standard error and 1; `CALC /?` for the usage on purpose.
@@ -1131,7 +1131,7 @@ A program can name its own modes, which the Executive's right-click menu then of
   - **Register-contract slips:** `UI_SBU16`'s AX, `UI_EVENT` / `UI_EDIT` / `UI_LVCLICK` registers.
   - **Window and saver details:** the redraw routine not cleared before a `.RUN`, a form outline left behind after the saver, System's band after the saver, a fifth window unbalancing closes, and a message's Return swallowed after the saver.
   - **Smaller ones:** keypad arrows with NumLock, `UI_RUN` with a `.RUN` path, date numbers over 255, and saving to `X.$$$`.
-- **More fixes (2026-10-06):** about 40 classic bugs, almost all confirmed in the emulator. Fixed, with tests for the serious ones:
+- **More fixes (2026-10-06):** about 40 findings, almost all confirmed as bugs in the emulator. Fixed, with tests for the serious ones:
   - **A click above an open form hung the machine:** a borrow went unchecked before a `DIV`, which faulted. Every form was affected (Write's Find/Substitute/Jump/Save, System's clock).
   - **Write's PgDn, PgUp and Jump didn't redraw the text:** `update` compared the view with itself. It now compares with the view last drawn.
   - **A damaged `.RUN` could wreck the core:** the fixup counts and offsets weren't checked, so a bad header rewrote the jump table or crashed. Now it's "Not a program".

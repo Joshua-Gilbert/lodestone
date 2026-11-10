@@ -70,7 +70,9 @@ The files to boot from are listed in the top-level README ("From a floppy"); the
 | LODE.PIC | the start-up picture (`lodestone-splash.md`) |
 | LCMD.COM | Lodestone command prompt (CODE-P; CLAUDE's DOS commands) |
 | SYSTEM.RUN, WRITE.RUN, CALC.RUN, TASKS.RUN, TERM.RUN, PAINT.RUN | the programs on the UI core |
-| TERM.FNT, TERMINUS.FNT | the terminal window's font; the Terminus font for System → Display |
+| CALC.COM | the calculator at the command prompt |
+| SCREEN.PRN | Shift-PrtSc's file writer (read from the root of the start-up disk) |
+| TERM.FNT, TERMINUS.FNT, GRIDFONT.FNT | the terminal window's font; the Terminus font and GRiD's TC8X16 for System → Display |
 | DEFRAG.COM | disk tidier / screen saver (`DEFRAG [B:]`, `DEFRAG [B:] /T` to test the free space, `DEFRAG /S` as the saver runs it) |
 | DEFRAG.TXT | DEFRAG's log |
 | HEADCLN.COM | floppy head cleaning with a wet cleaning disk |
@@ -90,8 +92,8 @@ The files to boot from are listed in the top-level README ("From a floppy"); the
 - **On the development 1520, drive A:'s head 0 is marginal on the innermost ~14 tracks** (side 0, cylinders ~62–79): the same floppy in the external B: drive shows 0 errors, and head cleaning moved the trouble only from cylinder 61 to ~66. Each error is a whole-track read that fails while every sector reads alone, so since 0.2.3 the kernel reads such tracks one sector at a time before giving up. Files sit at the front of the disk, away from the weak tracks.
 
 ## Notes
-- Rollback if needed: restart without F to get GRiD MS-DOS, and copy an earlier release's LODE.SYS and LODEMT.SYS back from `os\releases\`.
-- Floppy DMA into the EMS frame works on the 1520 (2026-10-07, `bench\EMSTEST_1520_2026-10-07.TXT`); pcemu reports BIOS error 9 for it.
+- Rollback if needed: restart without F to get GRiD MS-DOS, and copy an earlier release's LODE.SYS back from `os\releases\`, with its LODEMT.SYS in releases that have multitasking (1.0 on).
+- Floppy DMA into the EMS frame works on the 1520 (2026-10-07, `bench\EMSTEST_1520_2026-10-07.TXT`); pcemu reported BIOS error 9 for it at the time.
 - Phone photos of the plasma show partial frames; that is the camera shutter, not the display.
 
 ### Cursor flicker — a limitation of the plasma display (2026-10-04)

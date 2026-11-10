@@ -8,7 +8,7 @@ How each part of Lodestone works and how it was built, with its tests:
 - `lodestone-floppy-dev.md`: the floppy development loop, and what's on the floppy.
 - `lodestone-splash.md`: the start-up picture (0.4.3): tracing the 1921 plate, the drawing and its packing, the bootstrap, System's switch, the tests; and the pcemu bug found on the way.
 - `lodestone-font.md`: Lodefont, Lodestone's own 8×16 screen font: its design, its metrics, how it is built, and the other fonts on ROM 2.
-- `lodestone-rom.md`: booting from the EPROM (0.6): ROM 1 and ROM 2, their file systems, and how they are built.
+- `lodestone-rom.md`: the EPROMs: ROM 1, which Lodestone boots from since 0.6, and ROM 2, the second EPROM added on 2026-10-24 for the programs that don't fit; their file systems, and how they are built.
 - `lodestone-multitasking.md`: multitasking (`MULTITASK=1`): tasks, windows, and the kernel's switching.
 - `term.md`: Term (0.4.0), the real Claude Code on the GRiD's screen through the Pi.
 - `lodestone-resident-claude.md`: resident Claude (0.5, `CLAUDE /R`): Claude over a running DOS program, and how it was proved on the 1520.

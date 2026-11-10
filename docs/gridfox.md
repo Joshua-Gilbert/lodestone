@@ -352,7 +352,7 @@ Tests:
 | Its next screen (PgDn) / three rows down | 1,914 / 675 |
 | A page that changes by itself, in GridSim (a fast link) | 11 whole frames in 3 s, against 2 at the idle pace |
 
-The ranges are runs in the emulator and on the 1520. The page's own weight
+The ranges are runs on two development PCs. The page's own weight
 never crosses GPIB, only the cells that change. How
 long Firefox takes on the Pi 5 for a real site is not measured yet.
 

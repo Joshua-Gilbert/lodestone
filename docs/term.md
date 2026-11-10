@@ -2,7 +2,8 @@
 
 `CLAUDE /T` makes the GRiD 1520 the screen and keyboard of the real Claude
 Code, running on a Raspberry Pi 5 on the GPIB bus, on your own Claude
-plan. Claude resident over DOS programs is in `lodestone-resident-claude.md`.
+plan. This is Phase 1; Phase 2, Claude resident over DOS programs, is in
+`lodestone-resident-claude.md`, with its first sketch at the end of this file.
 
 ## Why a terminal
 
@@ -331,6 +332,38 @@ another GPIB device holds SRQ (a ring would make no edge). If gridlink
 restarts while the saver is up, it can't ring the GRiD it hasn't met
 yet: a key ends the saver, and Term goes on as after any restart.
 
-## Resident Claude
+## Phase 2: the first sketch of resident Claude
 
-Claude Code popped up over a running DOS program (`CLAUDE /R`) is in `lodestone-resident-claude.md`.
+What was built (`CLAUDE /R`) is described in `lodestone-resident-claude.md`.
+
+A hot key, CODE-\\ (in the BIOS's set that AH=00h programs never see), pops
+Claude Code up over a running DOS program; Claude sees that program's
+screen and types into it; the program carries on. All intelligence stays
+on the Pi; the GRiD needs only a screen-and-keys console and RUN's key hook.
+
+- **About 1.1 KB conventional** (a TSR, `CLAUDE /R`): RUN's INT 16h hook
+  (205 bytes at the time) extended to catch the hot key with AH=11h, pop-up
+  and pop-down, the EMS page registers saved and restored around everything, a
+  key-script buffer and a stack. **3 EMS pages:** one for TERMLINK, TERMCELL,
+  TERMKEYS, the font and the link buffers (why they are written CS-relative,
+  without DOS calls); two for the program's 32 KB screen, moved by INT 67h
+  57h straight from video memory.
+- **Typing:** a new REQUEST 12h TYPE takes a key script in RUN's format; at
+  a snapshot mark or the script's end Claude pops up silently at the
+  program's next key wait, answers the link for a while (SCREEN from the
+  saved copy, the next TYPE) and returns: the resident agent loop with no
+  timer hook.
+- **Rules:** pop up only from the INT 16h hook (the program is waiting for a
+  key). At `indos` 1, DOS calls run on the kernel's 512-byte stack: READ,
+  DIR, STAT yes, RUN never (EXEC resets `indos`; the program holds the
+  memory), new status F6h. The link is served only while popped up, never
+  from INT 08h (the GPIB driver's timeouts count the BIOS tick; INT 60h is
+  not re-entrant). INT 60h busy (AX=6) means later, not a failure. No
+  INT 60h AH=0Bh from the resident: it would clear TM5000G's SRQ latch.
+- **Spikes:** a 300-byte TSR running code from the EMS frame over a
+  program that uses EMS (pcemu, then the 1520); a pop-up over TM5000G with
+  the 7210 model while it polls an instrument; video memory and 40:49-66h
+  byte-compared before and after a pop-up over a graphics program, and
+  GRIDPROBE on the 1520 for the V6366's state.
+- **Not in Phase 2:** an INT 09h hook (programs that compute without
+  reading keys), M: from the resident, the EMS swap of the UI block.
