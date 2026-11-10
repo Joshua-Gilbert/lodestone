@@ -67,7 +67,10 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 485Dh on
 # 2026-11-09, with the 2 s timed from a floppy's last transfer), and a change past it moves image_end and bss_end.
 # The UI's pads, UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4860, 'bss_end': 0x7CC0, 'ui_keep_end': 0x6894}  # (4850h/7CB0h before the 2 s
+OFF_MAP ={'image_end': 0x4870, 'bss_end': 0x7CD0, 'ui_keep_end': 0x6894}  # (4860h/7CC0h before INT 21h's
+                                        #  exit was inline again (done, no CALL to a shared
+                                        #  fr_out): 16 bytes more, the KB figures as they were,
+                                        #  2026-11-10; 4850h/7CB0h before the 2 s
                                         #  without a change line was timed from the disk's last
                                         #  transfer (dio.bok, as MS-DOS's driver) and 47h whose
                                         #  look fails gave the name kept: 16 bytes more, the KB
