@@ -454,7 +454,3 @@ scroll-back, a long prompt and history, link loss and reconnect, quit to
 DOS, CLAUDE.MD, help and slash commands. Term is checked with the GRiD
 model and with the real CLAUDE.COM, and the MCP bridge (its limits
 included) also against the real Claude Code's `claude mcp list`.
-
-Term runs with a real Claude Code session on a Raspberry Pi 5: the echo, a
-permission dialog answered on the GRiD, an MCP call that runs a DOS
-program.
