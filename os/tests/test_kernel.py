@@ -3311,6 +3311,29 @@ def t_mntback():
                 check('... (%s) the other disk mounted between (a search of B:): another mount, the file refused (S-5)%s'
                       % (what, '' if not defs else ', its close too (Z-5), K.TXT with A alone'), ok,
                       (o[-120:], None if f is None else f[:4]))
+    # a program's end with changed files open on a floppy let go at "Invalid disk change": close_all closes them
+    # all (the mount its first close makes keeps close_all's handle index in BX: drv_ready's root read in PUSHA)
+    bc = image('mb_c1.img', mkf('K.TXT', kdat), mkf('L.TXT', b'l' * 3000))
+    for abort in (False, True):
+        k = ktest.KPC(image('mb_a.img', lcmd, probe('CLOSE2', ('ABORT',) if abort else ())), b=bc); k.start()
+        Shell(k); pc = k.pc
+        first = pc.drives[1]; other = pcemu.Floppy(bytearray(b2))
+        inuse = lambda: [i for i in range(24) if pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0]]
+        u0 = inuse()
+        k.key('cls'); k.key(ktest.ENTER); n0 = len(pc.tty)
+        k.key('close2'); k.key(ktest.ENTER, settle=False)
+        out = lambda: ''.join(pc.tty)[n0 + 6:]
+        for i in range(2):
+            pc.run_until(lambda: out().count('?') > i or '>' in out() or pc.crash, 30)
+            if out().count('?') <= i: break
+            d = other if i == 0 else first
+            d.changed = True; pc.drives[1] = d; pc.keys.append(ord(' '))
+        pc.run_until(lambda: '>' in out() or pc.crash, 30); k.settle()
+        o = out(); u1 = inuse()
+        check('B:K.TXT and B:L.TXT changed and open, another disk in, a write "Invalid disk change" (%s): the '
+              'program\'s end closes both (SFT entries in use %s before, %s after)'
+              % ('Abort, the other disk left in' if abort else 'Fail, the first disk back', u0, u1),
+              '[P]' in o and u1 == u0, (o[-80:], u0, u1))
     # a write failed by "Invalid disk change" (the disk swapped under its first INT 13h write): the FAT cache
     # nobody's and unchanged after; then A: write-protected: a program run, a file read, DIR A:\ ask nothing
     for ems in (0, 88):
