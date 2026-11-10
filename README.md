@@ -16,6 +16,8 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 | System: where the 640 KB goes, and the EMS | System: the floppy, the internal hard disk as C: (the 1520's own 121 MB Conner layout) and M:, the RAM disk |
 | ![Write](os/screens/readme/write.png) | ![BENCH](os/screens/readme/bench.png) |
 | Write, a GRiDWrite-style editor | BENCH 1.4 on Lodestone with EMS |
+| ![CHKDSK](os/screens/readme/chkdsk.png) | ![FORMAT B: /S](os/screens/readme/format.png) |
+| CHKDSK at the prompt, as DOS 3.30's (ROM 2's utilities) | FORMAT B: /S on a disk never formatted: each track verified, the system copied |
 | ![The calculator](os/screens/readme/calculator.png) | ![CALC at the prompt](os/screens/readme/calc_prompt.png) |
 | The calculator over the Executive (CODE-K); the coprocessor lit in the info line (the emulator's is 387-class, so it reads as a 287XL) | `CALC` at the command prompt: sums, errors with ERRORLEVEL, `name=` for batch files |
 | ![Claude Code on the GRiD](os/screens/readme/claude_code.png) | ![A plot from Claude Code](os/screens/readme/claude_plot.png) |
