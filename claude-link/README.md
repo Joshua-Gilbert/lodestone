@@ -444,19 +444,17 @@ GRiD) need gridlink from 2026-10-22 on. An
 older gridlink shows up as CLAUDE resetting the link with "No answer from
 the bridge at GPIB address 7".
 
-Version 1.1: Term. Tested in emulation (and the MCP server against the real
-Claude Code's `claude mcp list`), not yet on the Pi 5: 18 Term checks with
-the GRiD model, 8 with the real CLAUDE.COM, 13 for the MCP bridge (its
-limits included). On the
-Pi 5: a real Claude Code session from the GRiD, the echo, a permission
-dialog answered on the GRiD, an MCP call that runs a DOS program.
+The emulator suites in `tests/` run the real CLAUDE.COM under an emulated
+DOS 3.30 with the real GRIDGPIB driver, talking through the 7210 and AR488
+models to the real gridlink with a scripted Claude. Chat covers connect,
+chat, read, edit with Yes and No, a DOS program driven by a key script with
+a screenshot, captured DOS output, GPIB query/write/scan, 22.8 KB each way,
+damaged frames, the stock bridge, interrupt, a queued prompt, 200-line
+scroll-back, a long prompt and history, link loss and reconnect, quit to
+DOS, CLAUDE.MD, help and slash commands. Term is checked with the GRiD
+model and with the real CLAUDE.COM, and the MCP bridge (its limits
+included) also against the real Claude Code's `claude mcp list`.
 
-Version 1.0 (chat), tested in emulation, not yet on hardware. The real CLAUDE.COM
-(11 KB) runs under an emulated DOS 3.30 with the real GRIDGPIB driver,
-talking through the 7210 and AR488 models to the real gridlink with a
-scripted Claude: 20 scenarios pass (connect, chat, read, edit with Yes and
-No, a DOS program driven by a key script with a screenshot, captured DOS
-output, GPIB query/write/scan, 22.8 KB each way, damaged frames, stock
-bridge, interrupt, queued prompt, 200-line scroll-back, long prompt and
-history, link loss and reconnect, quit to DOS, CLAUDE.MD, help, slash
-commands). Next: `--console` on the Pi with a real key, then the bench.
+Term runs with a real Claude Code session on a Raspberry Pi 5: the echo, a
+permission dialog answered on the GRiD, an MCP call that runs a DOS
+program.
