@@ -1,12 +1,12 @@
 # DEFRAG and the screen saver (Lodestone 0.2.2, 2026-10-05)
 
-Joshua's idea: a floppy defragmenter that doubles as a screen saver. It gives a live view of the disk while it tidies it, and keeps something moving on the GRiD's irreplaceable gas-plasma panel when the machine is idle. It's built as a separate program that the Executive loads only while it runs; the only resident cost is the saver's ~0.5 KB.
+A floppy defragmenter that doubles as a screen saver. It gives a live view of the disk while it tidies it, and keeps something moving on the GRiD's irreplaceable gas-plasma panel when the machine is idle. It's built as a separate program that the Executive loads only while it runs; the only resident cost is the saver's ~0.5 KB.
 
-Decisions (Joshua, 2026-10-05):
+Design decisions (2026-10-05):
 - defragment while idle, after 5 minutes;
 - also pack the root directory (the DIRPACK idea);
 - a separate DEFRAG.COM, not built into the Executive;
-- **on a worn disk, keep going — don't just stop.** "These disks do degrade over the years." Added after the first real run stopped at a disk error.
+- **on a worn disk, keep going — don't just stop.** These disks degrade over the years. Added after the first real run stopped at a disk error.
 
 ## How it behaves
 - **After 5 minutes without a key or the mouse** (the delay is set in System), the Executive runs DEFRAG.COM `/S M=seg:off F=seg:off` from the root of the start-up disk, if the file is there. M= is the address of the Executive's mouse flag, so moving the mouse stops DEFRAG too. Since 0.3.12 it does this for each disk in turn: `A:`, then `B:` (if there is a second floppy drive), then `C:` (if there is a hard disk). Before 0.3.12 it ran DEFRAG from the current drive's root, for the current floppy only.
@@ -108,7 +108,7 @@ Floppies degrade, and the first real run stopped at a disk error, so a bad spot 
 - **After DEFRAG the Executive calls INT 21h 36h**, so the FAT is cached again while the disk is surely the same. Without this, a later swap to a same-format disk couldn't be told apart.
 
 ## On the 1520 (2026-10-05)
-- **First idle run (old build):** the saver started DEFRAG on schedule, and DEFRAG began tidying. It then stopped at "disk error" and went to the dark clock. Joshua: "I don't want it to just stop!" That led to the worn-disk handling above.
+- **First idle run (old build):** the saver started DEFRAG on schedule, and DEFRAG began tidying. It then stopped at "disk error" and went to the dark clock. That led to the worn-disk handling above.
 - **The 16-cluster build** stopped with "Too many bad sectors" (15:46). The limit was then removed.
 - **`DEFRAG /T` (16:10):** 1,022 KB of free space tested, 4 clusters marked (cylinders 66 ×2, 77, 78). The errors logged were on cylinders 64–71.
 - **Full run (16:20) finished:** "Disk in order: 18 files, 988 KB free in 26 pieces, 67 bad clusters marked".
@@ -150,15 +150,15 @@ Floppies degrade, and the first real run stopped at a disk error, so a bad spot 
   - Earlier builds passed 191 and 192 cut points. On 2026-10-05 the build with logging failed at 1 of 202: the cut during root packing described above.
   - **Fixed build (9,158 bytes): 202 cut points, 0 failures**, with the added file. The old build fails the new test at that point, as it should.
   - **`defrag_cut.py N worn`** runs the same on a simulated worn drive: the 1520's pattern (multi-sector reads starting at sectors 1–4 of side 0 fail, each sector passes alone, plus 4 hard-bad sectors), placed where this test disk's moves go. The uninterrupted run there: exit 0, 8 clusters marked, 314 writes. **Fixed build: 314 cut points, 0 failures.**
-- On an exact copy of Joshua's floppy (from DISKMAP.BIN): root 78 → 18 entries, everything in one piece, free space in one block. About 3 minutes with real drive timing.
-- An independent review found:
-  - one high-severity issue: files held open by a parent process (fixed by the open-files check);
-  - kernel 0Dh issues (fixed);
-  - a swallowed write-protect error code (fixed);
-  - several smaller issues, all fixed.
+- On an exact copy of the development floppy (from DISKMAP.BIN): root 78 → 18 entries, everything in one piece, free space in one block. About 3 minutes with real drive timing.
+- Fixed before release:
+  - files held open by a parent process (the open-files check);
+  - kernel 0Dh issues;
+  - a swallowed write-protect error code;
+  - several smaller issues.
 
 ## The saver goes round every disk (Lodestone 0.3.12, 2026-10-07)
-Joshua: "have the screen saver now cycle through all the disks".
+The screen saver now cycles through all the disks.
 - **`sv_defrag` in UICORE.INC** finds DEFRAG.COM in the root of the start-up disk (INT 21h 3305h). For each of A:, B: and C: it runs it as `X: /S M=… F=…`:
   - B: only if the BIOS reports a second floppy drive (INT 11h);
   - C: only if Lodestone has the hard disk (INT 21h 0Eh reports 3 drives).
@@ -166,7 +166,7 @@ Joshua: "have the screen saver now cycle through all the disks".
 - **Exit 1** (a key or the mouse) ends the round, and the Executive comes back. Otherwise the dark screen follows the last disk.
 - **DEFRAG's new exit code 3, with /S only:** the disk couldn't be read at all, for example an empty drive or a disk that isn't FAT. DEFRAG then exits at once with no message, and the saver goes on to the next disk.
   - On the 1520, an empty B: still costs the time the BIOS takes to give up (three tries).
-- **On or off (Joshua):** in System, Screen saver, Space switches tidying off and on. Off, the saver goes straight to the dark screen. The setting is a `TIDY=0` line in LODE.INI, read at start-up; on needs no line. The core keeps it in `sv_notidy`; UI_SAVER (UI API 4) returns it in AH and sets it with AL = 2.
+- **On or off:** in System, Screen saver, Space switches tidying off and on. Off, the saver goes straight to the dark screen. The setting is a `TIDY=0` line in LODE.INI, read at start-up; on needs no line. The core keeps it in `sv_notidy`; UI_SAVER (UI API 4) returns it in AH and sets it with AL = 2.
 - **Cost:** LODE.SYS +106 bytes (42,348) for the round and the switch; DEFRAG.COM +14 (10,138).
 - **Tests (`t_saver_all`, 3 checks; the switch in `test_apps.py t_saver_tidy`, 7):**
   - A:, B: and C: all in pieces: tidied in that order, then the dark screen;
@@ -175,7 +175,7 @@ Joshua: "have the screen saver now cycle through all the disks".
   - The 8 floppy saver checks still pass.
 
 ## The hard disk, C: (Lodestone 0.3.11, 2026-10-07)
-Joshua: "the same operation just using the internal drive", with as much code reused as possible, and extra memory only while it runs. `DEFRAG C:` (or `DEFRAG` with C: current) does everything it does on a floppy, `/T` included.
+The same operation on the internal drive, with as much code reused as possible, and extra memory only while it runs. `DEFRAG C:` (or `DEFRAG` with C: current) does everything it does on a floppy, `/T` included.
 - **The kernel:** INT 25h/26h (absolute disk read and write, DOS 4's packet form with 32-bit sector numbers) for C:, in the hard-disk module (`KHD.INC`), so it is resident only when there is a drive.
   - It goes through the same `hd_io` as file I/O, so it uses the same driver and the same two tries. It doesn't ask INT 24h; DEFRAG handles errors itself.
   - It writes the kernel's FAT window out first.
@@ -200,7 +200,7 @@ Joshua: "the same operation just using the internal drive", with as much code re
   - Every logged error is on translated cylinders 272–273: partition sectors 85032–85320, clusters 21135–21212. Mostly 10h (data), plus one 04h (sector not found) and one 80h (the drive busy for over 5 s).
   - That's the same spot as HDSCAN's 4 unreadable sectors (clusters 21161–21183), a little wider: sectors that read before don't read back after a write. It's one weak patch of the platter, not errors spread over the disk.
   - It is now fenced off with FFF7h, which MS-DOS honours too. It lies in free space far from the files, which use the first 430 clusters.
-- **Review (an independent agent):** no way found to lose or corrupt data, on C: or on a floppy. Fixed:
+- **Fixed before release:**
   - INT 25h/26h left interrupts off for the rest of the run, so on the 1520 a drive stuck busy would have hung instead of timing out;
   - DEFRAG C: under DOS 3 would have used the 32-bit form;
   - a failed INT 26h didn't make the kernel forget the sectors written before the failure;
@@ -227,5 +227,5 @@ Joshua: "the same operation just using the internal drive", with as much code re
 ## Possible later
 - Move directories too (update "." and the children's ".."), so the gaps before them close.
 - Have the kernel remove exact duplicate entries at mount, to close the root-packing residual risk.
-- Saver variations (big solid shapes, as the roadmap suggested).
+- Saver variations (big solid shapes).
 - A "re-test the marks" option for after a head cleaning: free the FF7 clusters that now pass, without a format.

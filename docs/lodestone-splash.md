@@ -4,7 +4,7 @@ At start-up Lodestone shows Fig. 1 of F. A. Annett, *Electrical Machinery* (McGr
 
 ![The start-up picture](../os/screens/readme/splash.png)
 
-## Joshua's choices
+## Design decisions
 
 - **Monochrome:** 1 bit, lit or not, as mode 40h is anyway; no grey palette tricks.
 - **The plate as printed:** lit paper, a dark stone. Each nail is lit where it lies on the stone and dark where it crosses the paper. A dark-screen version (a lit stone with dark nails knocked out of it) was tried and read as a blob.
@@ -93,9 +93,9 @@ At start-up Lodestone shows Fig. 1 of F. A. Annett, *Electrical Machinery* (McGr
   - the help.
 - **Memory for DOS programs:** 562.5 / 578.6 KB with the picture, without `LODE.PIC`, and under 0.4.2.
 
-## Review
+## Fixes
 
-An independent review found nothing that stops the machine starting on any path, and checked the KSEG:0000 handling on all five. Its findings, all fixed:
+Fixed before release:
 
 - `LODE.PIC`'s length wasn't checked, so a cut-short copy with an intact signature would have been called.
 - The kernel read 1,023 bytes of `LODE.INI` while System can write about 1,064. The same was latent in md_boot for `MDISK=`.
