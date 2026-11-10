@@ -349,8 +349,16 @@ ret_cf: jc      fail
 ; return to the caller with CF clear
 ok:     and     byte [bp+F_FL], 0FEh
 ; return to the caller (frame as it is)
-done:   mov     cx, 13                  ; (a word each: the frame)
-        call    fr_out
+done:   push    cs                      ; (inline, no CALL: every INT 21h
+        pop     ds                      ;  call leaves this way)
+        les     di, [bp+F_USP]          ; (ES:DI: the caller's SS:SP)
+        mov     si, bp
+        mov     cx, 13                  ; (a word each: the frame)
+        rep     movsw
+        mov     ax, es
+        mov     bx, [bp+F_USP]
+        cli
+        dec     byte [indos]
 .sw:    mov     ss, ax                  ; (KMT.INC: MULTITASK=1 makes these 5
         mov     sp, bx                  ;  bytes a far jump to mt_exit)
         popa
@@ -405,8 +413,16 @@ ctrlc:  push    cs
         pop     ds
         mov     si, s_ctrlc
         call    con_puts
+        push    cs
+        pop     ds
+        les     di, [bp+F_USP]          ; (ES:DI: the caller's SS:SP)
+        mov     si, bp
         mov     cx, 13
-        call    fr_out                  ; the caller's registers as they came
+        rep     movsw                   ; the caller's registers as they came
+        mov     ax, es
+        mov     bx, [bp+F_USP]
+        cli
+        dec     byte [indos]
 .sw:    mov     ss, ax                  ; (done.sw's bytes again, left alone)
         mov     sp, bx
         popa
@@ -428,19 +444,9 @@ ctrlc:  push    cs
         mov     ax, 4C00h
 .again: jmp     int21                   ; the INT 21h frame is still there
 s_ctrlc db '^C', 13, 10, 0
-; the frame's CX words back on the caller's stack, AX:BX its SS:SP,
-; interrupts off, out of DOS (done, ctrlc).  DS = CS
-fr_out: push    cs
-        pop     ds
-        mov     es, [bp+F_USS]
-        mov     di, [bp+F_USP]
-        mov     si, bp
-        rep     movsw
-        mov     ax, [bp+F_USS]
-        mov     bx, [bp+F_USP]
-        cli
-        dec     byte [indos]
-        ret
+%if F_USS != F_USP + 2
+%error "done, ctrlc: LES wants F_USS after F_USP"
+%endif
 
 ; =====================================================================
 ;  console
