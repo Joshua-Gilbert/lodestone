@@ -700,10 +700,12 @@ drv_ready:
         call    mount_bpb
         pop     si
         jc      .mf
+        pusha                           ; (BX, CX and DX the caller's still:
         mov     dx, [si+D_ROOT]         ; its root's first sector, as this
         call    raw_bounce              ;  disk has it (rule 1; none known
         mov     al, [act]               ;  if it can't be read now: CF)
         call    rt_put
+        popa                            ;  close_all's handle index)
 .ok:    clc
 .x:     ret
 .mf:    push    ax                      ; not mounted: what this look had to
