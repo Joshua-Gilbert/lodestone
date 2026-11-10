@@ -174,7 +174,7 @@ See `docs/lodestone-floppy-dev.md`.
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
 | `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys); resident Claude: `CLAUDE /R` (an INT 16h stub at the top of memory, its console `RCON.ASM` in EMS: Term's own code, Claude Code in the pop-up) and `CLAUDE /U`, with `M1TEST.BAT` for the 1520; `KEYCODE` (each key's INT 16h code, for the 1520); and the test programs `EMSUSE`, `GFXUSE`, `T1C`, `BUSY`, `MHAND`, `HOLE`, `HOOK16` and `PAGE1` |
 | `os/diag` | CRASHLOG, a diagnostic build for a crash that restarts the 1520: a flight recorder in MT and a catch for the restart through the BIOS's shutdown code, `CRASHRPT.COM` (the report to `CRASH.BIN`) and `crashdecode.py`; its own `README.md` says how to use it |
-| `os/releases` | Every release's files, 0.1 to 1.0 (0.6 and 1.0 have the ROM images too) |
+| `os/releases` | Every release's files, 0.1 to 1.1 (0.6, 1.0 and 1.1 have the ROM images too) |
 | `os/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `os/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `lodefont.py` and `typfont.py` (build the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB bridge (Pico 2 or AR488 Nano) ↔ Pi ↔ Claude (Term: the real Claude Code in a pty, with an MCP server for the GRiD's tools, plots and pictures; chat: the Claude API), `gridfox` (Firefox for the GRiD), the AR488 patch, and the tests |
@@ -257,7 +257,7 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 ## Status and what's next
 
-**Lodestone 1.0** is the current release. It boots from an EPROM on the 1520, and from a floppy. On the 1520:
+**Lodestone 1.1** is the current release. It boots from an EPROM on the 1520, and from a floppy. On the 1520:
 - the kernel, the Executive and its programs, EMS, C:, M: and the calculator on a real 80287 all work;
 - Claude Code works through the Pico 2 bridge, including gridfox, pictures and plots;
 - resident Claude works over a running program, including fetching and plotting an instrument trace.

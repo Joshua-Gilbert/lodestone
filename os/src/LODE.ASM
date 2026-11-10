@@ -1,5 +1,5 @@
 ; =====================================================================
-;  LODE.SYS  -  Lodestone 1.0 kernel for the GRiDCase 1520
+;  LODE.SYS  -  Lodestone 1.1 kernel for the GRiDCase 1520
 ;  nasm -f bin -o LODE.SYS LODE.ASM
 ;
 ;  A small DOS 3.30-compatible kernel plus the GRiD-style Executive.
@@ -47,7 +47,7 @@ cpu 286
 org 0
 
 KSEG    equ 0060h               ; where the kernel lives
-VERSION equ 0100h               ; Lodestone 1.0
+VERSION equ 0101h               ; Lodestone 1.1
 
 section .bss nobits align=16 follows=.text
 bss_start:                      ; = image_end (KCORE.INC's CAP_SEG counts on it)

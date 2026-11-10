@@ -408,7 +408,7 @@ def t_boot():
         k = boot(**kw)
         hd = 'ata' in kw
         check('%s: the Executive, on %s' % (tag, 'C:' if hd else 'R:'), not k.crashed and k.pc.mode() == 0x40
-              and has(k, 'Lodestone 1.0') and has(k, 'Hard disk C:' if hd else 'ROM R:'), A.screen(k))
+              and has(k, 'Lodestone 1.1') and has(k, 'Hard disk C:' if hd else 'ROM R:'), A.screen(k))
         check('%s: started from R: (3305h), INT 21h 0Eh counts to R:' % tag, u8(k, 'bootdrv') == 17 and u8(k, 'lastdrv') == 18)
         e = env(k)
         ems = 'ems_pages' in kw
@@ -676,7 +676,7 @@ def t_menu():
     check('Shift held: the menu', '1  Lodestone' in s and "2  Lodestone with the ROM's own settings" in s and '4  The floppy in A:' in s, s)
     check('no other boot ROM: no GRiD MS-DOS in it', '3  GRiD MS-DOS' not in s)
     k.key(ord('1')); k.settle(20)
-    check('1: Lodestone', k.pc.mode() == 0x40 and has(k, 'Lodestone 1.0'))
+    check('1: Lodestone', k.pc.mode() == 0x40 and has(k, 'Lodestone 1.1'))
     k = boot(ata=sysinfo_hd(('LODE.INI', b'SPLASH=0\r\n')), shift=True, keys=[ord('2')])
     check('2: the ROM\'s own settings (C:\\LODE.INI not read)', u8(k, 'setdrv') == 0 and TS.ON in [m[0] for m in k.pc.marks])
     if os.path.exists(MSDOS):
