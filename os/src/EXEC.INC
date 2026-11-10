@@ -3259,8 +3259,8 @@ h_code      db 'CODE is the Alt key.  Any key closes.',0
 ; ---------------------------------------------------------------------
 ;  data
 ; ---------------------------------------------------------------------
-s_brand     db 'Lodestone 1.0',0
-s_hlptitle  db 'Lodestone 1.0 Help',0
+s_brand     db 'Lodestone 1.1',0
+s_hlptitle  db 'Lodestone 1.1 Help',0
 prompts     dw s_prompt1, s_prdev, s_prsub
 s_prompt1   db 'Select a file and confirm',0
 s_prdev     db 'Device: Select item and confirm',0

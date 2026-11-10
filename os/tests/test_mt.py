@@ -4292,11 +4292,11 @@ def t_base():
           and pd == px and pt == px and bt[:1] == ['Device: Select item and confirm'] and pix(*w1) == px
           and mb('mw_cur') == 0, (s0, s1, pd == px, pt == px, bt, pix(*w1) == px))
     k.key(ktest.F1); k.run_for(0.5)
-    hp = A.has(k, 'Lodestone 1.0 Help')
+    hp = A.has(k, 'Lodestone 1.1 Help')
     k.key(ktest.ESC); k.run_for(0.5)
     st1 = strip('Write: NOTES.TXT')
     check('F1 in the Executive: its help, over Write; a key closes it: Write drawn again as it was (its bytes), its close '
-          'box too (%r)' % st1, hp and not A.has(k, 'Lodestone 1.0 Help') and st1.endswith('x') and pix(*w1) == px
+          'box too (%r)' % st1, hp and not A.has(k, 'Lodestone 1.1 Help') and st1.endswith('x') and pix(*w1) == px
           and mb('mw_cur') == 0, (hp, st1, pix(*w1) == px, A.screen(k)))
     k.select('OTHER.TXT'); k.key(A.CODE['R']); k.run_for(0.5)
     k.key('QQ'); k.run_for(0.3)
