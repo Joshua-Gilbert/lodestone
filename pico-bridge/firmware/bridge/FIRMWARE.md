@@ -126,17 +126,17 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   the CRC: 99 checks.
 - **2026-10-24.** Quiet (CONFIG flags bit 2; PROTOCOL.md). The status byte as ever, but the SRQ line is never
   driven: gridlink sets it while resident Claude's console works in the background under a DOS program
-  (Lodestone's M4), so the program's SRQ latch sees none of the link's answers. `set_srq` reads it each time
+  (CLAUDE 1.10), so the program's SRQ latch sees none of the link's answers. `set_srq` reads it each time
   (`SH.quiet`), so no SRQ slips out between a CONFIG and core 1's next look at it. The J tests add an answer and a ring with quiet on (no SRQ, the byte as ever) and quiet
   turned off with RQS waiting (SRQ then): 103 checks. `bridge_pico2.uf2` built with arduino-cli 1.5.1 and
   `rp2040:rp2040` 6.3.0, as below.
-- **2026-10-26.** TALK_WAIT's arg on CREDIT's scale (audit 2026-10-26 X59). Core 1 records its own
+- **2026-10-26.** TALK_WAIT's arg on CREDIT's scale. Core 1 records its own
   `tx_consumed`; core 0 now adds `tx_dropped0` as it sends the event on, as CREDIT and HELLO count. Before,
   once any reply had been dropped as stale on arrival, the Pi took a reply it had already sent for one still
   on its way when the 1520 read again before the next CREDIT (≤ 5 ms): it skipped `on_talk` and the read
   timed out. gridlink ignores TALK_WAIT. The bus simulation's K tests read 20 replies twice at once after
-  such drops (about half the second reads timed out before). With the Pi daemon's L tests (audit X60, no
-  firmware change): 111 checks. `bridge_pico2.uf2` built as above.
+  such drops (about half the second reads timed out before). With the Pi daemon's L tests (no firmware
+  change): 111 checks. `bridge_pico2.uf2` built as above.
 
 ## Build
 
@@ -208,8 +208,8 @@ What it covers:
 - The scpi handler.
 - Address changes.
 
-The model checks logic, not nanoseconds, so the ATN timing is the scope test above. An independent
-review (a fresh agent, 2026-10-16) found 13 issues, all fixed in 16c. Among them:
+The model checks logic, not nanoseconds, so the ATN timing is the scope test above. Fixes of
+2026-10-16 (13 issues), among them:
 
 - SRQ came back after being served;
 - a stalled daemon left the bridge offline;

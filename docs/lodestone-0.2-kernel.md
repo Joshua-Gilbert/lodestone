@@ -8,14 +8,14 @@ Lodestone 0.2 replaces GRiD MS-DOS with its own DOS 3.30-compatible kernel. It b
 - CLAUDE.COM runs unchanged.
 
 **On the 1520 (2026-10-05):**
-- Joshua ran TESTDOS under Lodestone and saw all "ok" lines.
+- TESTDOS under Lodestone showed all "ok" lines.
 - The plain EPROM boot with the floppy in now keeps GRiD MS-DOS's own shell (LCMD rename, below): both checks passed.
 - CACHETST under 0.2.1: 240 ops, 0 errors.
 - BENCH under both systems: **Lodestone takes 82–83 s in total against GRiD MS-DOS's 289 s.**
 - **0.2.2** (screen saver + DEFRAG, see `lodestone-defrag.md`) runs on the 1520. The saver started DEFRAG after 5 minutes idle, and DEFRAG packed the cluttered root. **BENCH run 7: directory ×10 took 0.05 s** (MS-DOS 0.21), so Lodestone is now **ahead of GRiD MS-DOS on all ten tests**.
 
 ## 0.2.1: disk cache, benchmark (2026-10-05)
-Joshua suspected 0.2's disk reads were a little slower than GRiD MS-DOS's. We benchmarked in pcemu against GRiD MS-DOS 3.30 from the EPROM image, on the same kind of 1.44 MB floppy with real-drive timing, then on the real 1520.
+0.2's disk reads seemed a little slower than GRiD MS-DOS's on the 1520. They were benchmarked in pcemu against GRiD MS-DOS 3.30 from the EPROM image, on the same kind of 1.44 MB floppy with real-drive timing, then on the real 1520.
 
 - **BENCH.COM** (`os\bench`, version 1.2):
   - 10 tests timed with INT 1Ah. It prints seconds, KB/s, the system and "Memory for programs".
@@ -91,18 +91,18 @@ Joshua suspected 0.2's disk reads were a little slower than GRiD MS-DOS's. We be
   - **Run 4 (freshly formatted):** reads were back to the first run's values. Writes were still 12.68 (drive timing, not layout).
   - **Run 5:** reads 0.3–0.8 s slower. Reproduced in the emulator: Windows put the new LODE.SYS after TM5000G and freed the old one's 47 clusters at the front, so BENCH.DAT was split. The same happened in runs 2–3. In run 6 the new kernel went back into that gap, and reads were at full speed again.
   - **The data buffer (run 6):** random reads 10.32 → 9.28 s and EXE ×3 12.90 → 12.08 s, as the emulator predicted.
-  - **The directory listing stayed at 0.43 s because of our copying.** DISKMAP on the 1520 showed the root at 78 entries (5 sectors), only 17 of them live.
+  - **The directory listing stayed at 0.43 s because of copying.** DISKMAP on the 1520 showed the root at 78 entries (5 sectors), only 17 of them live.
     - The desktop bridge writes each file under a hidden long-name temp file (`.CACHETST.COM.21336.m11ot0.tmp`) and then renames it. That leaves 4 dead entries per copy, and Windows never reuses them; it appends. Lodestone and MS-DOS do reuse deleted slots when creating files.
     - An exact emulator copy of that floppy gave 0.45 s (real 0.43).
   - **Buffer sweep (emulator, exact copy):** N directory buffers hold a root of up to 16N−1 entries. Past that, each listing does one whole-root read, ~0.45 s. It is a cliff, not a curve. Each bridge copy adds 4 entries, so one buffer lasts 4 copies.
-    - Joshua chose **one extra buffer** (4 directory buffers; still 571 KB at the time). It handles ordinary floppies of up to 63 root entries.
-    - The real fix for our development floppy is cleaning the root, which **DEFRAG does** (0.2.2).
+    - 0.2.1 takes **one extra buffer** (4 directory buffers; still 571 KB at the time). It handles ordinary floppies of up to 63 root entries.
+    - The real fix for the development floppy is cleaning the root, which **DEFRAG does** (0.2.2).
   - **Run 7 (0.2.2, after DEFRAG packed the root to ~21 entries and every file into one piece):**
     - **The directory listing took 0.05 s, one clock tick with no disk reads.**
     - Reads were the best yet. Small files (+1.2 s) and random reads (+0.4 s) were a little slower than run 6, but not because of the kernel: 0.2.2 gives the old values in the emulator.
     - The cause is either the layout after packing (where free space now starts) or retries on the drive's side 0, the side DEFRAG found weak (see `lodestone-defrag.md`). A DISKMAP of the floppy as it is now would let the emulator check it.
-  - **Option 2 declined:** a permanent 7 KB root cache. Joshua's reasons: disk-swap risk, small gain.
-- **Independent review of the cache code:** no high-severity bugs. Three edge cases were fixed:
+  - **Not done:** a permanent 7 KB root cache, for its disk-swap risk and small gain.
+- **Cache edge cases fixed:**
   - a failed head-1 read-ahead could leave a bad sector marked as cached;
   - the FAT buffer stays at 12 sectors, so corrupt 12-bit chain values stay inside it;
   - close only flushes the FAT when the cached FAT belongs to this file's drive.
@@ -164,7 +164,7 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
 - **One INT 21h entry.** The caller's registers are copied into a frame on the kernel stack; nested calls (from an INT 24h handler) get a second stack. Every function exits through ok / done / fail / ok_ax / ret_al.
   - The version reported is 3.30.
   - Functions 00–0E, 19, 1A, 25, 29–31, 33–3F, 40–4F, 50–52, 54, 56–5C, 62, 66–68, and Lodestone's own F0h. FCB file calls return FFh.
-- **Hot code on even offsets.** On the 286 a taken jump to an odd address costs more prefetch. Pad bytes (`times ($ - $$) & 1 db 90h`, each after a JMP or RET, never executed) keep the most-entered labels even: INT 21h's entry, dispatch and exits, console output, read/write, the FAT and buffer paths, the directory scan and GPIB's ticks. `os/bench/hot.py` counts taken entries over a few workloads and `plan.py` picks the pad sites; LODE.ASM's `EVEN` list stops the build if a listed label goes odd. The 2026-10-26 audit's kernel batch took taken entries landing odd from 51-54 % to 27-32 %. The resident UI has its own pads and `EVEN` list (section ui; `SECTION=ui` for plan.py and evalpar.py, and hot.py's UI workloads: idle, list, menu, form, drag, Write, Calc, System, a terminal window): its UI batch took them from 43.6 % to 30.3 %. The UI image is copied to a paragraph, so an offset's parity is the address's there too. The same holds for CLAUDE.COM, its /R stub and RCON (`SECTION=claude|rstub|rcon`; the link's workloads), LCMD.COM (`SECTION=lcmd`: the prompt, batch files, PATH, pipes, the task commands; 47-51 % → 29-33 %) and each .RUN (`SECTION=app APP=NAME`, with `mkrun.py -l` for the listing; Write's typing 61 % → 26 %, TERM's drawing 53 % → 16 %): each has its pads and an `EVEN` list.
+- **Hot code on even offsets.** On the 286 a taken jump to an odd address costs more prefetch. Pad bytes (`times ($ - $$) & 1 db 90h`, each after a JMP or RET, never executed) keep the most-entered labels even: INT 21h's entry, dispatch and exits, console output, read/write, the FAT and buffer paths, the directory scan and GPIB's ticks. `os/bench/hot.py` counts taken entries over a few workloads and `plan.py` picks the pad sites; LODE.ASM's `EVEN` list stops the build if a listed label goes odd. Padding the kernel on 2026-10-27 took taken entries landing odd from 51-54 % to 27-32 %. The resident UI has its own pads and `EVEN` list (section ui; `SECTION=ui` for plan.py and evalpar.py, and hot.py's UI workloads: idle, list, menu, form, drag, Write, Calc, System, a terminal window): its pads took them from 43.6 % to 30.3 %. The UI image is copied to a paragraph, so an offset's parity is the address's there too. The same holds for CLAUDE.COM, its /R stub and RCON (`SECTION=claude|rstub|rcon`; the link's workloads), LCMD.COM (`SECTION=lcmd`: the prompt, batch files, PATH, pipes, the task commands; 47-51 % → 29-33 %) and each .RUN (`SECTION=app APP=NAME`, with `mkrun.py -l` for the listing; Write's typing 61 % → 26 %, TERM's drawing 53 % → 16 %): each has its pads and an `EVEN` list.
 - **Memory.** A standard MCB arena from just above the kernel; the last block is the cache (owner 8). First fit, with free neighbours merged (48h/49h/4Ah).
 - **Disks.**
   - Drives come from INT 11h; each disk is mounted from its BPB (512-byte sectors, FAT12).
@@ -250,7 +250,6 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
   - It passes on 1.44 MB, 720 KB, 1.2 MB and 360 KB disks, under GRiD MS-DOS, and on the real 1520.
 - **tests\test_claude_kernel.py — 21 of 21 pass.** These are the Claude-link scenarios with CLAUDE.COM on the real kernel and shell.
 - **tests\ggtest_kernel.py** — GGTEST on the kernel. Its results match GRIDGPIB's.
-- Independent reviews: the kernel (10 issues, all fixed), the 0.2.1 cache (above), and DEFRAG with the saver (`lodestone-defrag.md`).
 
 ## Known gaps (later versions)
 - No INT 33h mouse for DOS programs yet; TM5000G runs keyboard-only.
@@ -258,7 +257,7 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
 - Handle I/O doesn't check for a disk change: don't swap floppies with a file open. With the cache, a whole cylinder of the old disk could be served.
 - Programs that write sectors with INT 13h directly bypass the cache. Formatters and disk editors are examples. DEFRAG does too, but it calls 0Dh before and after. Press F5 afterwards, or use GRiD MS-DOS for them.
 - Subdirectories (Subjects) aren't prefetched like the root, and don't get the same-sector shortcut.
-- A root longer than 63 entries is read in one pass (~0.3 s) when its sectors aren't in the buffers. DEFRAG removes the dead entries our copies leave.
+- A root longer than 63 entries is read in one pass (~0.3 s) when its sectors aren't in the buffers. DEFRAG removes the dead entries copies leave.
 - On real hardware, writes are ~3 s per 256 KB above the emulator. The fresh-floppy run showed this is drive timing (the request-start gap), not layout. Not yet investigated.
 - A new file takes the first free clusters from the front of the disk, so a hole left by a replaced file (e.g. each LODE.SYS copy from Windows) fragments the next big file. DEFRAG fixes that afterwards.
 - The Executive stays resident while programs run (not swapped to EMS). The cache could later move to EMS pages to give the 18 KB back.
