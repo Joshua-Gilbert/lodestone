@@ -1,6 +1,6 @@
-"""CLAUDE.COM 1.13 in a terminal window (Lodestone's multitasking, T5d) in
+"""CLAUDE.COM 1.13 in a terminal window (Lodestone's multitasking) in
 emulation: grid_emu's FakeMT stands in for MT (MT_PUB, MT_WAKE, MT_LIST,
-and T3's front for a graphics mode and back for a text one), against the
+and MT's front for a graphics mode and back for a text one), against the
 real gridlink with a stand-in Claude Code in a pty.  In its window CLAUDE
 draws its shadow alone (25 rows, the status band its last) and publishes
 it; the Executive's screen (B800h) is never written while it is behind.

@@ -1,4 +1,4 @@
-; ERRS.COM (test_kernel t_errs): X17 and X20's path forms (a missing directory with a
+; ERRS.COM (test_kernel t_errs): the path forms (a missing directory with a
 ; bad last name, a trailing \, two \s, . and .., an invalid drive, a long path, an
 ; empty name, devices) through each path call.  Each line: fn, the name(s), ok or
 ; the error.  test_kernel holds GRiD MS-DOS 3.30's answers
@@ -531,7 +531,7 @@ tests   dw 3A00h, p0, 0, 0000h
         dw 4100h, p36, 0, 0000h
         dw 4100h, p7, 0, 0000h
         dw 4100h, p1, 0, 0000h
-%assign i 51                    ; a device's name after a second ':' (R38)
+%assign i 51                    ; a device's name after a second ':'
 %rep 6
         dw 3D00h, p%[i], 0, 0000h
         dw 3C00h, p%[i], 0, 0000h

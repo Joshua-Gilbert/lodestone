@@ -1,4 +1,4 @@
-; MTSCR.COM - for test_mt.py: a task's screen (KMT's INT 10h, M4a).
+; MTSCR.COM - for test_mt.py: a task's screen (KMT's INT 10h).
 ;   MTSCR MODE [FILE]
 ;   P  prints a script through INT 10h and DOS, using every call KMT does
 ;      itself for a task in the background: mode 3; on page 1, 30 lines

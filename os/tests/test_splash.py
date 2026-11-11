@@ -285,29 +285,29 @@ MEM_044 = {0: '562.2', 88: '578.3'}   # (a Fail nobody was asked for kept apart 
                                       #  1.0, a menu's keys in their column: 16 bytes, 0.1 KB less with no EMS;
                                       #  a program's modes on the Executive's menu: 0.2 / 0.3 KB less;
                                       #  the Executive's right-click menu: 0.6 / 0.5 KB less;
-                                      #  M12: 0.1 KB less with EMS, INT 21h F007h (the hard disk's name for System);
+                                      #  tasks during hard disk waits: 0.1 KB less with EMS, INT 21h F007h (the hard disk's name for System);
                                       #  0.6: 0.1 KB less, the PATH search and two settings files;
                                       #  then 0.5 KB less, windows that move and close, UI API 6; printer drivers 0.2 KB;
-                                      #  then 0.9 KB more, the 2026-10-20 audit's kernel batch; 1.3 / 1.2 KB more, its UI batch;
+                                      #  then 0.9 KB more, the 2026-10-20 kernel batch; 1.3 / 1.2 KB more, its UI batch;
                                       #  2.6 / 2.7 KB more, its medium-risk kernel and UI batches: start-up code run from buffers, no row table;
                                       #  then 0.1 KB less, 32 bytes, right clicks: UI API 7;
                                       #  0.1 KB less, names and devices answered as MS-DOS 3.30;
                                       #  0.1 KB less (no EMS), a device behind a directory: DIR\NUL;
-                                      #  0.1 KB less, the path calls' error codes as MS-DOS 3.30's: X17, X20;
+                                      #  0.1 KB less, the path calls' error codes as MS-DOS 3.30's;
                                       #  0.2 KB less, the Executive's part of multitasking: Return
                                       #  as a task, CODE-T, the UI block moved once no task is left, 182 bytes;
                                       #  0.3 KB less, GPIB's SRQ on IRQ 5;
                                       #  0.1 KB less, INT 24h for a drive with no disk;
                                       #  0.5 KB less, pop-up menus and drags: UI API 8;
                                       #  0.3 KB less, the clipboard: UI_CLIP;
-                                      #  0.1 KB more, 160 bytes, the 2026-10-26 audit's kernel batch;
-                                      #  0.1 KB more, 48 bytes, its UI batch: R39-R41;
+                                      #  0.1 KB more, 160 bytes, the 2026-10-26 kernel batch;
+                                      #  0.1 KB more, 48 bytes, its UI batch;
                                       #  32 bytes, the Executive opening .BMP files with Paint;
-                                      #  0.1 KB more, 64 bytes, its ROM 1 batch: XI-13, G1-5 and UI-7;
-                                      #  0.1 KB more, 160 bytes, its AP-1: HT in the Executive's help lines;
-                                      #  0.3 KB more, 288 bytes, its K2: EXEC's and rename's buffers in the INT 21h stack;
-                                      #  0.4 KB more, 368 bytes, its KC-2: the capture's file writer as SCREEN.PRN;
-                                      #  0.1 KB less with EMS, 32 bytes, its S4 and S14 (the EMS module's word-wise 57h);
+                                      #  0.1 KB more, 64 bytes, ROM 1 fixes;
+                                      #  0.1 KB more, 160 bytes, HT in the Executive's help lines;
+                                      #  0.3 KB more, 288 bytes, EXEC's and rename's buffers in the INT 21h stack;
+                                      #  0.4 KB more, 368 bytes, the capture's file writer as SCREEN.PRN;
+                                      #  0.1 KB less with EMS, 32 bytes, INT 21h 09h in one write and the EMS module's word-wise 57h;
                                       #  0.2 / 0.1 KB less, 160 bytes, free memory on the Executive's info line)
 
 def t_memory():

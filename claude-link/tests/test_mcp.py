@@ -490,7 +490,7 @@ def test_plotter():
         r = body(c.call('grid_plotter', action='cancel'))
         assert 'cancelled' in r, r
         h.grid.plot_drain = 60
-        # X63: cancelled while the pen finishes is "cancelled", not "done"
+        # cancelled while the pen finishes is "cancelled", not "done"
         h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0      # a pen that never finishes
         c.call('grid_plotter', hpgl='IN;PU1,2;')
         end = time.time() + 20
@@ -499,7 +499,7 @@ def test_plotter():
         r = body(c.call('grid_plotter', action='cancel'))
         assert ': cancelled' in r, r
         h.grid.plot_drain = 60
-        # X63: a GRiD that doesn't answer the plot's polls holds the other tools for one short wait, not 31 s
+        # a GRiD that doesn't answer the plot's polls holds the other tools for one short wait, not 31 s
         h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0
         c.call('grid_plotter', hpgl='IN;PU1,2;')
         h.grid.plot_mute = True
@@ -534,7 +534,7 @@ def test_hpgl_ends():
     big = b';'.join(b'PD%d,%d' % (i, i) for i in range(3000)) + b';'
     e = mcp.hpgl_ends(big)
     assert len(e) == 3000 and e[-1] == len(big) and all(big[i - 1:i] == b';' for i in e)
-    # (hpgl_parts went, P6: its hpgl_check cases are here)
+    # (hpgl_parts went: its hpgl_check cases are here)
     for bad in (b'', b' ;\r\n', b'IN;\x07', b'IN;\x00', b'LB\xe9\x03',
                 b'IN;LBHI', b'LBA\x03;PU;BLabc', b'wdNO END'):        # a label left open
         try: mcp.hpgl_check(bad); assert False, bad
@@ -584,7 +584,7 @@ def test_socket_requests_checked():
 
 
 def test_bench_edges():
-    """X68: gridlink.bench's bounds, --prof under --sweep, no file left on the GRiD, the first error kept."""
+    """gridlink.bench's bounds, --prof under --sweep, no file left on the GRiD, the first error kept."""
     import contextlib, io, tempfile
     from gridlink import bench
     calls = []

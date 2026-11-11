@@ -3,7 +3,7 @@
 ; 3.30 for the *_MS.TXT answers): for each entry of `tests` (fn, name 1,
 ; name 2 or 0, CX; 0 ends it) the call is made and a line printed: fn, the
 ; name(s), ' -> ok' or ' -> err ' and AL in hex.  3Dh opens read/write; a
-; handle from 3Dh, 3Ch or 5Bh is closed (H7)
+; handle from 3Dh, 3Ch or 5Bh is closed
 org 100h
         mov     si, tests
 .t:     lodsw                   ; function

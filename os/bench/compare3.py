@@ -40,7 +40,7 @@ def lodestone(prog, ems, limit=900):
 def msdos(prog, ems, limit=900):
     cfg = b'DEVICE=EMM.SYS\r\n' if ems else None
     img = dosimg.build(os.path.join(TMP, 'm3.img'), ROM, [prog] + ([EMM] if ems else []), config=cfg)
-    pc = pcemu.PC(img, disk_model='real', ems_pages=ems, irq_exact=True)  # (IRQs as ktest.KPC delivers Lodestone's: H10)
+    pc = pcemu.PC(img, disk_model='real', ems_pages=ems, irq_exact=True)  # (IRQs as ktest.KPC delivers Lodestone's)
     raw = open(img, 'rb').read()
     pc.mu.mem_write(0x7C00, raw[:512])
     data = 1 + 2 * 9 + 14

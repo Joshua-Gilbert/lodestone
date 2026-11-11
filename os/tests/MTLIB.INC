@@ -1,5 +1,5 @@
 ; MTLIB.INC - what test_mt's DOS programs (MT*.ASM, VHOOK) had each written
-; out for itself (H7's successor, H8).  Macros, each used where its copy
+; out for itself (as PROBE.INC is for the MS-DOS probes).  Macros, each used where its copy
 ; was, so every program's bytes, and the offsets test_mt reads in some of
 ; them, are as they were.  Not here: the copies that differ on purpose
 ; (MTSPIN's hex4 leaves ES = 40h; MTFAST's blanks leaves SI past the

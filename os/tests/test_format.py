@@ -490,7 +490,7 @@ def t_hd_own():
           struct.unpack_from('<I', v.sec(0), 0x20)[0] == 68640 - 39 and 'X        TXT' in o, (o, v.sec(0)[0x0B:0x26].hex()))
 
 def t_review():
-    # the review panel's findings, each held to
+    # regression cases, each held to
     k = boot(blank('b.img'))
     cmd(k, 'format b:')
     wait(k, 'strike ENTER', 20)

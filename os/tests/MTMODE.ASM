@@ -1,9 +1,9 @@
 ; MTMODE.COM - for test_mt.py: a task's screen kept while another is in
 ; front.  MTMODE MM FILE [T]: video mode MM (hex), its 32 KB at B800h filled
 ; with a pattern; then it waits for a key (AH=08h) and writes "ok" to
-; FILE if the pattern is all still there, else "bad".  T (T3): after that
+; FILE if the pattern is all still there, else "bad".  T: after that
 ; key, mode 3, "MTMODE: text" printed and another key, before the file.
-; B (T3): after that key, mode 3 and at once mode MM again, then another
+; B: after that key, mode 3 and at once mode MM again, then another
 ; key.  No arguments: mode 40h, no file
 ; nasm -f bin -o MTMODE.COM MTMODE.ASM
 cpu 286

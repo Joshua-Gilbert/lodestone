@@ -1,5 +1,5 @@
 """BENCH.COM on drive C: (and on M:, the RAM disk in EMS) under Lodestone, in pcemu with the hard disk timed
-(seeks and rotation; see pcemu.Ata's `timed`), on the layout of Joshua's
+(seeks and rotation; see pcemu.Ata's `timed`), on the layout of the author's
 CP30104H (its own partition table and boot sector: 762 x 8 x 39, one
 121 MB FAT16 partition, 2 KB clusters) with about 800 KB of files at the
 start, as on the real disk.  Prints BENCH's report and a table from the

@@ -188,7 +188,7 @@ class Link:
         doesn't find it held on the bus, and we wait for the GRiD's next frame."""
         bg = getattr(s.source, 'background', None)
         bg = bg is not None and bg()              # (resident Claude's background: the bridge is quiet, and the
-        if not ((s.grid_wake or bg) and s.connected): return     #  stub serial-polls for the ring, M4)
+        if not ((s.grid_wake or bg) and s.connected): return     #  stub serial-polls for the ring)
         ring = getattr(s.t, 'ring', None)
         if ring is None: return
         may = getattr(s.source, 'may_ring', None)
@@ -267,7 +267,7 @@ class Link:
         if kind == glp.P_HELLO and s.grid_fcs and len(payload) >= 2:   # the GRiD switches on reading it
             payload = bytes(payload[:1]) + bytes([payload[1] | glp.HF_FCS]) + bytes(payload[2:])
         # Each answer is checked as the frame it answers was: the Fletcher sum
-        # (every frame of a CLAUDE from audit3 R56, its HELLO too), or the CRC
+        # (every frame of a CLAUDE from 2026-10-29, its HELLO too), or the CRC
         # (an older CLAUDE's HELLO, and every frame of one before 1.3).
         frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload, fl=s.rx_fl)
         s.last_answer = frame; s.last_kind = kind
@@ -336,7 +336,7 @@ class Link:
         if t == glp.G_HELLO:
             quiet = getattr(s.t, 'set_quiet', None)
             if quiet is not None: quiet(False)  # (any CLAUDE starting: SRQs for its answers, from this HELLO's;
-            with s.lock:                        #  resident Claude's background had the bridge quiet, M4)
+            with s.lock:                        #  resident Claude's background had the bridge quiet)
                 s.outq.clear(); s.cur = None
             s.reasm = glp.Reassembler(); s.pi_seq = 0; s.last_g = None; s.connected = True
             s.drop_types.clear()

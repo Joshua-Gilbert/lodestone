@@ -19,7 +19,7 @@ Grid-OS on drive C: (the internal hard disk) and on M: (the RAM disk in EMS),
 BENCH 1.4 in pcemu (2026-10-08, 0.3.14)
 python3 bench/run_bench_hd.py
 
-The disk: the layout of Joshua's CP30104H (its own partition table and
+The disk: the layout of the author's CP30104H (its own partition table and
 boot sector: 762 x 8 x 39, one 121 MB FAT16 partition, 2 KB clusters),
 about 800 KB of files at the start as on the real disk.  BENCH runs from
 A: with C: (or M:) current, from the command prompt, with the 1520's EMS.

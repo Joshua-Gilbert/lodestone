@@ -25,7 +25,7 @@ DOS itself.
 
 Time: 4 us per executed basic block (about a 10 MHz 286).
 
-Not modelled (H11): a BIOS service here finishes in one step, between two
+Not modelled: a BIOS service here finishes in one step, between two
 blocks, so no timer tick (or other IRQ) ever lands inside an INT 13h or an
 INT 10h call, where on the 1520 one can, mid-transfer or mid-scroll.  Code
 that must hold while a tick comes in the middle of a BIOS call (MT's
@@ -61,7 +61,7 @@ PIC_ISR = os.environ.get('PIC_ISR') == '1'
 FD_STRICT = os.environ.get('FD_STRICT') == '1'  # (fd_wait: an INT 13h while one waits, or a transfer whose EMS
                                                 #  window changed under it, is a crash, so any test shows it)
 IRQEOI = bytes([0x50, 0xB0, 0x20, 0xE6, 0x20, 0x58, 0xCF])
-# fd_wait (M10): a floppy transfer takes time, as on the 1520.  INT 13h's
+# fd_wait: a floppy transfer takes time, as on the 1520.  INT 13h's
 # wait (the BIOS's FdWaitInt, F000:1400): STI, INT 15h AX=9001h (CF back:
 # a time-out), then 40:3Eh bit 7 polled (4 x 64 Ki loops, about 2 s, its
 # time-out), its result from OUT E0h (AL 0 done, 1 timed out), RETF 2.
@@ -70,7 +70,7 @@ FDWAIT = bytes.fromhex('fb1e5153b80190f8cd15721531c08ed8bb040031c9f6063e04807509
                        'b001eb0780263e047fb000e6e05b591fca0200')
 IRQ6 = bytes.fromhex('501e31c08ed8800e3e0480b020e620b80191cd151f58cf')
 IRET = bytes([0xCF])
-# SysReq (M11): the 1520's INT 9 at the key's make (SysReq down in 40:18h
+# SysReq: the 1520's INT 9 at the key's make (SysReq down in 40:18h
 # bit 2, INT 15h AX=8500h: once, not again while it repeats) and break
 # (8501h), both in one IRQ here, never in the key buffer (F000:1500).
 # Confm, CODE-SysReq (F000:1540): the same with CODE (the BIOS's Alt, 40:17h
@@ -139,7 +139,7 @@ class Ata:
       diag: the code after 90h (01h: passed)
       data: {LBA: 512 bytes}; the rest reads as zeros
       irq: the drive raises IRQ 14 when a command ends (False: a dead line)
-      mech_fail: it can't find its way on the disk (as Joshua's CP30104H,
+      mech_fail: it can't find its way on the disk (as the author's CP30104H,
         2026-10-07): recalibrate aborts, a seek never completes (BSY drops,
         DSC doesn't come), reads end IDNF; each failure after fail_ms
       frees: mech_fail ends after this many recalibrates (exercise worked)
@@ -153,7 +153,7 @@ class Ata:
         command ends there); s.wfails counts them.  A test may change it
       cut: the power goes during this WRITE SECTORS command (1 = the
         first): half its sectors land (none of one), then the PC stops
-      strict (M12): a command written while one is in flight (busy, or a
+      strict: a command written while one is in flight (busy, or a
         sector's data still to move) is a crash (pc.crash), not ignored
     While busy, every register reads the status and writes go nowhere.
     INTRQ (IRQ 14, irq=True) as an ATA drive raises it: when a command ends,
@@ -411,7 +411,7 @@ class PC:
                  disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False, roms=None,
                  irq_exact=False, fd_wait=False):
         s.irq_exact = irq_exact
-        # fd_wait (M10): a floppy's INT 13h read, write or verify waits in
+        # fd_wait: a floppy's INT 13h read, write or verify waits in
         # real code (FDWAIT) for IRQ 6 at its end, when its data moves (the
         # DMA: through the EMS windows as they are then), as on the 1520
         s.fd_wait = fd_wait or os.environ.get('FD_WAIT') == '1'     # (FD_WAIT=1: every test so)
@@ -444,7 +444,7 @@ class PC:
         s.chip_int_was = False; s.irqs5 = 0
         s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
         s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
-        s.srq_seen = []                 # INT 15h AH=85h calls that reached the BIOS (M11: SysReq)
+        s.srq_seen = []                 # INT 15h AH=85h calls that reached the BIOS (SysReq)
         s.keys = collections.deque(); s.tty = []; s.log = []; s.lpt = []
         s.fpu_ports = []                # (OUTs to F0h, BUSY's latch cleared, and F1h, the coprocessor reset)
         s.calls13 = []; s.ints = collections.Counter(); s.t13 = []
@@ -459,7 +459,7 @@ class PC:
         s.watch = None                  # watch(addr): at each block's start; addr is the block's CS:IP as a linear
                                         #  address (CS*16 + IP), so a hook compares it instead of reading CS and IP
         s.ccr = 0x30; s.on_ccr = None   # CGA colour select (3D9h), as written; on_ccr(value) at each write
-        # CMOS: Joshua's 1520 (CMOS128.BIN) if it's here, else a 1.44 MB A:
+        # CMOS: the author's 1520 (CMOS128.BIN) if it's here, else a 1.44 MB A:
         cm = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'CMOS128.BIN')
         s.cmos = bytearray(open(cm, 'rb').read()) if os.path.exists(cm) else bytearray(128)
         if not os.path.exists(cm): s.cmos[0x10] = 0x40; s.cmos[0x15:0x17] = b'\x80\x02'
@@ -718,7 +718,7 @@ class PC:
         if s.ata and 0x1F0 <= port <= 0x1F7:
             if port == 0x1F0 and s.ata.timed: s.us += s.ata.pio_us         # (REP INSW: one hook a word)
             return s.ata.read(port, size, s.us)
-        if s.float_bus and (0x1F0 <= port <= 0x1F7 or port == 0x3F6):   # as Joshua's 1520 reads
+        if s.float_bus and (0x1F0 <= port <= 0x1F7 or port == 0x3F6):   # as the author's 1520 reads
             b = s.rd(s.r('cs'), s.r('ip') + 2, 2)                       #  (2026-10-07): code bytes
             return b[0] | b[1] << 8 if size == 2 else b[0]              #  just prefetched
         if port == 0x3DA:
@@ -1109,7 +1109,7 @@ class PC:
             d.changed = False
             s.w('ax', 0); s.cf(0); return
         if ah in (2, 3, 4) and s.fd_wait and s.fd_op is not None:
-            s.fd_reentry += 1                           # (M10: a second call while one waits: the
+            s.fd_reentry += 1                           # (a second call while one waits: the
             s.log.append('[INT 13h AH=%02Xh while one waits]' % ah)    #  controller's in use)
             if FD_STRICT: s.crash = 'INT 13h AH=%02Xh while one waits (fd_wait)' % ah
         if ah in (2, 3, 4) and d.empty:
@@ -1445,10 +1445,10 @@ class PC:
         # time under CLI (polling INT 33h AX=3 in a task behind) gets
         # almost no ticks, so a task behind runs longer turns than on the
         # 1520.  Lodestone's harnesses (ktest.KPC, so test_mt's boot(), and
-        # claude_kernel's KernelHarness) turn it on by default since the
-        # 2026-10-26 audit's H10; under it test_resident_term's "a link
+        # claude_kernel's KernelHarness) turn it on by default since
+        # 2026-10-29; under it test_resident_term's "a link
         # failure in a pass..." and "the bridge gone while away..." had
-        # failed: a link bug, fixed in T5c.
+        # failed: a link bug, since fixed.
         s.irq_wait = s.irq_exact and not s.r('flags') & 0x200 \
             and (bool(s.soft) or any(s.unmasked(i) for i in s.irq_pending))
         s.blocked = False

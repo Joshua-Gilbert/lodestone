@@ -336,7 +336,7 @@ release:                                ; hand the instruments back
         out     dx, al
         mov     dx, s_done
         call    puts
-quit:   call    d_rearm                 ; (X55: the driver's IMR2, IFC, REN)
+quit:   call    d_rearm                 ; (the driver's IMR2, IFC, REN)
         call    log_close
         mov     ax, 4C00h
         int     21h

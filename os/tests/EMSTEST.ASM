@@ -1416,7 +1416,7 @@ t_overlap:
         mov     cx, 5000
         xor     bx, bx
         call    patchk
-        STEP 6                          ; S14: up by 101, an odd length
+        STEP 6                          ; up by 101, an odd length
         push    ds                      ;  (backwards: a byte, then words)
         pop     es
         mov     di, buf
@@ -1444,7 +1444,7 @@ t_overlap:
         mov     cx, BUFSZ - 1
         xor     bx, bx
         call    patchk
-        STEP 7                          ; S14: an odd exchange at odd offsets
+        STEP 7                          ; an odd exchange at odd offsets
         mov     dx, [h2]                ;  (a byte, then words)
         xor     al, al
         xor     bx, bx

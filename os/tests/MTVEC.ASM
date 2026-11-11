@@ -1,5 +1,5 @@
 ; MTVEC.COM - for test_mt.py: each task's own vectors (KMT's mt_vrun,
-; mt_vfr, mt_vfix: M5a).
+; mt_vfr, mt_vfix).
 ;   MTVEC MODE [N] [FILE]
 ;   H  hooks INT 1Ch (AH=35h/25h, a handler that counts its calls and goes
 ;      on), waits N ticks (HLT), puts INT 1Ch back (AH=25h) and writes

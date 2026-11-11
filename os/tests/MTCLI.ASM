@@ -1,5 +1,5 @@
 ; MTCLI.COM - for test_mt.py: a program that holds the timer's interrupt
-; late, by a different time each tick (M9b: mt_tick's fast counter).
+; late, by a different time each tick (mt_tick's fast counter).
 ;   MTCLI T FILE
 ; Counter 0 left at the BIOS's rate (mode 3, 65536): over and over, with
 ; interrupts off, it waits for the count to reload, then to fall below a

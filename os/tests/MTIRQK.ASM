@@ -1,5 +1,5 @@
 ; MTIRQK.COM - for test_mt.py: a key read through DOS from an interrupt's
-; handler, its IRQ still in service (M9b: mt_can reads the PIC).
+; handler, its IRQ still in service (mt_can reads the PIC).
 ;   MTIRQK FILE
 ; Hooks IRQ 7 (INT 0Fh) and unmasks it, then waits (HLT) for its handler
 ; to have run: STI, a key read through DOS (AH=08h) before its EOI, as a

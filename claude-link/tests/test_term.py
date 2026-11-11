@@ -139,7 +139,7 @@ def test_encoder_resume():
     """CLAUDE /R's console keeps its screen between pop-ups and says HELLO
     with its sum: the encoder goes on from it when it is the screen of the
     last frame or the one before; anything else starts from a clear screen.
-    The sum is the Fletcher sum (audit3 R56), or a CRC-16 from an older
+    The sum is the Fletcher sum (from 2026-10-29), or a CRC-16 from an older
     console, whose HELLO came with the CRC (resume's fl False)."""
     enc = Encoder(); gc, ga = TS._blank_rows()
     scr = TermScreen(); st = pyte.ByteStream(scr)
@@ -438,7 +438,7 @@ def test_echo_latency():
 
 
 def test_hold_waits_till_ready_at():
-    """P9: a held answer sleeps till the source's ready_at (Term's: its echo settled), not in 5 ms looks; a source
+    """A held answer sleeps till the source's ready_at (Term's: its echo settled), not in 5 ms looks; a source
     that can't say, or has nothing timed (None), is looked at every 5 ms as before; never a busy loop."""
     from gridlink.link import Link
     class Src:
@@ -528,7 +528,7 @@ def test_resident_quads():
 
 
 def test_resident_background():
-    """M4: once the user has gone back to the program, with a quiet bridge (HF_BG) the files and GPIB tools
+    """Once the user has gone back to the program, with a quiet bridge (HF_BG) the files and GPIB tools
     go on in the background (whatever the link's last word: the background speaks only when it has work);
     the rest name them.  Going back ends only the calls the background can't answer; a call given up on
     before it went is withdrawn; the Link rings (quietly) for an away console whatever GF_WAKE, untiringly."""

@@ -1,5 +1,5 @@
 ; MTPUB.COM - for test_mt.py: a screen published for a terminal window
-; (T5b, MT_PUB).  MTPUB FILE: it shrinks to its own size (4Ah), then its
+; (MT_PUB).  MTPUB FILE: it shrinks to its own size (4Ah), then its
 ; descriptor (25 x 80 cells, a font of its own for codes 20h-47h, a table
 ; for Copy) is published: "P c aaaa" (CF, AX) to FILE; then keys through
 ; DOS (AH=08h) till "q", each writing a line to FILE (appended):

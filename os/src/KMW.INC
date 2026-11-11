@@ -1,5 +1,5 @@
 ; =====================================================================
-;  KMW.INC - several window .RUNs at once (M8a), with MULTITASK=1 only.
+;  KMW.INC - several window .RUNs at once, with MULTITASK=1 only.
 ;  Part of LODEMT.SYS (section mtt): off, none of it is in memory and the
 ;  UI is byte for byte as it was.
 ;
@@ -11,7 +11,7 @@
 ;  list and form and line editor's state, UI_ALLOC's blocks, its header).
 ;  Sessions run in turn inside the UI task: only the one in front (the
 ;  focus) runs; the others wait inside UI_EVENT, where they were.  The
-;  Executive is one of them (record 0, M8c): a click on it, or CODE-F6,
+;  Executive is one of them (record 0): a click on it, or CODE-F6,
 ;  brings it to the front under the windows, which stay on top; while it
 ;  draws, the core's drawing is clipped around them (mw_clipon).
 ;
@@ -37,9 +37,9 @@
 ;      (redraw_all), which stays right whichever window is in front;
 ;    - redraw_all's MOV SI,[redraw_fn] / OR SI,SI becomes a far call to
 ;      mw_rdfn: the base (the Executive) drawn again under a session keeps
-;      the session's band, not its own (M8b).
+;      the session's band, not its own.
 ;  A window .RUN is one whose header says so (RUN_FLAGS: RF_WIN; its
-;  windows have W_FLAGS then, whatever its RUN_API).  M8b: CODE-W from
+;  windows have W_FLAGS then, whatever its RUN_API).  CODE-W from
 ;  any window starts another Write (a new file); a WF_SIZE window is
 ;  resized by its bottom-right corner or CODE-F8 (mw_size, win_mv's way),
 ;  then its .RUN gets EV_SIZE.  While window .RUNs run, the UI block takes
@@ -49,7 +49,7 @@
 ;  one takes the focus.  A window belongs to the session whose slot holds
 ;  its structure (help_w: the running one's; a help or form window is
 ;  modal: no change of focus while one is open).
-;  While window .RUNs run (M8c), the core's drawing primitives are patched
+;  While window .RUNs run, the core's drawing primitives are patched
 ;  too (mw_cpt): with the Executive in front, what it draws is cut around
 ;  the sessions' windows (mw_clipq, mw_cdraw), except inside a window of
 ;  its own; win_paint and the saver draw unclipped (mw_nc).
@@ -63,7 +63,7 @@ SE_BASE     equ 2                       ; its slot: from (offset in the UI segme
 SE_END      equ 4                       ;  to (paragraph-aligned)
 SE_SP       equ 6                       ; its SP while another runs (SS: the UI's)
 SE_NAME     equ 8                       ; its file name (12 + 0)
-SE_TASK     equ 21                      ; a terminal window's (MT_TOPEN, T2): its
+SE_TASK     equ 21                      ; a terminal window's (MT_TOPEN): its
 SE_TGEN     equ 22                      ;  task (0: none), that task's count, and
 SE_TCHG     equ 23                      ;  as mw_poll last saw them: its screen's
 SE_TST      equ 25                      ;  changes (TX_CHG), its state, the BIOS
@@ -79,7 +79,7 @@ mw_ctx:     dw      title_on,  held2 + 2 - title_on
             dw      crit_err,  2
             dw      alloc_tab, run_ret + 2 - alloc_tab
             dw      ex_mtw,    2        ; (2 only in the Executive's UI_EVENT:
-            dw      0                   ;  a task's end is its event, M8c; and
+            dw      0                   ;  a task's end is its event; and
                                         ;  ex_rclk, its right click's, after it)
             times   -(ex_rclk != ex_mtw + 1) db 0
 MW_CALLOC   equ (held2 + 2 - title_on) + 2 + (ed_keep + 1 - lv_cur) + (fm_b2 + 2 - fm_ptr) + 2
@@ -184,7 +184,7 @@ mw_run: cmp     byte [cs:mw_n], 0
 .go:    call    mw_start                ; (the Executive waits in here while
         jc      .fail                   ;  others are in front)
         mov     ax, 0FFFFh              ; (no list again here: it was drawn as
-        mov     [run_ret], ax           ;  each window closed, M8c; run_ret as
+        mov     [run_ret], ax           ;  each window closed; run_ret as
         clc                             ;  run_app leaves it)
         jmp     short .ret
 .fail:  cmp     byte [cs:mw_n], 0       ; (others run: nothing to undo)
@@ -412,7 +412,7 @@ mw_start:
         mov     di, alloc_tab
         xor     ax, ax
         rep     stosw
-        cmp     [held1], ax             ; the Executive's question waiting (M8c:
+        cmp     [held1], ax             ; the Executive's question waiting (
         je      .nq                     ;  it may be in front at one): not the
         mov     [held1], ax             ;  new one's, nor its band
         mov     [held2], ax
@@ -671,7 +671,7 @@ mw_got: cmp     byte [cs:mw_n], 0
 ; .got; DS = the UI): poll_once's; else, each time its clock goes on (~0.5
 ; s), in the Executive's own wait: a task ended (mt_ui: EV_TASK, or
 ; EV_TASKM with its message in msgbuf); else EV_TICK for a terminal window
-; in front (T2: mw_tick); else back to ui_event's HLT, as before.  (AX
+; in front (mw_tick); else back to ui_event's HLT, as before.  (AX
 ; isn't kept: ui_event's loop has nothing in it).  A right click is made
 ; for everyone in this look (ex_rclk's bit 1), for mw_got's routing
 mw_poll:
@@ -694,7 +694,7 @@ mw_poll:
         mov     word [bp+2], ui_event.got
         pop     bp
 .x:     retf
-; T5d: nothing, and a task ready to run (one an SRQ woke while the UI was
+; Nothing, and a task ready to run (one an SRQ woke while the UI was
 ; busy first, mt_want): its turn now, not at the next tick (the HLT after
 ; this would hold the CPU till then).  The mouse or a key brings the
 ; Executive back at the next tick (mt_mdset, mt_mwant: as from a drag's
@@ -825,7 +825,7 @@ mw_tick:
         jne     .yes
         cmp     al, TS_PARKED           ; (parked: its TX in EMS)
         je      .t
-        call    mt_tchg                 ; (T5b: a published screen's too)
+        call    mt_tchg                 ; (a published screen's too)
         cmp     ax, [cs:bp+SE_TCHG]
         mov     [cs:bp+SE_TCHG], ax
         jne     .yes
@@ -887,8 +887,8 @@ mw_open:
         push    di
         push    ds                      ; ui_findapp's answer is in dstpath,
         pop     es                      ;  the Executive's Copy/Move destination,
-        push    si                      ;  which may be waiting at its question
-        mov     si, dstpath             ;  (M8c): kept on the stack meanwhile,
+        push    si                      ;  which may be waiting at its question:
+        mov     si, dstpath             ;  kept on the stack meanwhile,
         lea     di, [bp - MW_PATH]      ;  and the path found copied there
         mov     cx, MW_PATH / 2
         rep     movsw
@@ -1680,7 +1680,7 @@ mw_szto:
         ret
 
 ; ---------------------------------------------------------------------
-;  clipping (M8c).  While window .RUNs run, the core's drawing primitives
+;  clipping.  While window .RUNs run, the core's drawing primitives
 ;  start with a JMP FAR here (mw_clipon).  With the Executive in front,
 ;  what it draws (its list, its form, its information lines) is cut, row
 ;  by row, around the sessions' windows above it, unless it lies inside a

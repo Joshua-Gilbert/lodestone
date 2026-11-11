@@ -26,7 +26,7 @@
 ;  keys it had typed ahead (kept aside meanwhile, so the console can't
 ;  read them).
 ;
-;  M2: the console is Term, Claude Code on the Pi in the same session as
+;  The console is Term, Claude Code on the Pi in the same session as
 ;  CLAUDE /T, through CLAUDE.COM's own TERMLINK, TERMCELL and TERMKEYS.
 ;  Each pop-up draws Term's screen from its shadow at once and says HELLO
 ;  (app=resident) with the shadow's sum: the Pi goes on from that screen
@@ -38,7 +38,7 @@
 ;  driver's SRQ check (AH=0Bh) is never called: it clears the program's
 ;  latch.
 ;
-;  M3: Claude sees the program and types into it.  HELLO names it (its
+;  Claude sees the program and types into it.  HELLO names it (its
 ;  PSP's path, when DOS isn't busy), and so does the band.  SCREEN answers
 ;  with the program's screen as kept in windows 1-2 (the reply's first
 ;  bytes just in front of it, the bytes there kept aside meanwhile).  TYPE
@@ -72,7 +72,7 @@
 ;  does the frame being sent.  RUN, INFO and SETTIME are answered F6h, a
 ;  DOS program is paused.
 ;
-;  M4, the background (CLAUDE 1.10): once the user has gone back to the
+;  The background (CLAUDE 1.10): once the user has gone back to the
 ;  program, the stub calls us again at its key calls (peeks too: TM5000G
 ;  looks for keys between its bus work) every few ticks, R_BGON 2: the
 ;  background pass, bg_pass.  Nothing is drawn and the program's screen,
@@ -168,7 +168,7 @@ rc_main:
         mov     [old16], ax
         mov     ax, [es:bx + P_OLD16 + 2]
         mov     [old16 + 2], ax
-        cmp     byte [es:R_BGON], 2     ; a background look (M4)
+        cmp     byte [es:R_BGON], 2     ; a background look
         jne     .pu
         jmp     bg_pass
 .pu:    call    dos_probe
@@ -276,7 +276,7 @@ dos_probe:
 ; The INT 16h call's frame on the stack the stub came on: the stub's pushes
 ; (ES, DS, PUSHA, FLAGS), r_hot's or r_bg's return, then IP, CS.  Under
 ; MS-DOS its key wait is in IO.SYS, not InDOS's segment, so one deep is
-; never granted there: F7h, though HELLO says ops=files (X54).  -> ES = CS
+; never granted there: F7h, though HELLO says ops=files.  -> ES = CS
 dos_check:
         mov     byte [dos_ok], 0
         les     bx, [parms]
@@ -348,7 +348,7 @@ handler_back:                           ; and back (ES changed)
         int     33h
 .x:     ret
 
-; ---- M4: a background look (the stub's r_bg, R_BGON 2; the header) ----
+; ---- a background look (the stub's r_bg, R_BGON 2; the header) ----
 ; Nothing drawn.  The bridge serial-polled with the driver's timeout at its
 ; shortest (2 ticks: a bridge gone costs one such wait, then no more looks);
 ; RQS, or a request left from the pop-down: the link until the Pi has
@@ -765,7 +765,7 @@ session:
 .t:     mov     bx, [old_tmo]           ; the program's timeout back
         mov     ah, 0Ah
         call    gg_call
-.x:     xor     al, al                  ; M4: the stub looks at key calls if the
+.x:     xor     al, al                  ; the stub looks at key calls if the
         cmp     byte [type_due], 0      ;  user went back (not TYPE's keys) with
         jne     .b                      ;  the link up and idle, and the Pi works
         cmp     byte [connected], 0     ;  so (HF_BG)
@@ -891,7 +891,7 @@ gg_call:                                ; INT 60h-66h, the driver's
 build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
         mov     ax, (GF_BG | GF_QUAD | GF_FCS | GF_TERM) << 8 | 1 ; GLP 1; flags: Term, the
-                                        ;  Fletcher sum, the background (M4),
+                                        ;  Fletcher sum, the background,
                                         ;  the block elements (1.12),
         cmp     word [irq_ptr + 2], 0   ;  and with the driver's SRQ interrupt
         je      .w                      ;  GF_WAKE: the Pi rings while we are
@@ -1043,7 +1043,7 @@ rf_hello:
         mov     byte [bg_ok], 0
         cmp     cx, 2
         jb      .c
-        test    byte [si+1], HF_BG      ; (the Pi works on in the background, M4)
+        test    byte [si+1], HF_BG      ; (the Pi works on in the background)
         jz      .c
         inc     byte [bg_ok]
 .c:     mov     byte [connected], 1
@@ -1100,7 +1100,7 @@ rf_request:
         mov     byte [rq_over], 1
         jmp     short .m
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
-.p:     add     di, reqbuf              ; (by words, P8: rxbuf even, the
+.p:     add     di, reqbuf              ; (by words: rxbuf even, the
         shr     cx, 1                   ;  fragments' data at +6 and 2 KB
         rep     movsw                   ;  each, so both ends even)
         adc     cx, cx
@@ -1461,7 +1461,7 @@ make_title:
         mov     si, prog
         call    put_str
 .t:     mov     al, [bg_shown]          ; requests run while the user was back
-        or      al, al                  ;  in the program (M4)
+        or      al, al                  ;  in the program
         jz      .u
         push    ax
         call    .sep
@@ -1593,14 +1593,14 @@ txq         resb TXQN * 10
 txlen       resw 1
 nakframe    resb 8
 rxn         resw 1
-            alignb  2                   ; (P8: the REQUEST gather goes by words)
+            alignb  2                   ; (the REQUEST gather goes by words)
 rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_more     resb 1                      ; a REQUEST's frames still coming
 rq_over     resb 1                      ;  more than REQMAX of them
 rq_skip     resb 1                      ;  dropped (rf_request)
 hellobuf    resb 128
-; M3: the program, its screen, Claude's keys
+; the program, its screen, Claude's keys
 parms       resd 1                      ; the stub's parameters (r_ks, r_pend)
 prog        resb NAMEMAX + 1            ; the program's name, or nothing
 sm_len      resw 1                      ; a screen's bytes
@@ -1641,7 +1641,7 @@ sum_hid     resb 1
 ptitle      resb TITLEN + 1
 title_text  resb NAMEMAX + 5 + TITLEN + 16
 status_text resb 72
-; M4: the background
+; the background
 bgmode      resb 1                      ; 1: a background pass (nothing drawn)
 bg_ok       resb 1                      ; the Pi's HELLO said HF_BG
 bg_keep     resb 1                      ; R_BGON at the pass's end

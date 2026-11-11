@@ -1,19 +1,19 @@
 ; =====================================================================
 ;  KMT.INC - multitasking, behind a switch: MULTITASK=1 in \LODE.INI
-;  (with EMS; without it, it stays off).  Being built in steps (the plan:
-;  docs/lodestone-multitasking.md).  So far: the switch (M1); tasks, each
+;  (with EMS; without it, it stays off).  The design:
+;  docs/lodestone-multitasking.md.  In it: the switch; tasks, each
 ;  a DOS program in a region of its own, switched when one waits for a
-;  key (M2a); the front one chosen with CODE-Tab, each task's screen kept
-;  in 2 EMS pages of its own (M2b); tasks preempted at the timer's tick,
-;  where it is safe (M3); each task's coprocessor state kept (M3b); a
+;  key; the front one chosen with CODE-Tab, each task's screen kept
+;  in 2 EMS pages of its own; tasks preempted at the timer's tick,
+;  where it is safe; each task's coprocessor state kept; a
 ;  background task's INT 10h output in its own screen, and a task that
-;  writes the screen itself frozen in the background (M4a); keys for the
+;  writes the screen itself frozen in the background; keys for the
 ;  front task only, its waits in the BIOS switched from, CODE-Tab wherever
-;  it is typed (M4b); each task's own INT 33h mouse state (M4c); each
-;  task's own vectors (M5a: mt_vrun's swapped at every switch, the
+;  it is typed; each task's own INT 33h mouse state; each
+;  task's own vectors (mt_vrun's swapped at every switch, the
 ;  keyboard's 09h and 1Bh at a change of the front, the rest the
 ;  machine's, those left pointing into a task's region put back at its
-;  end); tasks ended whatever runs in them (M5b: MT_KILL, at their stub's
+;  end); tasks ended whatever runs in them (MT_KILL, at their stub's
 ;  MT_END when they next run).  CODE-Tab not lost to the BIOS's look for
 ;  a key (mt_drop).
 ;
@@ -33,7 +33,7 @@
 ;  KCALL), so it doesn't have to be within KSEG's 64 KB.  Its hooks:
 ;    - INT 08h goes through mt_tick (the BIOS's handler first).  A
 ;      program's hook goes ahead of it, as in DOS, in its own task's
-;      vectors (M5a); while the running task has one there the tick
+;      vectors; while the running task has one there the tick
 ;      doesn't switch it;
 ;    - done.sw, INT 21h's way out, becomes a far jump to mt_exit;
 ;    - INT 21h F0h through mt_f0: f_F0's first 5 bytes (MOV AL,[BP+F_AX]
@@ -55,12 +55,12 @@
 ;      [ui_seg] / OR AX,AX: 5 bytes) becomes a far jump to mt_pgend,
 ;      which forgets a background program's event handler as it ends.
 ;    - f_48, mem_largest and f_4B.xe (5 bytes each) become far jumps to
-;      mt_48, mt_largest and mt_xenv: a task's region grows (T5a).
+;      mt_48, mt_largest and mt_xenv: a task's region grows.
 ;    - f_3A.mt (RMDIR's CMP BYTE [r_name],0) becomes a far jump to mt_rd:
 ;      another task's current directory is refused too (16, as MS-DOS).
 ;  (mt_hooks, in mt_boot's section, lists the places.)
 ;    - gp_isr.e, the GPIB driver's EOI (MOV AL,20h / OUT 20h,AL / POP DS)
-;      becomes a far jump to mt_srqi: a task woken by SRQ (MT_WAKE, T5c)
+;      becomes a far jump to mt_srqi: a task woken by SRQ (MT_WAKE)
 ;      switched to at once, as at a tick's end.
 ;
 ;  A task (1 to 7; task 0 is the Executive and whatever it runs) is a
@@ -80,7 +80,7 @@
 ;  Task 0's TX is in MT's block (section mttbss).  Switching happens inside
 ;  INT 21h (indos 1) at mt_kwait or when a task ends, and outside it at
 ;  the tick, on INT 21h's way out or at the GPIB driver's SRQ interrupt
-;  (T5c), where it is safe (mt_safe).
+;  where it is safe (mt_safe).
 ;  The calls: MTAPI.INC.
 ; =====================================================================
 %ifndef NOTC
@@ -143,14 +143,14 @@ TX_VEC      equ TX_M33 + M33_ST         ; its own vectors (mt_vrun's), while
 TX_FVEC     equ TX_VEC + MT_NVEC * 4    ; its INT 09h and 1Bh (mt_vfr's), while
                                         ;  another is in front
 TX_CHG      equ TX_FVEC + MT_NFV * 4    ; its screen's changes in the background,
-                                        ;  counted (T1: MT_TROWS gives it)
+                                        ;  counted (MT_TROWS gives it)
 TX_WGFX     equ TX_CHG + 2              ; 1: a terminal window's task, brought
-                                        ;  to the front for graphics (T3:
+                                        ;  to the front for graphics (
                                         ;  mt_wfront); 2: back to its window
                                         ;  at the next switch (a text mode,
                                         ;  mt_wback; mt_scrsv's 0)
 TX_WPSP     equ TX_WGFX + 1             ; the program that asked (mt_gtext)
-TX_MREL     equ TX_WPSP + 2             ; T4, its window's clicks (MT_TMOUSE):
+TX_MREL     equ TX_WPSP + 2             ; its window's clicks (MT_TMOUSE):
                                         ;  80h a press it hasn't read yet (AX=3
                                         ;  behind), 40h then a release held
                                         ;  till it has (the buttons then in bits
@@ -160,17 +160,17 @@ TX_MPSP     equ TX_MREL + 1             ; the program that took the mouse (its
                                         ;  says so (a window's clicks its own)
 TX_MRX      equ TX_MPSP + 2
 TX_MRY      equ TX_MRX + 2
-TX_IN13     equ TX_MRY + 2              ; its mt_in13 (M10: one switched from
+TX_IN13     equ TX_MRY + 2              ; its mt_in13 (one switched from
                                         ;  inside an INT 13h call, at its wait)
 TX0_PARAS   equ (TX_IN13 + 2 + 15) / 16 ; (task 0's TX ends here)
 TX_GSN      equ TX0_PARAS * 16          ; the vector table at its spawn (a
                                         ;  task's: the ones left pointing into
                                         ;  its region at its end put back)
-TX_KN       equ TX_GSN + 1024           ; keys typed to it with MT_TKEY (T1), for
+TX_KN       equ TX_GSN + 1024           ; keys typed to it with MT_TKEY, for
 TX_KH       equ TX_KN + 1               ;  its INT 16h: how many, the first's
 TX_KR       equ TX_KN + 2               ;  place, then KRING of them
 KRING       equ 32
-TX_PUB      equ TX_KR + KRING * 2       ; T5b: its screen's descriptor (MT_PUB;
+TX_PUB      equ TX_KR + KRING * 2       ; its screen's descriptor (MT_PUB;
 TX_PPSP     equ TX_PUB + 4              ;  0:0 none), the program that gave it
 TX_PARAS    equ (TX_KR + KRING * 2 + 15) / 16
 %if TX_PPSP + 2 > TX_PARAS * 16
@@ -249,7 +249,7 @@ section mtt
 mt_tstart:
 mt_old08    dd      0                   ; INT 08h as it was
 mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
-mt_facc     dw      0                   ; M9b: counter 0 run fast, its clocks since
+mt_facc     dw      0                   ; counter 0 run fast, its clocks since
                                         ;  the BIOS's last tick (mod 65536)
 mt_flast    dw      0                   ;  and the count read to match (mt_fast)
 mt_slice    db      2                   ; ticks left in the running task's turn
@@ -281,10 +281,10 @@ mt_hotk     dw      0A500h, 0A5F0h      ; the hot key, CODE-Tab, as AH=10h
                                         ;  F0h would
 mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
 %ifndef NOSYSREQ
-mt_sysrq    db      0, 0                ; M11: 1, SysReq pressed (mt_i15): as
+mt_sysrq    db      0, 0                ; 1, SysReq pressed (mt_i15): as
 %endif                                  ;  CODE-Tab at mt_hot's next look (2 B:
                                         ;  what follows keeps its parity)
-mt_wkt      db      0FFh                ; T5c: the task MT_WAKE's program is in
+mt_wkt      db      0FFh                ; the task MT_WAKE's program is in
 mt_wkp      dw      0                   ;  (FFh: none), and its PSP
 mt_want     db      0FFh                ; the task an SRQ woke: mt_pick's next
 mt_wsv      db      0, 0               ; (mt_smap: windows 0 and 1 as they were)
@@ -311,13 +311,13 @@ mt_idle     db      0                   ; 1: a key wait in the kernel's idle
                                         ;  (its INT 28h; mt_kwait .idle)
 mt_old16    dd      0                   ; INT 16h as it was
 mt_old15    dd      0                   ; INT 15h, 25h, 26h and 0Eh (IRQ 6, the
-mt_old25    dd      0                   ;  floppy's) as they were (M10)
+mt_old25    dd      0                   ;  floppy's) as they were
 mt_old26    dd      0
 mt_old0e    dd      0
-mt_old76    dd      0                   ; INT 76h (IRQ 14, the hard disk's), M12
-mt_down     db      0FFh                ; M10: the task switched from at a
+mt_old76    dd      0                   ; INT 76h (IRQ 14, the hard disk's)
+mt_down     db      0FFh                ; the task switched from at a
                                         ;  floppy's wait (INT 15h AX=9001h),
-                                        ;  or the hard disk's (9000h, M12),
+                                        ;  or the hard disk's (9000h),
                                         ;  till it runs again (FFh: none)
 mt_ddev     db      1                   ; its device: 1 the floppy, 0 the hard
                                         ;  disk (as 9001h/9000h's AL)
@@ -344,10 +344,10 @@ mt_33dn     dw      0                   ;  m33_dn and m33_dmode,
 mt_33eb     dw      0                   ;  m33_ev and m33_busy,
 mt_33pk     db      0                   ;  the mouse's IRQ bit masked (0Ch,
 mt_33pm     db      0                   ;  14h: 0 else) and the mask before,
-mt_33fn     dw      0                   ;  the function (T4: AX=3's read)
+mt_33fn     dw      0                   ;  the function (AX=3's read)
 mt_33sb     db      0                   ; (mt_scrto: m33_busy as it was)
 mt_33ot     db      0                   ; (mt_m33on: another driver answered)
-; each task's own vectors (M5a), swapped at every switch: DOS's (22h-24h
+; each task's own vectors, swapped at every switch: DOS's (22h-24h
 ; first: a new task's are MT's, not its spawner's; 21h, 28h, 2Fh), the
 ; CPU's traps, INT 02h (where the BIOS's INT 75h sends a coprocessor's
 ; error) and 75h, INT 08h (its timer hook ahead of mt_tick), 10h, 16h,
@@ -435,7 +435,7 @@ mt_eord     times MT_TASKS db 0         ; (each task's end: mt_nend then)
 mt_xnm      dw      0                   ; (MT_UI: the program's name)
 mt_xpb      times SP_SIZE db 0          ; (MT_UI's MT_SPAWN block)
 mt_lbg      dw      mt_lnone            ; LODE.INI's lists (mt_lists): BG=,
-mt_lfz      dw      mt_lnone            ;  FREEZE=, MTMEM=, FULL= (T2: started
+mt_lfz      dw      mt_lnone            ;  FREEZE=, MTMEM=, FULL= (started
 mt_lmem     dw      mt_lnone            ;  full screen, not in a terminal
 mt_lfull    dw      mt_lnone            ;  window); in mt_ini
 mt_lnone    db      0
@@ -445,7 +445,7 @@ mt_snomem   db      ': not enough memory or EMS; park or end a task', 0
 mt_sended   db      ' ended', 0
 mt_scode    db      ', exit code ', 0
 mt_snost    db      ' could not be started: error ', 0
-mt_fast     db      0                   ; M9b: how sure counter 0 runs fast, 0-3
+mt_fast     db      0                   ; how sure counter 0 runs fast, 0-3
                                         ;  (mt_tick).  Here, the align's pad
             align   2
 ; the kernel's per-task variables: (offset, bytes), as V_* lays them out
@@ -480,7 +480,7 @@ ST_END      equ     100h + st_code.e - st_code
             times   -(100h + st_len > ST_PATH) db 0     ; (it fits below ST_PATH)
 
 ; INT 08h: the BIOS's handler first (the tick count, INT 1Ch, the end of
-; the interrupt), then ours.  M9b: a program that runs counter 0 fast (a
+; the interrupt), then ours.  A program that runs counter 0 fast (a
 ; game's music, its own INT 08h hook calling the BIOS's every Nth time)
 ; has that hook in its own turns only; in the others, entered straight
 ; (INT 08h mt_tick itself), MT does as it does: the BIOS's handler once
@@ -571,7 +571,7 @@ mt_tick:
 %ifdef CRASHLOG
         call    mt_crt
 %endif
-        cmp     byte [cs:mt_down], 0FFh ; (M10: a floppy owner's time-out)
+        cmp     byte [cs:mt_down], 0FFh ; (a floppy owner's time-out)
         je      .d
         call    mt_dtick
 .d:     nop                             ; (mt_par: what follows at its parity)
@@ -626,7 +626,7 @@ mt_tick:
         pop     ax
         iret
 
-; T5c: the GPIB driver's SRQ interrupt (gp_isr.e, its EOI: JMP FAR here, by
+; The GPIB driver's SRQ interrupt (gp_isr.e, its EOI: JMP FAR here, by
 ; mt_boot), on gp_isr's AX, DX, DS (DS = KSEG).  The EOI and out, as
 ; there; but with a program asking (MT_WAKE) in another task, ready to run,
 ; that task is the next (mt_want) and its turn comes now, as at a tick's
@@ -711,7 +711,7 @@ mt_kwant:
 
 ; front task AL: task 0 switched from at a drag's wait, and the mouse
 ; moved (or a button) since?  ZF clear if so: it runs next, so a drag
-; follows the mouse while tasks behind take the pauses.  T5d: from its
+; follows the mouse while tasks behind take the pauses.  From its
 ; idle too (it gives the rest of its turn away there, mw_poll), and a key
 ; waiting as well.  Registers kept
 mt_mwant:
@@ -761,7 +761,7 @@ mt_mdset:
         jne     .s
         cmp     word [cs:mt_lip], ..@ui_midle
         je      .m
-        cmp     word [cs:mt_lip], ..@ui_idle    ; (T5d: its idle's too)
+        cmp     word [cs:mt_lip], ..@ui_idle    ; (its idle's too)
         jne     .s
 .m:     inc     ax
         mov     bx, [es:mx]
@@ -942,7 +942,7 @@ mt_preempt:
         jne     .p
         call    mt_kin
         je      .p
-        call    mt_dok                  ; (M10: not with a floppy owner out)
+        call    mt_dok                  ; (not with a floppy owner out)
         jnz     .p
         mov     byte [cs:mt_tsrk], 0    ; (given: Resident Claude's pop-up is
         jmp     short .f                ;  the front task's call's to bring)
@@ -960,7 +960,7 @@ mt_preempt:
         jnz     .fz
 .nw:    mov     byte [cs:mt_slice], 2
         ret
-.fz:    mov     al, [cs:mt_front]       ; (M10: the front one only if it may
+.fz:    mov     al, [cs:mt_front]       ; (the front one only if it may
         call    mt_ent                  ;  run now; else this one goes on)
         call    mt_dok
         jnz     .nw
@@ -1059,7 +1059,7 @@ mt_kwait:
 ; in the background: it waits without reading keys, while another runs.
 ; Unless it can't be switched from: then it comes to the front for them
 ; (INT 16h gives keys to the front task only), or for a critical error's
-; prompt, or from an interrupt's handler (its IRQ in service: M9b), reads
+; prompt, or from an interrupt's handler (its IRQ in service), reads
 ; them as it is (mt_i16 lets them through: everything waits for the
 ; answer, the prompt on the real screen, as in DOS)
 .bg:    call    mt_can
@@ -1072,9 +1072,9 @@ mt_kwait:
         mov     [cs:mt_swreq], al       ; (this task, as mt_swnow does it: the
         call    mt_swnow                ;  one in front may be in its run)
         jmp     .k
-        times   ($ - $$) & 1 db 90h     ; (M9b: what follows at the parity
+        times   ($ - $$) & 1 db 90h     ; (what follows at the parity
                                         ;  it had, mt_i21 and mt_i16 with it)
-; T5d: an INT 16h hook of the running program's, or of a program it
+; An INT 16h hook of the running program's, or of a program it
 ; runs under (a RUN's key script, CLAUDE's, in a window; not a TSR's,
 ; Resident Claude's, ended though resident): asked, as in front (mt_i16
 ; has none for it behind); none: it stays ready, another runs, and it
@@ -1167,7 +1167,7 @@ mt_kwait:
 ; changes the front (an interrupt handler's DOS call meanwhile); inside
 ; the kernel's INT 24h (raised by C:'s INT 25h/26h, outside INT 21h: its
 ; handler's own DOS call); from an interrupt's handler, its IRQ still in
-; service (M9b: another task would run with it so).  With CF, NZ for
+; service (another task would run with it so).  With CF, NZ for
 ; these last four (mt_busy, asked first: a task's own INT 24h handler's
 ; read is inside the kernel's INT 24h at InDOS 2), ZF for the first two.
 ; AX kept
@@ -1199,7 +1199,7 @@ mt_can: push    ax
 
 ; a task other than the running one that is ready to run (TS_RUN) and
 ; not frozen in the background (mt_frz), the next after it in turn -> BL;
-; CF if none.  (One an SRQ woke, mt_want, first: T5c)
+; CF if none.  (One an SRQ woke, mt_want, first)
 mt_pick:
         push    ax
         push    cx
@@ -1222,7 +1222,7 @@ mt_pick:
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_RUN
         jne     .n
-        call    mt_dok                  ; (M10: with a floppy owner out)
+        call    mt_dok                  ; (with a floppy owner out)
         jnz     .n
         cmp     al, [cs:mt_down]        ; (the owner itself, back from its
         je      .n                      ;  wait: frozen or not, as nothing
@@ -1300,10 +1300,10 @@ mt_switch:
 .nk:    pop     bx
 .sv:    mov     [es:TX_SP], sp
         mov     [es:TX_SS], ss
-        mov     al, [cs:mt_in13]        ; (M10: the owner's, inside its call)
+        mov     al, [cs:mt_in13]        ; (the owner's, inside its call)
         mov     [es:TX_IN13], al
         call    mt_emsget
-        mov     al, [cs:mt_cur]         ; M10: windows held for an owner's
+        mov     al, [cs:mt_cur]         ; windows held for an owner's
         cmp     al, [cs:mt_down]        ;  transfer, showing the cache's
         je      .eh                     ;  pages: another's saved as off
         test    byte [cs:mt_dfw], 4     ;  (they were, mt_dok: it never sees
@@ -1373,7 +1373,7 @@ mt_load:
         call    mt_ent
         mov     byte [cs:bx+TE_STATE], TS_RUN
         mov     es, [cs:bx+TE_TX]
-        mov     ah, [es:TX_IN13]        ; (M10: the owner's, back inside its
+        mov     ah, [es:TX_IN13]        ; (the owner's, back inside its
         mov     [cs:mt_in13], ah        ;  INT 13h call; else 0)
         cmp     byte [cs:mt_fpu], 0     ; its coprocessor state (none kept
         je      .nf                     ;  yet: as FNINIT leaves it)
@@ -1391,7 +1391,7 @@ mt_load:
         call    mt_vld                  ; its own vectors; the front task's 09h
         call    mt_fvset                ;  and 1Bh (one ended may have set them)
         CRW     'w'                     ; (CRASHLOG: its vectors back)
-        mov     cl, 0                   ; (M10: windows held for an owner's
+        mov     cl, 0                   ; (windows held for an owner's
         mov     al, [cs:mt_cur]         ;  transfer, which another task's
         cmp     al, [cs:mt_down]        ;  registers don't change: CL the
         je      .hw                     ;  held ones, as bits 2-3, shifted
@@ -1512,7 +1512,7 @@ mt_vload:
         ret
 
 ; ---------------------------------------------------------------------
-;  each task's own vectors (M5a).  mt_vrun's are the running task's in
+;  each task's own vectors.  mt_vrun's are the running task's in
 ;  the vector table and in its TX while another runs: whatever it set
 ;  there, through AH=25h or itself, is saved at the switch away (mt_vsv)
 ;  and put back as it runs again (mt_vld).  A new task starts with its
@@ -1774,7 +1774,7 @@ mt_vfix:
         add     ax, [cs:mt_vr]
         mov     [cs:mt_ve], ax
         mov     ds, [cs:bx+TE_TX]       ; (its TX: not the region's start once
-        mov     word [cs:mt_vsb], TX_GSN ;  it has grown, T5a)
+        mov     word [cs:mt_vsb], TX_GSN ;  it has grown)
         mov     byte [cs:mt_vtab], 1
         cld
         mov     si, TX_GSN + 09h * 4
@@ -2237,7 +2237,7 @@ mt_winc:
         je      mt_bad
         jmp     KSEG:ok
 
-; MT_TOPEN (T2): task BL, its count CL, is shown by the window .RUN that
+; MT_TOPEN: task BL, its count CL, is shown by the window .RUN that
 ; calls (its session, mw_cur: TERM.RUN), whose UI_EVENT gives EV_TICK from
 ; now on when there is something to show (mw_poll).  CF: AX = 1 (no such
 ; task, another count, not a window .RUN's call), 5 (task 0, parked)
@@ -2261,21 +2261,21 @@ mt_topen:
         pop     bp
         jmp     KSEG:ok
 
-; MT_TROWS (T1): task BL's screen as its pages hold it, CX rows from row DX
+; MT_TROWS: task BL's screen as its pages hold it, CX rows from row DX
 ; of the page shown, to ES:DI (inside INT 21h: none of its writes can come
 ; in the middle) -> AX = TX_CHG, BX = the cursor there, CL = columns, CH =
 ; the mode, DL = VF_DIRECT, 2 if nothing copied (not a text mode of 80
 ; columns or fewer, or past its 32 KB), 4 its pages gone (2 too), 8 in front
-; (its pages not what is shown), 16 its program took the mouse (TX_MPSP:
-; T4), DH = its state (TS_FROZEN for one ready
-; but frozen behind, as MT_LIST says).  T5b: with DH bit 7, a screen
+; (its pages not what is shown), 16 its program took the mouse (TX_MPSP),
+; DH = its state (TS_FROZEN for one ready
+; but frozen behind, as MT_LIST says).  With DH bit 7, a screen
 ; published and shown: its cells instead (mt_tpub)
 mt_trows:
         call    mt_targ
         call    mt_t5
         mov     cx, [bp+F_CX]
         mov     dx, [bp+F_DX]
-        and     dh, 7Fh                 ; (T5b's bit: the row in DL)
+        and     dh, 7Fh                 ; (the published bit: the row in DL)
         jcxz    .bad
         add     dx, cx                  ; (rows 0-24)
         jc      .bad
@@ -2294,7 +2294,7 @@ mt_trows:
         jbe     .in
 .bad:   jmp     mt_bad
 .in:    cld
-        test    byte [bp+F_DX+1], 80h   ; T5b: its published cells, if shown
+        test    byte [bp+F_DX+1], 80h   ; its published cells, if shown
         jz      .pg
         mov     al, [bp+F_BX]
         call    mt_pshow
@@ -2352,7 +2352,7 @@ mt_trows:
         jmp     KSEG:ok                 ; (done: DS = KSEG)
 ; DL with VF_DIRECT, 8 in front, 16 its program took the mouse; DH its
 ; state: to the frame.  BX = its entry; ES = its TX after; AL changed.
-; DS = CS (XI-14)
+; DS = CS
 .dl:    mov     al, [bx+TE_VF]
         and     al, VF_DIRECT
         or      dl, al
@@ -2367,23 +2367,23 @@ mt_trows:
         jz      .st
         mov     dh, TS_FROZEN
 .st:    mov     es, [bx+TE_TX]
-        cmp     word [es:TX_MPSP], 0    ; (T4: its program took the mouse)
+        cmp     word [es:TX_MPSP], 0    ; (its program took the mouse)
         je      .mp
         or      dl, 16
 .mp:    mov     [bp+F_DX], dx
         ret
 
-; T5b: MT_TROWS of a screen published and shown (mt_pshow: DS:SI = its
+; MT_TROWS of a screen published and shown (mt_pshow: DS:SI = its
 ; descriptor, ES = its TX, BX = its entry): rows of its cells to the
 ; caller's room (80 x 25 at most), rows past its PB_ROWS blank (0020h:
 ; PBA_* attributes, not a colour's) -> DL 32, CH = its rows, CL = its
-; columns, BX = PB_CUR (PBF_NOCUR: its row's bit 7 set, T5d: TERM's
+; columns, BX = PB_CUR (PBF_NOCUR: its row's bit 7 set: TERM's
 ; view follows it, with no mark)
 mt_tpub:
-        mov     ax, [bp+F_SI]           ; (T5e: SI = A5h, the rows the window
+        mov     ax, [bp+F_SI]           ; (SI = A5h, the rows the window
         cmp     ah, 0A5h                ;  shows: to a PB_VER 2 descriptor's
-        jne     .nv                     ;  PB_VIEW; else not said: a TERM
-        or      al, al                  ;  before T5e left SI as it was)
+        jne     .nv                     ;  PB_VIEW; else not said: an older
+        or      al, al                  ;  TERM left SI as it was)
         jz      .nv
         cmp     byte [si+PB_VER], 2
         jb      .nv
@@ -2436,7 +2436,7 @@ mt_tpub:
         pop     word [bp+F_BX]
         jmp     KSEG:ok
 
-; T5b: task AL (its entry BX) has a screen published and shown, and is
+; Task AL (its entry BX) has a screen published and shown, and is
 ; behind (mt_pss) -> DS:SI = its descriptor, ES = its TX.  CF if not (ES,
 ; and DS and SI, changed)
 mt_pshow:
@@ -2459,7 +2459,7 @@ mt_pss: mov     es, [cs:bx+TE_TX]
 .no:    stc
         ret
 
-; T5b: AX = task BX's changes as a terminal window counts them: TX_CHG,
+; AX = task BX's changes as a terminal window counts them: TX_CHG,
 ; and with a screen published (MT_PUB) its PB_CHG added.  Not task 0's, nor
 ; a parked task's.  ES = its TX
 mt_tchg:
@@ -2475,7 +2475,7 @@ mt_tchg:
         pop     ds
 .x:     ret
 
-; T5b: task AL (its entry BX; not task 0, nor parked) has a screen
+; Task AL (its entry BX; not task 0, nor parked) has a screen
 ; published and shown, in a text mode (mt_pss), and a terminal window shows
 ; it (mw_owns): its window is its screen, so CODE-Tab passes over it and
 ; MT_FRONT refuses it.  CF if so.  All kept
@@ -2496,7 +2496,7 @@ mt_ispub:
         pop     es
         ret
 
-; MT_WAKE (T5c): BL bit 0, the calling program woken by SRQ (MTAPI.INC)
+; MT_WAKE: BL bit 0, the calling program woken by SRQ (MTAPI.INC)
 mt_wake:
         mov     al, [cs:mt_cur]
         mov     dx, [cur_psp]
@@ -2523,7 +2523,7 @@ mt_wkme:
         mov     byte [cs:mt_wkt], 0FFh
 .x:     ret
 
-; MT_PUB (T5b).  CL = 0, the running task's program: ES:DI its screen's
+; MT_PUB.  CL = 0, the running task's program: ES:DI its screen's
 ; descriptor (0:0 withdraws one), it and its cells, font and table all in
 ; the task's memory (mt_pin) and its fields in range; another than it
 ; gave before counted as a change (TX_CHG: one more than a window saw) ->
@@ -2546,7 +2546,7 @@ mt_pub: mov     cl, [bp+F_CX]
         mov     dx, es
         mov     ax, di
         mov     cx, PB_SIZE
-        cmp     byte [es:di+PB_VER], 2  ; (T5e: 2's PB_VIEW, MT writes it)
+        cmp     byte [es:di+PB_VER], 2  ; (2's PB_VIEW, MT writes it)
         jb      .v1
         inc     cx
 .v1:    call    mt_pin
@@ -2646,7 +2646,7 @@ mt_pub: mov     cl, [bp+F_CX]
         mov     [bp+F_ES], es
         jmp     KSEG:ok
 
-; T5b: CX bytes (1 or more) at DX:AX all in the running task's memory
+; CX bytes (1 or more) at DX:AX all in the running task's memory
 ; (mt_mine: its region; its first and last byte's paragraphs)?  CF if not.
 ; DS = KSEG; AX, BX, DX changed
 mt_pin:
@@ -2668,7 +2668,7 @@ mt_pin:
 .no:    stc
         ret
 
-; MT_TKEY (T1): key CX typed to task BL: into its TX's ring (KRING), for
+; MT_TKEY: key CX typed to task BL: into its TX's ring (KRING), for
 ; its INT 16h (mt_ring), and it is ready to run if it waited for one.  CF:
 ; AX = 1 (no such task), 5 (task 0, parked), 8 (KRING waiting already)
 mt_tkey:
@@ -2696,7 +2696,7 @@ mt_tkey:
 .full:  popf
         jmp     mt_spawn.room           ; (AX = 8)
 
-; MT_TMOUSE (T4): a click in task BL's window, as TERM sees it: buttons BH
+; MT_TMOUSE: a click in task BL's window, as TERM sees it: buttons BH
 ; at CX, DX (INT 33h's units), to its own state (TX_M33) as a packet would
 ; leave it (mt_mset), for its calls behind.  A release before it has read
 ; the press is held till it has (mt_33out; mt_m33ld, to the front), so a
@@ -2864,7 +2864,7 @@ mt_list:
         mov     ah, [cs:bx+TE_STATE]
         or      ah, ah                  ; (TS_FREE)
         jz      .n
-        cmp     ah, TS_WAITD            ; (M10's wait: as running)
+        cmp     ah, TS_WAITD            ; (a floppy owner's wait: as running)
         jne     .r
         mov     ah, TS_RUN
 .r:     cmp     ah, TS_RUN              ; (ready but frozen behind: listed as
@@ -2895,8 +2895,8 @@ mt_list:
         jmp     KSEG:ok
 
 ; MT_FRONT: task BL to the front, where tasks can next switch (the tick
-; or a key wait: mt_swnow).  Not one whose window is its screen (T5b:
-; mt_ispub)
+; or a key wait: mt_swnow).  Not one whose window is its screen
+; (mt_ispub)
 mt_frontc:
         call    mt_targ
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
@@ -2997,7 +2997,7 @@ mt_unpark:
 ; takes them, and mt_pchk knows them from any other's) and freed.  Not task
 ; 0, the running one, the one in front, one being ended or parked
 ; already, nor one a vector points into (mt_pinned): AX = 5.  Not enough
-; EMS: AX = 8.  CF then, nothing changed.  DS = CS (XI-14: so do mt_pinned,
+; EMS: AX = 8.  CF then, nothing changed.  DS = CS (so do mt_pinned,
 ; mt_hnew and mt_phfree; the kernel's ems_h through SS:); AL, BX kept
 mt_pk:  push    cx
         push    dx
@@ -3075,7 +3075,7 @@ mt_pk:  push    cx
 ; which go back, and its state as before it was parked.  CF: AX = 8 (the
 ; place has memory in it not a task's, or a task's that can't be parked;
 ; or its pages are gone); tasks parked on the way stay parked.  DS = CS
-; (XI-14: so does mt_take); AL, BX kept
+; (so does mt_take); AL, BX kept
 mt_up:  push    cx
         push    dx
         push    si
@@ -3258,7 +3258,7 @@ mt_take:
 ; the region of the entry at BX to its pages (AL = 0) or back (AL = 1),
 ; INT 67h AH=57h (interrupts on as it copies; meanwhile an interrupt's INT
 ; 10h goes to the BIOS: mt_vbusy).  Its TX at their start (mt_pmap reads
-; it there): a region that has grown (T5a) goes from its TX to its end,
+; it there): a region that has grown goes from its TX to its end,
 ; then what is below the TX after that.  CF if it failed.  All kept but
 ; the flags
 mt_move:
@@ -3843,12 +3843,12 @@ mt_end: call    mt_cent                 ; (first: a call refused changes
         jne     .s
         mov     byte [cs:mt_swreq], 0FFh
 .s:     call    mt_pick                 ; another ready one, or the front one
-        jnc     .go                     ;  (in M2a it waits for a key: it
+        jnc     .go                     ;  (it may wait for a key: it
         mov     bl, [cs:mt_front]       ;  was there when this one ran)
 .go:    jmp     mt_load
 
 ; MT_SPAWN: DS:DX = the program, ES:BX = the block -> AL = the new task.
-; It runs with DS = CS (XI-14: MT's variables without CS: prefixes; the
+; It runs with DS = CS (MT's variables without CS: prefixes; the
 ; kernel's through SS:, as INT 21h's stack is the kernel's), so do the
 ; helpers it alone calls (mt_carve, mt_hnew, mt_vnew, mt_v24)
 mt_spawn:
@@ -4069,15 +4069,15 @@ mt_spawn:
         mov     word [es:V_BRK + cc_sp - brkflag], 0
         mov     word [es:V_DTA + con_lpos - dta], 0     ; (no line half read)
         mov     word [es:V_DTA + con_llen - dta], 0
-        xor     ax, ax                  ; (not in front for graphics: T3; no
-        mov     di, TX_WGFX             ;  click held, nor the mouse taken: T4)
+        xor     ax, ax                  ; (not in front for graphics; no
+        mov     di, TX_WGFX             ;  click held, nor the mouse taken)
         mov     cx, (TX_IN13 + 2 - TX_WGFX) / 2
         rep     stosw
-        mov     di, TX_PUB              ; (no screen published: T5b)
+        mov     di, TX_PUB              ; (no screen published)
         mov     cl, (TX_PPSP + 2 - TX_PUB) / 2
         rep     stosw
         mov     [es:TX_KLEN], ax
-        mov     [es:TX_KN], ax          ; (no keys typed to it: T1)
+        mov     [es:TX_KN], ax          ; (no keys typed to it)
         mov     [es:TX_FPV], al         ; (its coprocessor: FNINIT's, first)
 %if (TX_IN13 + 2 - TX_WGFX) & 1 || (TX_PPSP + 2 - TX_PUB) & 1
 %error "mt_spawn: TX_WGFX..TX_IN13, TX_PUB..TX_PPSP in words"
@@ -4427,7 +4427,7 @@ mt_urun:
         pop     es                      ;  FULL=, FREEZE= (it never runs behind)
         mov     si, [cs:mt_xnm]         ;  or BG= (its INT 10h the real screen's)
         mov     di, [cs:mt_lfull]       ;  names it; else behind, in a terminal
-        call    mt_lmat                 ;  window (T2: mt_uwin)
+        call    mt_lmat                 ;  window (mt_uwin)
         jc      .fs
         mov     di, [cs:mt_lfz]
         call    mt_lmat
@@ -4605,7 +4605,7 @@ mt_hot: pushf
         pop     ds
         cli
 %ifndef NOSYSREQ
-.s0:    xor     al, al                  ; M11: SysReq pressed?  As CODE-Tab
+.s0:    xor     al, al                  ; SysReq pressed?  As CODE-Tab
         xchg    al, [cs:mt_sysrq]       ;  (the buffer looked at the next time)
         or      al, al
         jnz     .c
@@ -4655,7 +4655,7 @@ mt_hot: pushf
         je      .ln
         or      al, al
         jz      .y
-        call    mt_ispub                ; (T5b: its window is its screen)
+        call    mt_ispub                ; (its window is its screen)
         jnc     .y
 .ln:    loop    .l
         jmp     short .no               ; (the only one)
@@ -4733,7 +4733,7 @@ mt_swnow:
 .x:     ret
 
 ; ---------------------------------------------------------------------
-;  INT 16h (M4b): keys for the front task only.  First, at any call made
+;  INT 16h: keys for the front task only.  First, at any call made
 ;  with no hardware interrupt in service, CODE-Tab is taken out of the
 ;  buffer (mt_hot), before a peek could drop it; the task asked for then
 ;  comes to the front at the next safe point (mt_pend: the tick, INT 21h's
@@ -4769,7 +4769,7 @@ mt_i16:
         pop     ds
         call    mt_busy                 ; (inside a call MT passed on to the
         jnz     .pas                    ;  BIOS, an INT 13h call, or a change
-                                        ;  of the front: an interrupt's, as M4a
+                                        ;  of the front: an interrupt's, as MT
                                         ;  takes INT 10h's there; the kernel's
                                         ;  INT 24h's prompt, raised inside INT
                                         ;  21h or not: as it is)
@@ -4886,7 +4886,7 @@ mt_i16:
 ; the 1520's BIOS drops the keys AH=00h and 01h can't give (scan codes 85h
 ; and up but E0h's, and CODE keys: xxF0h with a scan code) as it looks.
 ; Its INT 16h turns interrupts on first (STI, F000:A02E; the look itself
-; with them off, M9a): CODE-Tab typed after mt_hot looked and before the
+; with them off): CODE-Tab typed after mt_hot looked and before the
 ; BIOS does would go.  So MT drops them first, with interrupts off, taking
 ; CODE-Tab (mt_hot) as it comes to it, and keeping Resident Claude's
 ; CODE-\ for its stub (made 2B00h: none now).  ZF if no key is left; else
@@ -4986,7 +4986,7 @@ mt_wkey:
 
 ; task AL to the front: the front one's screen kept, AL's shown; a DOS
 ; program's INT 33h pointer off meanwhile (as RCON does), and each one's
-; INT 33h state its own (M4c)
+; INT 33h state its own
 mt_scrto:
         cmp     al, [cs:mt_front]
         je      .x
@@ -5027,7 +5027,7 @@ mt_m33: pusha
         ret
 
 ; ---------------------------------------------------------------------
-;  INT 33h (M4c): each task its own mouse.  The UI's driver keeps one
+;  INT 33h: each task its own mouse.  The UI's driver keeps one
 ;  state (m33_st: where the pointer is, its ranges, counts, shape, the
 ;  event handler); it is the front task's, which the mouse moves and
 ;  whose pointer is drawn.  The others' are in their TXs (TX_M33), and a
@@ -5052,7 +5052,7 @@ mt_i33: cli
         push    dx
         push    KSEG
         pop     ds
-        or      ax, ax                  ; (T4: a reset, a program taking the
+        or      ax, ax                  ; (a reset, a program taking the
         jz      .tk                     ;  mouse: its window's clicks its own)
         cmp     ax, 21h
         jne     .go
@@ -5186,7 +5186,7 @@ mt_33out:
         pop     ds
 .cp:    mov     al, [cs:mt_cur]
         call    mt_m33sv
-        mov     ax, [cs:mt_33fn]        ; (T4: its window's press read, by 03h,
+        mov     ax, [cs:mt_33fn]        ; (its window's press read, by 03h,
         cmp     ax, 3                   ;  05h or 06h: a release held, now; BX:
         je      .rd                     ;  its entry)
         cmp     ax, 5
@@ -5343,7 +5343,7 @@ mt_m33ld:
         mov     dx, TX_M33
         pushf
         cli
-        call    mt_mheld                ; (T4: a click's release held: no
+        call    mt_mheld                ; (a click's release held: no
         mov     byte [es:TX_MREL], 0    ;  button left down in front)
         mov     bl, 0FFh
         cmp     byte [cs:mt_33ot], 0
@@ -5479,10 +5479,10 @@ mt_pgend:
         or      ax, ax
         jmp     KSEG:ui_progend + 5
 
-; T4: the program at BX ends: if it took the mouse (TX_MPSP), its task's
-; window clicks are a selection's again, and none is held.  T5b: if it
+; The program at BX ends: if it took the mouse (TX_MPSP), its task's
+; window clicks are a selection's again, and none is held.  If it
 ; published its screen (TX_PPSP), that is withdrawn (a change: its window
-; looks again).  T5c: its SRQ wake ends.  All kept
+; looks again).  Its SRQ wake ends.  All kept
 mt_mgone:
         push    ax
         push    bx
@@ -5495,13 +5495,13 @@ mt_mgone:
         jne     .p
         mov     word [es:TX_MPSP], 0
         mov     byte [es:TX_MREL], 0
-.p:     push    ax                      ; T5c: its SRQ wake (MT_WAKE) ended (a
+.p:     push    ax                      ; its SRQ wake (MT_WAKE) ended (a
         push    dx                      ;  kill, or its task's end for a TSR,
         mov     dx, ax                  ;  comes here too: mt_owners)
         call    mt_wkme
         pop     dx
         pop     ax
-        cmp     byte [cs:mt_cur], 0     ; (task 0's TX: none of T5b's)
+        cmp     byte [cs:mt_cur], 0     ; (task 0's TX ends before TX_PUB, TX_PPSP)
         je      .x
         cmp     [es:TX_PPSP], ax
         jne     .x
@@ -5517,7 +5517,7 @@ mt_mgone:
         pop     ax
         ret
 
-; T4: the running task's program takes the mouse (its own reset: not
+; The running task's program takes the mouse (its own reset: not
 ; MT's), so its window's clicks go to it (TX_MPSP).  All kept (DS = KSEG)
 mt_mtake:
         cmp     byte [cs:mt_in33], 0
@@ -5535,7 +5535,7 @@ mt_mtake:
         pop     ax
 .x:     ret
 
-; T3: the program at BX, ending in front, is the one that asked for
+; The program at BX, ending in front, is the one that asked for
 ; graphics (TX_WPSP) and leaves its task in them (TX_WGFX 1): a text mode
 ; for it, as if it set one itself, so that the task goes back to its
 ; window (mt_wback).  All kept
@@ -5550,7 +5550,7 @@ mt_gtext:
         jne     .x
         cmp     dx, [es:TX_WPSP]
         jne     .x
-        mov     ax, [es:TX_PUB]         ; (T5d: a screen published, its
+        mov     ax, [es:TX_PUB]         ; (a screen published, its
         or      ax, [es:TX_PUB + 2]     ;  program's: it sets the mode itself,
         jnz     .x                      ;  after its snapshot of this one)
         push    0
@@ -5579,7 +5579,7 @@ mt_scrsv:
         call    mt_ent
         and     byte [cs:bx+TE_VF], ~VF_DIRECT
         mov     es, [cs:bx+TE_TX]
-        cmp     byte [es:TX_WGFX], 2    ; (back to its window now: T3; its
+        cmp     byte [es:TX_WGFX], 2    ; (back to its window now; its
         jne     .sm                     ;  pages gone or not)
         mov     byte [es:TX_WGFX], 0
 .sm:    call    mt_smap
@@ -5609,7 +5609,7 @@ mt_scrsv:
 .dir:   or      byte [cs:bx+TE_VF], VF_DIRECT   ;  behind, to be safe
 .cl:    mov     byte [cs:mt_shd], 0
         mov     es, [cs:bx+TE_TX]       ; its BIOS data (and its screen changed,
-        inc     word [es:TX_CHG]        ;  for a window showing it: T1)
+        inc     word [es:TX_CHG]        ;  for a window showing it)
         push    40h
         pop     ds
         mov     si, 49h
@@ -5859,7 +5859,7 @@ mt_vin: push    cs
         jmp     mt_smap
 
 ; ---------------------------------------------------------------------
-;  INT 10h (M4a).  A background task's calls are done in its own screen
+;  INT 10h.  A background task's calls are done in its own screen
 ;  (its 2 EMS pages, and its BIOS data, in its TX) as the 1520's BIOS
 ;  does them (int10.asm), so its output never reaches the screen in front.
 ;  A graphics mode or a pixel asked for there: it waits to be in front
@@ -6000,7 +6000,7 @@ mt_v10:
         cmp     byte [es:m33_busy], 0
         jne     .real
         mov     es, [cs:bx+TE_TX]       ; (its screen may change: counted, for
-        inc     word [es:TX_CHG]        ;  a window showing it, T1)
+        inc     word [es:TX_CHG]        ;  a window showing it)
         cmp     byte [bp+VF_AX+1], 0Eh  ; the teletype, not at a line's end:
         jne     .bl                     ;  the short way
         mov     ds, [cs:bx+TE_TX]
@@ -6147,7 +6147,7 @@ mt_wfront:
         je      .x                      ;  its handler: the call again, now
         call    mt_ent                  ;  the front one's)
         mov     byte [cs:bx+TE_STATE], TS_WAITF
-        or      al, al                  ; a terminal window's task (T3): in
+        or      al, al                  ; a terminal window's task: in
         jz      .p                      ;  front at the next switch, for its
         mov     ah, [cs:bx+TE_GEN]      ;  graphics, full screen; back with a
         call    mw_owns                 ;  text mode (mt_vshad)
@@ -6252,9 +6252,9 @@ mt_c24: push    ds                      ; (a task not in front, a graphics
 
 ; INT 13h: counted while it runs (mt_in13), so mt_v10 knows an INT 10h call
 ; meanwhile is an interrupt's, while a floppy's DMA may be going into the
-; EMS frame: no window is mapped for it.  Its AX, BX and ES kept (M10: the
+; EMS frame: no window is mapped for it.  Its AX, BX and ES kept (the
 ; transfer, for mt_dcan).  Another task's call while a floppy owner is
-; out (M10) waits for it (mt_gate), or is refused: AH = 80h, CF.  CF and
+; out waits for it (mt_gate), or is refused: AH = 80h, CF.  CF and
 ; the rest as the BIOS gives them back
 mt_i13: cmp     byte [cs:mt_down], 0FFh
         jne     .g
@@ -6276,7 +6276,7 @@ mt_i13: cmp     byte [cs:mt_down], 0FFh
         retf    2
 
 ; =====================================================================
-;  M10: tasks run while one waits on the floppy.  The 1520's BIOS calls
+;  Tasks run while one waits on the floppy.  The 1520's BIOS calls
 ;  INT 15h AX=9001h before it waits for the controller's interrupt (IRQ 6,
 ;  whose handler calls AX=9101h), and takes CF back as a time-out.  At
 ;  9001h the waiting task (the owner) is switched from, where it can be
@@ -6287,15 +6287,15 @@ mt_i13: cmp     byte [cs:mt_down], 0FFh
 ;  25h/26h; 67h while the cache's EMS windows are held) waits for the
 ;  owner to run again (mt_gate), or, where nothing can wait (an
 ;  interrupt's handler, a nested call), is refused.
-;  M12: the same at the hard disk's waits.  KHD.INC calls AX=9000h at a
+;  The same at the hard disk's waits.  KHD.INC calls AX=9000h at a
 ;  wait IRQ 14 ends (after about 2 ms of it), and polls on when back; MT
 ;  takes IRQ 14 itself (mt_i76), where the BIOS hasn't the disk, and the
 ;  tick looks at the drive's status too (a dead line: mt_htk)
 ; =====================================================================
 MT_DTO      equ 37                      ; (ticks: about 2 s, the BIOS's own wait)
 
-; INT 15h: AX=9001h and 9101h (the floppy), 9000h and 9100h (the hard disk,
-; M12), 8500h (M11: SysReq), the rest on
+; INT 15h: AX=9001h and 9101h (the floppy), 9000h and 9100h (the hard disk),
+; 8500h (SysReq), the rest on
 mt_i15: cmp     ax, 9001h
         je      mt_dwait
         cmp     ax, 9000h
@@ -6311,7 +6311,7 @@ mt_i15: cmp     ax, 9001h
 %endif
 .o:     jmp     far [cs:mt_old15]
 %ifndef NOSYSREQ
-; M11: SysReq down (the 1520's INT 9, once while it is held; never in the
+; SysReq down (the 1520's INT 9, once while it is held; never in the
 ; key buffer, so it takes no key from the program in front): the next
 ; task to the front, as CODE-Tab, at mt_hot's next look.  Not Confm
 ; (CODE-SysReq: CODE, the BIOS's Alt, held in 40:17h): the program's.
@@ -6324,7 +6324,7 @@ mt_i15: cmp     ax, 9001h
         jnz     .o
         mov     byte [cs:mt_sysrq], 1
         jmp     .o
-        times   (.s2 - .s1 + $ - .s) & 1 db 90h ; (M11's bytes even: what follows
+        times   (.s2 - .s1 + $ - .s) & 1 db 90h ; (SysReq's bytes even: what follows
                                         ;  keeps its parity)
 %endif
 .e:     cmp     byte [cs:mt_down], 0FFh ; the device's interrupt: its owner,
@@ -6339,7 +6339,7 @@ mt_i15: cmp     ax, 9001h
         pop     ax
         jmp     .o
 
-; IRQ 6, the floppy's (M10): the BIOS's handler first (its EOI, its 9101h:
+; IRQ 6, the floppy's: the BIOS's handler first (its EOI, its 9101h:
 ; the owner ready, mt_dready); then, with the owner ready, its turn now,
 ; as at a tick's end (mt_tick.v: what was interrupted vetted by mt_safe;
 ; else at the next tick, or the waiting task's next look)
@@ -6380,7 +6380,7 @@ mt_iend:
         jmp     mt_tick.v
 .r:     jmp     mt_tick.r
 
-; IRQ 14, the hard disk's (M12): the BIOS's handler first where it has the
+; IRQ 14, the hard disk's: the BIOS's handler first where it has the
 ; disk too (40:75h; its EOI, 40:8Eh, its 9100h: the owner ready, mt_i15);
 ; else the EOIs here, and the owner ready.  Then as mt_i0e.  (An IRQ 14
 ; with nobody out: one of the polled waits', counted only, mt_hirq)
@@ -6413,7 +6413,7 @@ mt_i76: push    ax
         mov     dx, mt_i76
         jmp     mt_iend
 
-; INT 77h (M12): IRQ 15, or the PIC's default answer when the drive's
+; INT 77h: IRQ 15, or the PIC's default answer when the drive's
 ; INTRQ went (a status read) before the CPU took IRQ 14.  The master's EOI,
 ; and the slave's only if IRQ 15 is in service.  (The 1520's 10/25/89
 ; BIOS sends both; its 1988 one neither, which would leave IRQ 3-15 off)
@@ -6473,7 +6473,7 @@ mt_dtick:
 ; The task switched from here if it can be (mt_dcan) and another can run
 ; meanwhile; back when it has run again (CF: by the time-out).  Else the
 ; BIOS waits, as before.  Back with RETF 2: interrupts on, CF as said.
-; mt_hwait: AX=9000h, KHD.INC's at the hard disk's wait (M12), the same
+; mt_hwait: AX=9000h, KHD.INC's at the hard disk's wait, the same
 mt_hwait:
 %ifdef NODWAIT
         jmp     far [cs:mt_old15]       ; (bisect build: no wait given away)
@@ -6567,7 +6567,7 @@ mt_ddone:
 
 ; may the task at the floppy's wait (9001h) be switched from?  CF if not:
 ; the interrupt already in; another INT 13h call running round this one
-; (the hard disk's, 9000h, M12: any; and none after IRQ 14 is found dead,
+; (the hard disk's, 9000h: any; and none after IRQ 14 is found dead,
 ; mt_htk), a call MT passed on to the BIOS, the kernel's INT 24h, a change of the
 ; front, any interrupt in service, the UI's mouse event; MT_KILL ended it
 ; (it ends after its call); inside INT 21h, unless the kernel's stack is
@@ -6666,7 +6666,7 @@ mt_dcan:
         ret
 
 ; task AL (its entry at BX): may it run now?  NZ if not: a floppy owner
-; out (M10), and AL not it, and inside INT 21h (switched from at a key
+; out, and AL not it, and inside INT 21h (switched from at a key
 ; wait: its kernel code may write a file, a redirected handle), or with
 ; an EMS window the owner's transfer holds mapped (as it last ran).
 ; Registers kept
@@ -6721,7 +6721,7 @@ mt_dok: cmp     byte [cs:mt_down], 0FFh
 ; else, while a floppy transfer is in flight (the controller busy with a
 ; command and not yet at its result: its DMA under way), first waited for,
 ; as on the 1520 a page register written meanwhile resets the machine
-; (2026-11-04: M10's switch at a floppy's wait, mt_load).  At most about a
+; (2026-11-04: the switch at a floppy's wait, mt_load).  At most about a
 ; turn of the disk: the controller then gives up or ends.  All kept, the
 ; flags too (mt_punmap's callers carry CF across it)
 mt_eout:
@@ -6785,7 +6785,7 @@ mt_gfl: push    dx
         pop     dx
         ret
 
-; wait while a floppy owner is out (M10): this task waits (TS_WAITD) while
+; wait while a floppy owner is out: this task waits (TS_WAITD) while
 ; another runs, or HLTs if none can; on when the owner has run again.  CF
 ; if it can't wait here (refused): the caller's interrupts were off; an
 ; interrupt in service (a handler's call); inside INT 21h (a nested call:
@@ -6912,7 +6912,7 @@ mt_vshad:
         mov     byte [cs:mt_shd], 0
         call    mt_tmode
         pushf
-        call    mt_wback                ; (T3)
+        call    mt_wback
         popf
         jc      .x
         call    mt_others
@@ -6955,7 +6955,7 @@ mt_vshad:
 .gone:  mov     byte [cs:mt_shd], 0
         ret
 
-; T3: the front task's own mode set (BX = its entry; CF: a graphics one).
+; The front task's own mode set (BX = its entry; CF: a graphics one).
 ; A terminal window's task in front for its graphics (TX_WGFX 1) goes
 ; back to its window with a text mode: task 0 in front at the next switch
 ; (TX_WGFX 2, mt_scrsv's 0); a graphics mode again before that switch
@@ -7623,7 +7623,7 @@ mt_carve:
         ret
 
 ; ---------------------------------------------------------------------
-;  T5a: a task's region grows on demand.  A 48h or an EXEC its arena
+;  A task's region grows on demand.  A 48h or an EXEC its arena
 ;  can't meet (mt_48, mt_largest) takes room from the free block just
 ;  below the region, MT_GRES left in it.  Nothing moves: the region's
 ;  MCB is rewritten lower, and the room is the first block of the task's
@@ -7865,7 +7865,7 @@ mt_xenv:
 
 ; EXEC's largest block with MT on (mem_largest: JMP FAR; EXEC its only
 ; caller): in a task, one below the program's minimum (ex_min) grows the
-; region to it (mt_grow) and is asked again.  T5d: a .COM may use its
+; region to it (mt_grow) and is asked again.  A .COM may use its
 ; whole segment without asking (DOS gives it the largest block; LCMD
 ; clears its BSS first), and in a grown region its block can end at the
 ; TX: one short of its minimum, or in a grown region (TE_TX not TE_REG)
@@ -7919,11 +7919,11 @@ mt_kalloc:
 .k:     KCALL   mem_alloc
         ret
 
-%include "KMW.INC"                      ; (several window .RUNs at once, M8a)
+%include "KMW.INC"                      ; (several window .RUNs at once)
 %ifdef CRASHLOG
 %include "KCRASH.INC"
 %endif
-; the hot labels at the parity they had (M9b): a shift that flips one
+; the hot labels at the parity they had: a shift that flips one
 ; stops the build here (0 even, 1 odd)
 %macro  mt_par 2
 %ifndef CRASHLOG                        ; (a diagnostic build: not timed)
@@ -7952,7 +7952,7 @@ mt_kalloc:
             mt_par  mw_poll, 1
             mt_par  mt_emu.wl, 0
             mt_par  mt_vmov.w, 0
-            mt_par  mt_vfast, 0         ; (O23, O25: INT 10h's per character
+            mt_par  mt_vfast, 0         ; (INT 10h's per character
             mt_par  mt_vfast.ch, 0      ;  and per scroll)
             mt_par  mt_vfast.set, 0     ; (after a fixed NOP)
             mt_par  mt_vaddr, 0
@@ -8012,7 +8012,7 @@ mt_s0   db      'Executive', 0          ; (task 0's TE_NAME)
 %endmacro
 mt_hooks:
 %ifndef NOM10HOOKS
-        HOOK    int21, 0EAh, mt_i21     ; INT 21h's entry (M10)
+        HOOK    int21, 0EAh, mt_i21     ; INT 21h's entry
 %endif
         HOOK    f_F0, 0EAh, mt_f0       ; INT 21h F0h
         HOOK    f_25, 0EAh, mt_25       ; AH=25h and 35h
@@ -8024,10 +8024,10 @@ mt_hooks:
         HOOK    ui_progend, 0EAh, mt_pgend  ; a program's end
         HOOK    f_48, 0EAh, mt_48       ; AH=48h, EXEC's largest block and
         HOOK    mem_largest, 0EAh, mt_largest   ;  its environment's: a
-        HOOK    f_4B.xe, 0EAh, mt_xenv  ;  task's region grows (T5a)
+        HOOK    f_4B.xe, 0EAh, mt_xenv  ;  task's region grows
 %ifndef SERIAL                          ; (-dSERIAL: pre-interrupt style, none)
         HOOK    gp_isr.e, 0EAh, mt_srqi ; the GPIB driver's SRQ interrupt, at
-%endif                                  ;  its EOI: a task woken (T5c)
+%endif                                  ;  its EOI: a task woken
         dw      0
 
 ; \LODEMT.SYS into a block at the top of memory, INT 08h, INT 21h F0h
@@ -8162,8 +8162,8 @@ mt_boot:
         mov     [es:mt_old16 + 2], ax
         mov     word [16h * 4], mt_i16
         mov     [16h * 4 + 2], es
-%ifndef NOM10HOOKS                      ; (bisect build: none of M10's hooks)
-        mov     ax, [15h * 4]           ; INT 15h, 25h and 26h (M10)
+%ifndef NOM10HOOKS                      ; (bisect build: none of the floppy wait's hooks)
+        mov     ax, [15h * 4]           ; INT 15h, 25h and 26h
         mov     [es:mt_old15], ax
         mov     ax, [15h * 4 + 2]
         mov     [es:mt_old15 + 2], ax
@@ -8189,7 +8189,7 @@ mt_boot:
         mov     [0Eh * 4 + 2], es
         cmp     word [67h * 4], ems_int67       ; INT 67h the kernel's (EMS
         jne     .n67                    ;  resident): its entry through
-        cmp     word [67h * 4 + 2], KSEG ;  mt_i67 (M10)
+        cmp     word [67h * 4 + 2], KSEG ;  mt_i67
         jne     .n67
         push    ds
         mov     ax, KSEG
@@ -8205,7 +8205,7 @@ mt_boot:
         push    KSEG                    ;  through MT (mt_i76), on in both
         pop     ds                      ;  PICs (KHD's start-up turns it off
         cmp     byte [C_DT + D_PRES], 0 ;  without the BIOS's disk), and INT
-        pop     ds                      ;  77h MT's (M12)
+        pop     ds                      ;  77h MT's
         je      .n76
         mov     ax, [76h * 4]
         mov     [es:mt_old76], ax

@@ -48,8 +48,8 @@ ems_used    equ ems_h + 2       ; pages in runs (handle 0's owner: unused)
 ; INT 67h 44h: logical page BX of handle DX into window AL (BX = FFFFh:
 ; the window off) -> AH = 0 or the error, AL kept, any DS.  The kernel's
 ; own maps come in as an interrupt (EMS_MAP: PUSHF, PUSH CS, CALL), so
-; the one copy has no CALL and RET in the call programs make all the time
-; (S14); .po (EMS_OUT) puts register value AH into window AL, AH = 0
+; the one copy has no CALL and RET in the call programs make all the time;
+; .po (EMS_OUT) puts register value AH into window AL, AH = 0
 %macro EMS_MAP 0
         pushf
         push    cs
@@ -456,7 +456,7 @@ ems57:  cmp     al, 1
         adc     cx, cx
         rep     movsb
         jmp     short .moved
-.back:  add     si, cx                  ; (S14: an odd byte at the top, then
+.back:  add     si, cx                  ; (an odd byte at the top, then
         dec     si                      ;  words down: each word read before
         add     di, cx                  ;  a write reaches it, as bytes)
         dec     di
@@ -469,7 +469,7 @@ ems57:  cmp     al, 1
         rep     movsw
         cld
         jmp     short .moved
-.xch:   shr     cx, 1                   ; (S14: an odd byte, then words)
+.xch:   shr     cx, 1                   ; (an odd byte, then words)
         jnc     .xw
         mov     al, [es:di]
         xchg    al, [si]

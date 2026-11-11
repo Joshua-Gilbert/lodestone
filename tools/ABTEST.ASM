@@ -107,7 +107,7 @@ start:  cld
         call    puts
         call    crlf
 quit:   call    pit_done
-        call    d_rearm                 ; leave the driver in charge (X55: on
+        call    d_rearm                 ; leave the driver in charge (on
                                         ;  the failed paths too)
         call    log_close
         mov     ax, 4C00h

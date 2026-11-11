@@ -1,4 +1,4 @@
-; MTKEY.COM - for test_mt.py: keys through INT 16h (KMT's mt_i16, M4b).
+; MTKEY.COM - for test_mt.py: keys through INT 16h (KMT's mt_i16).
 ;   MTKEY MODE FILE
 ;   R  a key read with INT 16h AH=00h (in the BIOS, it waits there);
 ;      FILE gets the AX it gave (4 hex digits)

@@ -147,7 +147,7 @@ def t_image():
 
 
 def joined(r1, r2):
-    """R:'s sectors 1-6 as KROM.INC reads them of ROM 1 and ROM 2 (O10: ROM
+    """R:'s sectors 1-6 as KROM.INC reads them of ROM 1 and ROM 2 (ROM
     2 burned as R:'s second half): the FAT, ROM 1's sector then ROM 2's as
     burned; the root, ROM 1's with its empty entries deleted, then ROM 2's
     as burned."""
@@ -314,8 +314,8 @@ def t_rom2():
     check('INT 21h 36h for R: 0 free of 504 clusters with ROM 2 (the gap\'s 88 left out), its FAT not walked; of 252 for '
           'ROM 1 alone (walked, as before) and ROM 2 alone', got['with ROM 2'] == ([r1, r1], 0) and got['ROM 1 alone'][0] == [r2, r2]
           and got['ROM 1 alone'][1] >= 2 * 252 and got['ROM 2 alone'][0][:1] == [r2] and got['ROM 2 alone'][1] > 0, got)
-    # 0.6's ROM 1 (before O10: mkrom left its FAT past entry 253 zero, the
-    # gap's entries free; 338d1ae's LODE1.BIN differs from it there only)
+    # 0.6's ROM 1 (before 2026-10-29: mkrom left its FAT past entry 253 zero, the
+    # gap's entries free; the LODE1.BIN just before that fix differs from it there only)
     # beside the new ROM 2, this kernel from a floppy: joined all the same
     old = bytearray(rom()); old[512 + 381:1024] = bytes(1024 - 512 - 381)
     k = boot(floppy('rom2o6.img', A.SYS, LCMD, FREE36), sock=None, roms={0: rom2(), 1: bytes(old)})
@@ -760,7 +760,7 @@ def rom_ini(ini):
 
 
 def t_romcap():
-    print('== Shift-PrtSc from the ROM: SCREEN.PRN read from R:, the picture saved on A: (KC-2)')
+    print('== Shift-PrtSc from the ROM: SCREEN.PRN read from R:, the picture saved on A:')
     k = boot()
     k.trace = True
     k.pc.tty.clear(); k.pc.prtsc(); k.settle(10)

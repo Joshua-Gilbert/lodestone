@@ -31,10 +31,10 @@
 ;      open there)
 ;   M  an EMS page of its own in window 2 (E800h, INT 67h 43h, 44h), a
 ;      pattern in it; on each count mapped again (44h) and checked: any
-;      changed, or a call failed, the count it writes is 0 (M10: a task
+;      changed, or a call failed, the count it writes is 0 (a task
 ;      with the cache's window mapped doesn't run while it is held)
 ;   K  on each count A:'s first sector read with INT 13h itself (AH=02h):
-;      a call failed, the count it writes is 0 (M10: held while a floppy
+;      a call failed, the count it writes is 0 (held while a floppy
 ;      owner is out)
 ; nasm -f bin -o MTSPIN.COM MTSPIN.ASM
 cpu 286

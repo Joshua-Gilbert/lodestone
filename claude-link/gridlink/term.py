@@ -67,7 +67,7 @@ class TermSession:
         s.hello = {}; s.exited = None
         s.away = False                  # resident Claude: the user went back to the program
         s.saver_at = None               # the GRiD's screen saver: link.rx_new at its EVENT (no new frame since: on)
-        s.bg = False                    #  and its console goes on in the background (M4, HF_BG)
+        s.bg = False                    #  and its console goes on in the background (HF_BG)
         s.bg_sdc = 0                    #  (the bridge's count of SDCs then: the console's stop)
         s.stats = dict(keys=0, pty_in=0, pty_out=0)
         s.tools = None; s.sock = mcp.socket_path(cfg)
@@ -150,14 +150,14 @@ class TermSession:
         return s.PAUSED_TOOLS + tuple(t for o in ops for t in s.OPS_TOOLS.get(o.strip(), ()))
 
     def bg_tools(s):
-        """The tools the console serves in the background (M4): files and GPIB as its HELLO's ops= says, and
+        """The tools the console serves in the background: files and GPIB as its HELLO's ops= says, and
         grid_program where it lists bgscreen (CLAUDE 1.11: the program's screen as it is then)."""
         ops = [o.strip() for o in s.hello.get('ops', '').lower().split(',')]
         return (('grid_program',) if 'bgscreen' in ops else ()) + \
             tuple(t for t in s.paused_tools() if t not in s.PAUSED_TOOLS)
 
     def background(s):
-        """Resident Claude's console is working in the background (M4): its bridge quiet, the stub
+        """Resident Claude's console is working in the background: its bridge quiet, the stub
         serial-polling at the program's key calls, so the Link rings (quietly) whenever it has a request.
         The console stops (a link failure in a pass, or the link not idle as it went) with an SDC to the
         bridge: then the calls kept end, and the tools say the user has gone back, as without it."""
@@ -192,7 +192,7 @@ class TermSession:
             s.grid.on_restart()
             with s.lock:
                 # CLAUDE /R's console kept its screen: go on from it if we sent it (its sum the HELLO's
-                #  check's kind: the Fletcher sum, a CRC from a console before audit3 R56)
+                #  check's kind: the Fletcher sum, a CRC from a console before 2026-10-29)
                 if not s.enc.resume(info.get('screen'), getattr(s.link, 'rx_fl', True)): s.enc.reset()
                 s.penc.reset()                    # (a picture: the GRiD's screen is unknown)
                 if s.pic is not None and not s.can_picture(): s._drop_picture()
@@ -213,7 +213,7 @@ class TermSession:
                     s.enc.reset(); s.penc.reset(); s._mark()
             elif body[0] == glp.EV_PIXCLICK and len(body) >= 5:    # x, y in pixels (CLAUDE 1.2)
                 s.click_at(body[1] | body[2] << 8, body[3] | body[4] << 8)
-            elif body[0] == glp.EV_CLICK and len(body) >= 3:       # a cell (#32's CLAUDE)
+            elif body[0] == glp.EV_CLICK and len(body) >= 3:       # a cell (CLAUDE /W)
                 s.click_at(body[1] * 8 + 4, body[2] * 16 + 8)
             elif body[0] == glp.EV_SIZE and len(body) >= 2:       # rows (CLAUDE 1.16 in a terminal window)
                 s.set_rows(body[1])
@@ -221,7 +221,7 @@ class TermSession:
                 if s.link.grid_wake and s.link.saver_flag(): s.saver_at = s.link.rx_new
             elif body[0] == glp.EV_AWAY:        # (resident Claude's console, going: never for TYPE's keys)
                 s.away = True
-                # M4: on in the background, the bridge quiet (from the answer to this EVENT on: if it can't
+                # on in the background, the bridge quiet (from the answer to this EVENT on: if it can't
                 # be now, a bridge reconnected with older firmware, no background), POLLs answered at once
                 # (the program waits meanwhile); files and GPIB go on, and SCREEN for a console that says
                 # bgscreen (CLAUDE 1.11)

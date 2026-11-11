@@ -1,5 +1,5 @@
 ; d_rearm: the resident GRIDGPIB driver back in charge at a tool's exit
-; (X55).  The tools reset the 7210 themselves, which clears IMR2, so the
+; The tools reset the 7210 themselves, which clears IMR2, so the
 ; driver's SRQ interrupt (Lodestone's INT 60h AH=0Eh, IRQ 5) stays off
 ; until its next chip init: CLAUDE then woke on the 55 ms tick, and
 ; RCON saw the Pi's ring only at its next poll.  AH=01h runs that init

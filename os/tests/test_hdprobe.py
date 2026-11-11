@@ -78,7 +78,7 @@ def t_absent():
           'CMOS 12h (hard disk type) = 00' in rep and 'the BIOS has no hard disk' in rep)
 
 def t_floating():
-    """No drive, and the bus floats: what Joshua's 1520 showed (2026-10-07):
+    """No drive, and the bus floats: what the author's 1520 showed (2026-10-07):
     registers 75h, alt status A6h, no echo, garbage IDENTIFY in HDPROBE 1.0."""
     img = mkimg.build(os.path.join(OUT, 'floating.img'), [os.path.join(GOS, 'src', 'LODE.SYS'), PROBE])
     k = ktest.KPC(img, float_bus=True); k.start()
@@ -122,7 +122,7 @@ def t_conner():
           ata.cmds)
 
 def t_cp30104():
-    """Joshua's spare (2026-10-07): a CP30104H, 120 MB.  The BIOS's list has
+    """The author's spare (2026-10-07): a CP30104H, 120 MB.  The BIOS's list has
     CP3104 (100 MB), not CP30104, so it stays off for the BIOS; HDPROBE
     should say so and still read it.  Its first sector, as HDPROBE read it
     once the drive came free: one 121 MB FAT16 partition (type 06)."""
@@ -136,7 +136,7 @@ def t_cp30104():
           '1: type 06  boot 80  121 MB' in rep, rep[-1500:])
 
 def t_mech():
-    """Joshua's CP30104H on the 1520 (2026-10-07): it answers and identifies
+    """The author's CP30104H on the 1520 (2026-10-07): it answers and identifies
     (762 x 8 x 39), its interrupt arrives, but recalibrate aborts after
     seconds, seeks drop BSY and never complete, reads end IDNF."""
     rep, f, sec, ok, k = probe('mech', pcemu.Ata(model='Conner Peripherals 120MB - CP30104H', cyls=762, heads=8,
