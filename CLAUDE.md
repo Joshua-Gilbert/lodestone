@@ -1,10 +1,11 @@
 # Working in this repo with Claude Code
 
 Lodestone is a DOS 3.30-compatible operating system for the GRiDCase
-1520 (80C286), plus the bridge that links it to Claude: `os/` is the
-system (NASM sources in `os/src`, apps in `os/apps`, CLAUDE.COM in
-`os/claude`), `claude-link/` the Pi side, `pico-bridge/` the GPIB-Pico2
-bridge, `plotter-nano/` the plotter's Nano.
+1520 (80C286) and its 386 siblings (1530, 1535; untried), plus the
+bridge that links it to Claude: `os/` is the system (NASM sources in
+`os/src`, apps in `os/apps`, CLAUDE.COM in `os/claude`), `claude-link/`
+the Pi side, `pico-bridge/` the GPIB-Pico2 bridge, `plotter-nano/` the
+plotter's Nano.
 
 ## Build and test
 
