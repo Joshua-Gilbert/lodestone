@@ -795,7 +795,7 @@ run_shell:
         jmp     run_prog
 
 ; CODE-A: Claude (CLAUDE.COM here, else by PATH: ui_findapp).  MULTITASK=1: a
-; task, in a terminal window (T5d: CLAUDE 1.13 publishes its screen);
+; task, in a terminal window (CLAUDE 1.13 publishes its screen);
 ; Shift-CODE-A, and without the switch: full screen, as before
 run_claude:
         mov     si, s_claude

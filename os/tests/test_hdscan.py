@@ -263,7 +263,7 @@ def t_stuck():
           ok and "won't go to track 0" in rep and '[2]' not in rep, rep)
 
 def t_big():
-    """The real disk's size: Joshua's own partition table (sector 0 as
+    """The real disk's size: the author's own partition table (sector 0 as
     HDPROBE read it, 2026-10-07) on 762 x 8 x 39, a 121 MB FAT16 partition
     behind it (32-bit sector count, 4 sectors a cluster, a FAT of 232
     sectors), a 20 MB file; a key stops the sweep as it starts."""

@@ -48,7 +48,7 @@ kstack_top:                     ;  its bottom 1 KB as a buffer: CAP_SEG)
 astack_top:                     ; nested INT 21h (from INT 24h handlers)
 ui_seg      resw 1              ; the UI segment (core + Executive), see LODE.ASM
 section .text
-; The stack's low area (K2): buffers a single INT 21h call uses, from its
+; The stack's low area: buffers a single INT 21h call uses, from its
 ; dispatch to its return, which no other call's can meet there.  The
 ; stack reaches about 150 bytes down (measured: EXEC with its INT 24h and
 ; a handler's nested call, C:'s errors, MT's slices; a nested call is on
@@ -223,7 +223,7 @@ capture:
         push    word [last_err]
         mov     dx, scr_path            ; Shift-PrtSc, or PrtSc with no
         cmp     byte [cap_file], 0      ;  printer driver: SCREEN.PRN, the
-        jne     .ld                     ;  file writer (KC-2); else the
+        jne     .ld                     ;  file writer; else the
         cmp     byte [prn_path], 0      ;  printer's driver
         je      .ld
         mov     dx, prn_path
@@ -665,7 +665,7 @@ f_08:   call    con_in                  ; input, no echo
         je      ctrlc
         jmp     ret_al
 f_09:   mov     es, [bp+F_DS]           ; '$'-terminated string: written to
-        mov     di, [bp+F_DX]           ;  handle 1 in one go (S4: a file or
+        mov     di, [bp+F_DX]           ;  handle 1 in one go (a file or
         mov     dx, di                  ;  a device in one write, not one a
         mov     al, '$'                 ;  character), errors ignored as
         mov     cx, -1                  ;  con_out's.  CON's dev_write is

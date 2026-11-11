@@ -23,7 +23,7 @@ RUN_API equ 6                           ; (W_FLAGS: it moves and closes.  Its he
                                         ;  take EV_RCLICK and EV_CLOSE too: an older
                                         ;  LODE.SYS shows the HT, n as 2 characters)
 RUN_FLAGS equ RF_WIN                    ; (a window .RUN: with MULTITASK=1 one
-                                        ;  of several at once, M8)
+                                        ;  of several at once)
         org     RUN_ORG
 
 WCOL    equ 41                          ; the window, where it first opens

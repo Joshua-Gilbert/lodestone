@@ -1,5 +1,5 @@
 ; TSRK.COM - ends staying resident (INT 21h 31h), for CLAUDE's run_back
-; (audit3 O17: a RUN's program that keeps memory where CLAUDE's buffers were)
+; (a RUN's program that keeps memory where CLAUDE's buffers were)
 ;   TSRK     keeps 64 paragraphs (its PSP and 768 bytes)
 ;   TSRK B   keeps all it got but 160 paragraphs: no room left for CLAUDE
 ;   nasm -f bin -o TSRK.COM TSRK.ASM

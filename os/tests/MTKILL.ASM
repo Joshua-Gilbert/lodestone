@@ -1,5 +1,5 @@
-; MTKILL.COM - for test_mt.py: tasks ended with MT_KILL (KMT's mt_kill,
-; M5b).
+; MTKILL.COM - for test_mt.py: tasks ended with MT_KILL (KMT's
+; mt_kill).
 ;   MTKILL MODE N FILE
 ;   F  creates FILE and writes N bytes ("k"s) to it, takes an EMS page,
 ;      then reads a line (INT 21h AH=0Ah: it waits in kbd_get), the file

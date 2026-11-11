@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the Lodestone kernel (with listing and symbol map) and LODEMT.SYS; build.sh runs it too.
-# KFLAGS: NASM's -d options, e.g. KFLAGS=-dNOSYSREQ (no SysReq task switching, M11: for a
+# KFLAGS: NASM's -d options, e.g. KFLAGS=-dNOSYSREQ (no SysReq task switching: for a
 # machine without the key) or -dNOTC (no disk cache, so no multitasking)
 set -e
 cd "$(dirname "$0")/src"

@@ -12,7 +12,7 @@ A_ARC   equ 20h
 
 section .bss
 path_buf    resb 130            ; the caller's path, copied here
-path2_buf   equ KL_P2           ; (130 bytes, in the INT 21h stack's low area: K2)
+path2_buf   equ KL_P2           ; (130 bytes, in the INT 21h stack's low area)
 nm11        resb 11             ; a parsed name component; resolve's last is
 r_name      equ nm11            ;  r_name (0 = none), so no parse_comp may
                                 ;  come between a resolve and a use of it
@@ -268,7 +268,7 @@ resolve_si:
         stc                             ; a disk error
         ret
 .rest:  call    parse_comp              ; a directory not there: the rest
-        jc      .bad                    ;  read on, as MS-DOS (X17): a bad
+        jc      .bad                    ;  read on, as MS-DOS: a bad
         cmp     byte [si], '\'         ;  middle part 3, a bad or wild last
         jne     .rl                     ;  one marked (open, create: 2)
         inc     si
@@ -1088,7 +1088,7 @@ cwd_p       resw 1
 section .text
 CWDMAX  equ 64                          ; "\" and 63, as MS-DOS's
 CWNEW   equ 196                         ; (CWDMAX, then path_buf's 128 at
-cwd_new equ path2_buf                   ;  most: CHDIR's, in K2, with rename's
+cwd_new equ path2_buf                   ;  most: CHDIR's, in the low area, with rename's
 cwd_nm  equ path2_buf + CWNEW           ;  and EXEC's places, which it never
 cwd_cl  equ path2_buf + CWNEW + 14      ;  meets: the new string, a name for
         times -(CWNEW + 16 > KL_REL - KL_P2) db 0  ; it, the cluster)
@@ -1219,7 +1219,7 @@ f_56:   call    get_path                ; RENAME (files; same drive)
 .e:     jmp     fail
         times   -(de != d_off + 2 || ren_off != ren_lba + 2 || ren_de != ren_off + 2) db 0
 
-; (rename's block, in the INT 21h stack's low area: KCORE.INC, K2)
+; (rename's block, in the INT 21h stack's low area: KCORE.INC)
 ren_lba     equ KL_REN          ; d_lba, d_off and de, copied in one go
 ren_off     equ KL_REN + 2
 ren_de      equ KL_REN + 4

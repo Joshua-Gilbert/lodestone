@@ -248,7 +248,7 @@ def t_core():
     check('form: ESC cancels and changes nothing', has(k, 'Find: world 1 1') and not has(k, 'Fill in form'), screen(k))
     k.key(CODE['F']); k.key(ktest.DOWN); f1 = k.u16('fm_cur'); k.key(ktest.DOWN, ktest.DOWN); f3 = k.u16('fm_cur'); k.key(ktest.ESC)
     check('form: Down goes to the next field, and from the last back to the first', (f1, f3) == (1, 0), (f1, f3))
-    # review fixes (2026-10-06)
+    # fixes of 2026-10-06
     k.key(CODE['F'])
     click(k, 320, 5)                    # above the form's window
     check('form: a click above the window does nothing (it was a divide fault: the machine hung)',
@@ -570,7 +570,7 @@ def t_write():
     check('the goal column: from column 31, Down onto "short" (column 6), Down: 31 again; PgUp, Down, Down: 31; Up, '
           'Ins twice, Up: 6 (dropped by a key that moves nothing); Home, Down, Down: 1', (c1, c2, c3, c4, c5)
           == ('6', '31', '31', '6', '1'), (c1, c2, c3, c4, c5))
-    # the cursor's column, found once a key (AP-14: fix_view's, for the row
+    # the cursor's column, found once a key (fix_view's, for the row
     # drawn and the status line): past a tab, scrolled sideways, typed at
     k = write_open('LONG.TXT', b'\tx' + b'y' * 150 + b'\r\nz\r\n')
     wl = lambda n: k.pc.u16(k.useg, k.u16('run_base') + ws[n])
@@ -953,7 +953,7 @@ def t_write_clip():
     drag(k, *at(0, 0), *at(2, 0)); k.key(CODE['V'])
     check('a drag over "XY" (at the start), CODE-V: replaced by the 5 bytes (the room the gap\'s and the selection\'s, not where it ends)',
           wtext(k, ws) == b'XYThe' + T and k.band()[0].startswith('Type, or choose a command'), (wtext(k, ws)[:20], k.band()))
-    # X46: the paste read into the gap first, then the selection erased, from either end; its read failing: nothing lost
+    # the paste read into the gap first, then the selection erased, from either end; its read failing: nothing lost
     k = write_open(mouse=True)
     drag(k, *at(4, 0), *at(9, 0)); k.key(CODE['C'])           # "quick"
     drag(k, *at(8, 2), *at(4, 2)); k.key(CODE['V'])           # (right to left: the selection after the cursor, the gap)
@@ -1008,7 +1008,7 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it; 0.4 KB, MS-DOS\'s FCB search (11h, 12h: a label\'s 11 bytes, as COMMAND\'s VOL reads it; its pattern as DOS 3 takes it), names (a space inside, a first E5h; the Executive\'s whole) and CHDIR (the whole path, 63 characters; no subject past it); 112 bytes, a failed write\'s changes in order (an entry before the frees it lets go of; a failed buffer read again at Abort; terminate\'s Abort as Fail); then 0.1 KB back, ROM 1\'s room: Lodefont packed, "Disk error (" shared; 496 bytes, a failed write\'s rules: each disk\'s FAT its own, the clusters a failed write took given back, chain walks that stop on a free entry, "Invalid disk change"; 576 bytes, a floppy\'s mount rules: a file\'s mount number, "Invalid disk change" while files are open, the current directory found again by name, broken links past the disk\'s end; 400 bytes, a disk changed under a transfer: asked about there and then (Retry, Fail), each task\'s current directories with their mount, MS-DOS\'s 2-second rule for a drive without a change line, and the Executive\'s question for it; 160 bytes, a disk changed on another machine told apart by its root\'s first sector; 80 bytes, INT 21h F008h, a floppy its program wrote itself through INT 13h taken as it is (LABEL), and an Abort at a close leaving its handle to terminate; 192 bytes, F008h given the sector as read and as written, a failed root write\'s two sums, a floppy\'s FAT written from another drive\'s call only after a look at its drive; 64 bytes, a Fail nobody was asked for kept apart, a FAT\'s look a write\'s and the user\'s Fail giving its changes up, a directory not taken for the root when its disk can\'t be read, a close\'s slot by name): the directory buffer is lent while it runs' % kb,
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the 2026-10-20 kernel batch, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the 2026-10-26 kernel batch, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it; 0.4 KB, MS-DOS\'s FCB search (11h, 12h: a label\'s 11 bytes, as COMMAND\'s VOL reads it; its pattern as DOS 3 takes it), names (a space inside, a first E5h; the Executive\'s whole) and CHDIR (the whole path, 63 characters; no subject past it); 112 bytes, a failed write\'s changes in order (an entry before the frees it lets go of; a failed buffer read again at Abort; terminate\'s Abort as Fail); then 0.1 KB back, ROM 1\'s room: Lodefont packed, "Disk error (" shared; 496 bytes, a failed write\'s rules: each disk\'s FAT its own, the clusters a failed write took given back, chain walks that stop on a free entry, "Invalid disk change"; 576 bytes, a floppy\'s mount rules: a file\'s mount number, "Invalid disk change" while files are open, the current directory found again by name, broken links past the disk\'s end; 400 bytes, a disk changed under a transfer: asked about there and then (Retry, Fail), each task\'s current directories with their mount, MS-DOS\'s 2-second rule for a drive without a change line, and the Executive\'s question for it; 160 bytes, a disk changed on another machine told apart by its root\'s first sector; 80 bytes, INT 21h F008h, a floppy its program wrote itself through INT 13h taken as it is (LABEL), and an Abort at a close leaving its handle to terminate; 192 bytes, F008h given the sector as read and as written, a failed root write\'s two sums, a floppy\'s FAT written from another drive\'s call only after a look at its drive; 64 bytes, a Fail nobody was asked for kept apart, a FAT\'s look a write\'s and the user\'s Fail giving its changes up, a directory not taken for the root when its disk can\'t be read, a close\'s slot by name): the directory buffer is lent while it runs' % kb,
           kb >= 562.2, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
@@ -1839,7 +1839,7 @@ def t_dchg():
         k.key(ktest.ENTER)
 
 def t_file_safety():
-    print('== the file commands: the review\'s cases (one file however spelled, the saver, long subjects ...)')
+    print('== the file commands: regression cases (one file however spelled, the saver, long subjects ...)')
     notes = os.path.join(OUT, 'NOTES.TXT'); open(notes, 'wb').write(TEXT)
     BIG = bytes(range(256)) * 100
     big = os.path.join(OUT, 'BIG.DAT'); open(big, 'wb').write(BIG)
@@ -2172,7 +2172,7 @@ def t_subdel():
     k.pc.drives[0].wp = False
     k.key(ktest.ENTER)
     check('... and Title lists the titles of where it is now', not k.crashed, '')
-    # a damaged subject inside the one erased: its directory without even "." (FIND FIRST: 18, X22): a damaged
+    # a damaged subject inside the one erased: its directory without even "." (FIND FIRST: 18): a damaged
     # disk, 3, as one whose first entry isn't "."; it and the subject above it are left
     a = image('subdel2.img', t, 'OLD\\', 'OLD\\BROKEN\\', 'KEEP\\', 'KEEP\\K.TXT=' + t)
     raw = bytearray(open(a, 'rb').read())
@@ -2523,7 +2523,7 @@ def t_calc():
     check('CODE-K again closes it; after the saver, exit code 0: the Executive reads its directory again and redraws',
           not has(k, 'Calculator') and run_ret(k) == 0 and has(k, 'LCMD'), (run_ret(k), screen(k)))
     # 255 repaints so far (paints poked), then the saver twice: a byte count would wrap to 1 and say
-    # "as it was" over an old save-under; it stays "repainted", exit code 0 (the persona review)
+    # "as it was" over an old save-under; it stays "repainted", exit code 0
     def saver_once():
         k.wr('saver_t', struct.pack('<H', 36))
         for _ in range(40):
@@ -3166,7 +3166,7 @@ def paint_saver(k, m, *keys):
 SCR_BAND = 360
 
 def t_paint_more():
-    """Paint: the panel's cases.  The press that ends the hint, strokes past the
+    """Paint: regression cases.  The press that ends the hint, strokes past the
     edges, keys in the tools' window, a key typed ahead of the saver's end,
     Erase, CODE-Q on a new picture, a save that fails, a picture in a subject,
     the Executive's mouse afterwards."""
@@ -3878,7 +3878,7 @@ def t_gpib_tools():
           'AH=0Ch the bytes resident it said; /U then gives INT 61h and INT 0Dh back',
           res and m and m.groups() == ('0123', '6115', '%04X' % int(res.group(1))) and 'Unloaded' in o3
           and k.pc.rd(0, 0x61 * 4, 4) == i61 and k.pc.rd(0, 0x0D * 4, 4) == i0d, (o1, o2, o3))
-    # X55: a chip-level tool resets the 7210 (IMR2 0); at its exit it hands the chip back to the driver (AH=01h)
+    # a chip-level tool resets the 7210 (IMR2 0); at its exit it hands the chip back to the driver (AH=01h)
     gs = os.path.join(OUT, 'GPIBSCAN.COM')
     subprocess.run(['nasm', '-f', 'bin', '-i', tools + '/', '-o', gs, os.path.join(tools, 'GPIBSCAN.ASM')], check=True)
     k = ktest.KPC(image('ggs.img', LCMD, gs), chip=sim7210.NEC7210(sim7210.bus())); k.start()
@@ -3892,7 +3892,7 @@ def t_gpib_tools():
     check('GPIBSCAN under Lodestone (the kernel\'s driver on INT 60h, SRQ on IRQ 5): it resets the chip, and at its '
           'exit the driver sets it up again, SRQI back in IMR2 (%s after the last of %d resets)' % (imr2, len(resets)),
           len(resets) >= 2 and imr2 and imr2[-1] == 0x40 and 'A:\\>' in o, (resets, imr2, o[-300:]))
-    # X56: ^C while GPIBIRQ has IRQ 5 (INT 0Dh its own): its INT 23h puts the vector and the mask back first.
+    # ^C while GPIBIRQ has IRQ 5 (INT 0Dh its own): its INT 23h puts the vector and the mask back first.
     # (Lodestone's AH=02h doesn't check ^C, GRiD MS-DOS's does: the INT 23h is given here as DOS gives it, from
     # the program's own context, once its code is running)
     gi = os.path.join(OUT, 'GPIBIRQ.COM')

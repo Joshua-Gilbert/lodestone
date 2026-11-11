@@ -1,5 +1,5 @@
 ; MTM33.COM - for test_mt.py: each task's own INT 33h state (KMT's
-; mt_i33, M4c).
+; mt_i33).
 ;   MTM33 MODE FILE
 ;   F  INT 33h reset, an event handler of its own (every event), the
 ;      pointer on, then keys through DOS (AH=08h, where it can be switched
@@ -26,7 +26,7 @@
 ;      one there before
 ;   P  reset, the pointer on, 36 ticks (a click given meanwhile, or later,
 ;      while it polls), then polls 03h without a pause until the left
-;      button is down, then until it is up (T4; TM5000G polls 03h too, less
+;      button is down, then until it is up (TM5000G polls 03h too, less
 ;      hard): FILE gets "x y x y p r", where it was down,
 ;      where up, and the left button's presses and releases (05h, 06h)
 ;   R  as P, but polls 06h (the left button's releases) until one comes:

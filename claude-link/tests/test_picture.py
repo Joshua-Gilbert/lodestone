@@ -282,7 +282,7 @@ def test_a_stream_of_frames_shows_whole_frames():
 
 def test_old_claude_gets_no_pictures():
     h = TermHarness()
-    h.grid.hello_flags = glp.GF_TERM                     # #32's CLAUDE.COM
+    h.grid.hello_flags = glp.GF_TERM                     # CLAUDE.COM /W, before 1.2
     try:
         assert h.wait_text('Welcome to Claude Code', wall=10)
         t = h.term
@@ -294,7 +294,7 @@ def test_old_claude_gets_no_pictures():
 
 
 def test_cell_clicks_from_older_claude():
-    """3-byte EVENT 05h (a cell, #32's CLAUDE) still reaches the program as a cell."""
+    """3-byte EVENT 05h (a cell, CLAUDE /W before 1.2) still reaches the program as a cell."""
     h = start()
     try:
         t = h.term

@@ -280,7 +280,7 @@ pr_boot:
         push    KSEG
         pop     es
         mov     ax, 3305h               ; SCREEN.PRN (Shift-PrtSc's file
-        int     21h                     ;  writer, KC-2): in the root of the
+        int     21h                     ;  writer): in the root of the
         add     dl, 'A' - 1             ;  drive started from (R:\ from the
         mov     [es:scr_path], dl       ;  ROM)
         call    ini_read                ; (KROM.INC: LODE.INI's, both)
@@ -335,7 +335,7 @@ pr_boot:
 ; TEMP=DIR in the settings (the first such line, the changes' before the
 ; ROM's; "TEMP=": none) -> TEMP=DIR at the end of the master environment
 ; (after rs_boot's), so every program's %TEMP%: CLAUDE.COM's CLAUDE.OUT
-; (the ROM's LODE.INI says M:\, not the current drive R:, X51), and LCMD's
+; (the ROM's LODE.INI says M:\, not the current drive R:), and LCMD's
 ; pipe files.  The value to a blank or the line's end, 64 characters at
 ; most.  The ROM's own line counts only without C: (C:\ has room; M:'s
 ; 256 KB would cut a big pipe short), C:\LODE.INI's always.  A drive that

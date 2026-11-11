@@ -207,7 +207,7 @@ def t_answers():
     check('no hard disk: "no hard disk answers", exit 1', 'no hard disk answers' in o and said(o, 'E1'), o)
 
 def t_review():
-    # the review panel's findings, each held to
+    # regression cases, each held to
     d = bytearray(CYL * HS * 512)
     m = bytearray(F.mbr([(0x00, 0x83, 100 * HS, (1 << 32) - 100 * HS + 5 * HS)], CYL, HEADS, SPT))   # (its end past 2^32)
     d[0:512] = m

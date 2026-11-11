@@ -73,7 +73,7 @@ BOXW     equ 70
 %define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23)
 %define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer)
 %define TX_INPL                  ; (TERMLINK.INC: a message's later fragments sent where they lie,
-%define RX_INPL                  ;  a request's later ones read straight into reqbuf: audit3 P7)
+%define RX_INPL                  ;  a request's later ones read straight into reqbuf)
 %define KBD_EVERY 6000           ; (TERMKEYS.INC: keys every ~2.5 ms while the link is busy; not in RCON)
 %define TERM_WIN                 ; (TERMCELL.INC, TERMKEYS.INC: a terminal window, 1.13; not in RCON)
 %include "MTAPI.INC"             ; (MT_PUB, MT_WAKE, MT_LIST)
@@ -98,11 +98,11 @@ BOXW     equ 70
 ;  The console runs on our stack (conventional memory: an interrupt
 ;  meanwhile runs on it too), with the program's four EMS windows read
 ;  and put back as M: does; the program's screen goes to our pages 2-3.
-;  M3: when Claude types into the program (TYPE), the console keeps the
+;  When Claude types into the program (TYPE), the console keeps the
 ;  keys and sets r_ks; then every key call first asks the console for one
 ;  (r_feed: its page in window 0 for that moment), and when they are done
 ;  the console comes back up, as at CODE-\, with the program's screen.
-;  M4: while the user is back in the program, every R_BGT ticks a key call
+;  While the user is back in the program, every R_BGT ticks a key call
 ;  (a peek or a read's wait) of the front task's, with nothing in service,
 ;  calls the console for a background look (r_bgon 2): it serial-polls the
 ;  bridge and does any work Claude has for the GRiD there, drawing nothing.
@@ -116,7 +116,7 @@ R_EPORT  equ 0258h              ; window 0's page register (+4000h a window)
 R_STACK  equ 384
 RC_NANO  equ 2                  ; the console's `nano` (RCON.ASM): /A:nn
 RC_FEED  equ 5                  ;  and its feeder of Claude's keys (TYPE)
-R_BGT    equ 4                  ; M4: ticks between background looks (~220 ms)
+R_BGT    equ 4                  ; ticks between background looks (~220 ms)
 
 ; Hot code on even offsets (a taken jump to an odd one costs the 286 a
 ; fetch): os/bench/hot.py's counts over chat, file and RUN turns, and the
@@ -215,7 +215,7 @@ gg_call:
 
 ; The snapshot's block, CF if no memory: one 48h where it fits (SCREEN, and
 ; a RUN's at its end, its program gone); snap_top at the top (a RUN whose
-; key script has {SNAP}: its program gets all below, O17)
+; key script has {SNAP}: its program gets all below)
 snap_alloc:
         mov     cx, alloc_fit
         jmp     short snap_a
@@ -236,7 +236,7 @@ alloc_fit:                              ; BX paragraphs where they fit (48h) -> 
         jmp     short alloc_top.p
 
 ; BX paragraphs at the top of the largest free block (as res_load's stub),
-; so that a RUN's program gets all below, our tail too (O17) -> AX, CF.
+; so that a RUN's program gets all below, our tail too -> AX, CF.
 ; (A lower hole that fits takes them instead: as good)
 alloc_top:
         push    es
@@ -742,7 +742,7 @@ conv_text:
 
 ; show what changed: after c_nl new lines with the window full and at
 ; its end, the rows scrolled up by c_nl and the last c_nl + 1 lines drawn
-; (CL-16: not all 20 rows, 1,600 cells, a TEXT frame); the whole window
+; (not all 20 rows, 1,600 cells, a TEXT frame); the whole window
 ; when it wasn't full, is read back, or c_dirty_full; else the last line
 conv_refresh:
         cmp     byte [ask_open], 0
@@ -1474,11 +1474,11 @@ send_text:
 
 %ifdef TERM_WIN
 ; =====================================================================
-;  a terminal window (Lodestone's multitasking, T5d): run as a task behind
+;  a terminal window (Lodestone's multitasking): run as a task behind
 ;  (CODE-A), CLAUDE draws Term's screen in its shadow alone, 25 rows with
 ;  the status band, and publishes it (MT_PUB): the window draws it with
 ;  our font.  A picture goes full screen (a mode 40h set: MT brings the
-;  task to the front, T3) and back to the window (mode 3).  Chat goes full
+;  task to the front) and back to the window (mode 3).  Chat goes full
 ;  screen for good, as does a task with no window, in front.  The bridge's
 ;  SRQ wakes us (MT_WAKE), full screen or not.
 ; =====================================================================
@@ -1528,7 +1528,7 @@ win_probe:
 .x:     ret
 
 ; CF if another task runs CLAUDE.COM (MT_LIST: its program's name), as
-; a second CODE-A would start (T5d)
+; a second CODE-A would start
 win_dup:
         push    bp
         push    es
@@ -1581,7 +1581,7 @@ win_front_task:
         ret
 
 ; its cells shown again, published again (from the front, sent back to its
-; window: T5b)
+; window)
 win_show:
         or      byte [wdesc + PB_FLAGS], PBF_SHOWN
         call    win_chg
@@ -1630,7 +1630,7 @@ win_tick:
         je      win_drop
 .x:     ret
 
-; T5e: the Pi's terminal as tall as the window shows (PB_VIEW, which MT
+; The Pi's terminal as tall as the window shows (PB_VIEW, which MT
 ; writes from TERM.RUN's MT_TROWS): EVENT 08h with the rows (4-24) when
 ; they change, to a Pi that says HF_SIZE; 24 again once full screen for
 ; good (win_drop).  A picture keeps the window's.  One EVENT at a time
@@ -1685,7 +1685,7 @@ win_prows:
 .x:     ret
 
 ; full screen for good (chat; no window, in front): withdrawn, mode 40h
-; (a window's task: MT brings it to the front, T3)
+; (a window's task: MT brings it to the front)
 win_drop:
         call    win_none
         xor     ax, ax
@@ -1763,7 +1763,7 @@ win_front:
         popa
         ret
 
-; back to the window: mode 3 (the task goes behind, to its window, T3),
+; back to the window: mode 3 (the task goes behind, to its window),
 ; the shadow shown there.  All kept
 win_back:
         pusha
@@ -2306,7 +2306,7 @@ pf_hello:
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
 %ifdef TERM_WIN
         mov     byte [fpic_seen], 0             ; (this Pi's F_PIC yet to be seen)
-        mov     byte [pi_rows], 24              ; (each HELLO: 24 rows, T5e)
+        mov     byte [pi_rows], 24              ; (each HELLO: 24 rows)
         push    bx
         call    win_prows
         pop     bx
@@ -2399,7 +2399,7 @@ pf_ready:
 .x:     ret
 
 ; REQUEST / ASK: collect the frames of one message in reqbuf (a later
-; fragment may be there already: link_read's P7)
+; fragment may be there already: link_read's RX_INPL)
 pf_reasm:
         cmp     byte [req_ready], 0     ; still holding an unrun request
         jne     .x
@@ -2410,7 +2410,7 @@ pf_reasm:
         mov     [rq_type], al
         mov     word [rq_len], 0
         mov     byte [rq_over], 0
-        mov     word [rq_at], 0         ; (P7: the old message's 6 bytes stay
+        mov     word [rq_at], 0         ; (the old message's 6 bytes stay
                                         ;  gone: the copy may go over them)
 .add:   mov     ax, [rq_len]
         add     ax, cx
@@ -2437,7 +2437,7 @@ pf_reasm:
         je      .ask
         mov     byte [req_ready], 1     ; the main loop runs it
         ret
-.ask:   call    rq_back                 ; (P7: its last fragment's 6 bytes back
+.ask:   call    rq_back                 ; (its last fragment's 6 bytes back
         call    open_ask                ;  before the copy)
 .x:     ret
 
@@ -2678,7 +2678,7 @@ take_snapshot:
 ; ---- running DOS programs -----------------------------------------
 ; flags (1: bit0 capture, bit1 snapshot at exit), timeout (2),
 ; key script length (2), key script, command line.  The timeout is the
-; Pi's own wait (X50): we cannot end a program, so it is skipped here
+; Pi's own wait: we cannot end a program, so it is skipped here
 op_run: mov     si, reqbuf+2
         lodsb
         mov     [run_flags], al
@@ -2687,7 +2687,7 @@ op_run: mov     si, reqbuf+2
         mov     bx, ax                  ; the script and the command's NUL in
         add     bx, 8                   ;  the request (F0h: a longer length
         jc      .big                    ;  would have do_exec cut our block
-        cmp     bx, [rq_len]            ;  short, O17)
+        cmp     bx, [rq_len]            ;  short)
         ja      .big
         mov     [ks_len], ax
         mov     [ks_ptr], si
@@ -2733,7 +2733,7 @@ op_run: mov     si, reqbuf+2
         cmp     word [ks_len], 0
         je      .nu
         call    unhook16
-.nu:    call    run_back                ; (O17: the link's buffers back)
+.nu:    call    run_back                ; (the link's buffers back)
         call    vec_ours
         call    out_back                ; (our stdout ours again: the output
         popf                            ;  file's last close, under our INT 24h)
@@ -2837,7 +2837,7 @@ build_exec:
         jnz     .ln
         dec     si
         dec     si
-.mk:    mov     dx, outname             ; the file made here (X51): R:, a
+.mk:    mov     dx, outname             ; the file made here: R:, a
         xor     cx, cx                  ;  protected floppy or a full disk
         mov     ah, 3Ch                 ;  answers its DOS error (83 through
         int     21h                     ;  our INT 24h).  5 (access denied):
@@ -3071,7 +3071,7 @@ make_outname:
         jmp     copyz
 
 do_exec:
-        mov     bx, [ks_ptr]            ; O17: our block cut back to the key
+        mov     bx, [ks_ptr]            ; our block cut back to the key
         add     bx, [ks_len]            ;  script's end (reqbuf's start): the
         add     bx, 15                  ;  link's buffers are the program's
         shr     bx, 4                   ;  (run_back takes them back).  ES = CS
@@ -3094,7 +3094,7 @@ do_exec:
         cld
         ret
 
-; After a RUN's program, our block whole again (O17).  That fails if the
+; After a RUN's program, our block whole again.  That fails if the
 ; program left something resident where the link's buffers were (or, under
 ; MT, another task took that memory): then CLAUDE moves, whole, to a block
 ; of its own (re-allocated elsewhere: the RUN answered, the link and every
@@ -3266,7 +3266,7 @@ ks_ready:
         push    ds                      ; (and out of INT 16h's chain if still
         xor     bx, bx                  ;  its head: behind in a window, MT
         mov     ds, bx                  ;  asks a hook at every turn of a
-        pushf                           ;  program waiting for keys, T5d;
+        pushf                           ;  program waiting for keys;
         cli                             ;  unhook16 sets it so again)
         cmp     word [16h * 4], int16
         jne     .u
@@ -3582,7 +3582,7 @@ kv_rd       db 'rd=16384', 10, 0             ; (IOSIZE - 2 and more: the biggest
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
 evsaver     db 07h                      ; EVENT: the saver comes on (1.14)
-evsize      db EV_SIZE, 24              ; EVENT: the Pi's terminal's rows (1.16, T5e)
+evsize      db EV_SIZE, 24              ; EVENT: the Pi's terminal's rows (1.16)
 evmouse     db 06h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
 s_onint     db ' on INT ', 0
 s_none2     db 'none', 0
@@ -3639,7 +3639,7 @@ t437        db '*', 0C0h, '.', '>', 0FBh, 'x', 0FAh                 ; 80h-86h
         EVEN    prow78.l, prow78.c, prow78.d, line_off, line_off.a, put_str.l
         EVEN    conv_putc, conv_putc.a, conv_putc.b, conv_putc.c, conv_text.n
         EVEN    link_idle.t, link_idle.msg, link_read.ok, lw_go.r       ; (TERMLINK's, ours alone:
-        EVEN    frame_next.cp, lw_inpl.go, tx_swap.l, link_read.in      ;  P7's code there, and
+        EVEN    frame_next.cp, lw_inpl.go, tx_swap.l, link_read.in      ;  the in-place code there, and
         EVEN    link_read.r, rq_back                                    ;  RCON has none)
         EVEN    req_service, req_service.x, exec_request.l
 %endif
@@ -3863,7 +3863,7 @@ find_gpib:
 alloc_bufs:
         mov     bx, (NLINES * LINEB + 15) / 16 + (IOSIZE + 15) / 16
         call    alloc_top               ; (the conversation, the replies: one
-        jc      .x                      ;  block, at the top: O17)
+        jc      .x                      ;  block, at the top)
         mov     [convseg], ax
         add     ax, (NLINES * LINEB + 15) / 16
         mov     [ioseg], ax
@@ -4385,7 +4385,7 @@ r_front:
         pop     ds
 .x:     ret
 
-; Claude's keys for the program (TYPE, M3), from the console's page: CF if
+; Claude's keys for the program (TYPE), from the console's page: CF if
 ; none now (AX kept), else AX = the key (not ZF), taken if AH is a read.  The
 ; console's feeder runs with its page in window 0 and the program's back
 ; after; when the keys are done it sets r_pend, and the console comes.
@@ -4504,7 +4504,7 @@ r_tell: cmp     word [cs:r_mt + 2], 0
         pop     ds
 .x:     ret
 
-; M4: a background look, if the console asked for them (r_bgon 1: the user
+; A background look, if the console asked for them (r_bgon 1: the user
 ; went back to the program with the link up), none was made for R_BGT
 ; ticks, no CLAUDE.COM runs, Claude's keys aren't under way, the call is the front task's and
 ; nothing is in service (as for the pop-up).  The console comes as at a
@@ -4649,7 +4649,7 @@ c_col       resw 1
 c_attr      resb 1
 c_dirty_full resb 1
 c_dirty_col resw 1
-c_nl        resw 1                      ; new lines since the window was drawn (CL-16)
+c_nl        resw 1                      ; new lines since the window was drawn
 view_off    resw 1
 ; prompt
 inlen       resw 1
@@ -4698,9 +4698,9 @@ irq_ptr     resw 2                      ; the GPIB driver's SRQ count (AH=0Eh), 
 srq_seen    resw 1                      ;  as it was at the last look
 txq         resb TXQN * 10
 txlen       resw 1
-tx_at       resw 1                      ; P7: a fragment sent where it lies, from
+tx_at       resw 1                      ; a fragment sent where it lies, from
 tx_seg      resw 1                      ;  its header's place (les: in this order)
-rq_at       resw 1                      ; P7: where an answer's header went in
+rq_at       resw 1                      ; where an answer's header went in
 rq_save     resb 6                      ;  reqbuf (0: none), and what was there
 rxn         resw 1
 pf_kind     resb 1
@@ -4709,7 +4709,7 @@ rq_over     resb 1
 ; fragment); a RUN's buffers under it, from build_exec till do_exec is back
 ; (op_run: all one call of req_service's, and only connected, so the HELLO
 ; long gone).  Nothing may service the link or build a HELLO in between: a
-; RUN's watchdog (X50's) must not poll the link from int16
+; RUN's watchdog must not poll the link from int16
 hellobuf:
 exec_path   resb 80
 outname     resb 80
@@ -4751,7 +4751,7 @@ intask      resb 1                      ; 1: a task's, not task 0's (MT_LIST)
 t_pix       resb 1                      ; 1: this frame had pixels (FDh)
 t_wtick     resw 1                      ; (win_tick: the last look)
 wdesc       resb PB_SIZE2               ; the descriptor (MTAPI.INC's PB_*; 2: PB_VIEW)
-pi_rows     resb 1                      ; the rows the Pi's terminal has (24 from its HELLO; T5e)
+pi_rows     resb 1                      ; the rows the Pi's terminal has (24 from its HELLO)
 %endif
 ; dialogs
 ask_open    resb 1
@@ -4813,7 +4813,7 @@ stack_bottom:                           ; the stack: claude-link's emulator test
                                         ;  BIOS, interrupts and drivers.  test_emu
                                         ;  fails a run that uses over a quarter
 stack_top:
-; The link's buffers last (O17): while a RUN's program runs, our block is
+; The link's buffers last: while a RUN's program runs, our block is
 ; cut back to the key script's end (reqbuf's start), and the program gets
 ; the rest (do_exec, run_back).  Nothing else may go here
 reqbuf      resb REQMAX + 4             ; (each even: frames go in and out with

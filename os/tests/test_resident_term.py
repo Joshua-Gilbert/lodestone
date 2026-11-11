@@ -1,4 +1,4 @@
-"""Resident Claude, M2: CLAUDE /R's console is Term, Claude Code on the Pi in
+"""Resident Claude: CLAUDE /R's console is Term, Claude Code on the Pi in
 the same session as CLAUDE /T, over DOS programs.  The Lodestone kernel in
 pcemu with its built-in GPIB, the 7210 and the AR488 bridge model, and the
 real gridlink with a stand-in Claude Code in a pty (claude-link/tests).
@@ -39,7 +39,7 @@ class Res(CK.KernelHarness):
         if ini: files['A:\\LODE.INI'] = ini
         if more: files.update(more)
         if pico: kw['bridge'] = 'pico-quiet' if pico == 'quiet' else 'pico'   # (the Pico 2 bridge's model:
-                                                                          #  it can ring, GF_WAKE; quiet, M4)
+                                                                          #  it can ring, GF_WAKE; or quiet)
         super().__init__(files=files, term=FAKE, ems_pages=88, **kw)
         if not bridge: del s.m.chip.devices[7]
         s.rsym = G.symbols(os.path.join(CL, 'RCON.MAP'))
@@ -223,7 +223,7 @@ def t_popup():
               enc.stats.get('resumes', 0) == r0 + 1 and n < full // 4, (n, full, enc.stats))
         st = h.link.stats
         hus = hs[1] - hs[0] if len(hs) == 2 else None
-        check('... every frame from the console with the Fletcher sum, its HELLOs too (audit3 R56: %d), and its '
+        check('... every frame from the console with the Fletcher sum, its HELLOs too (%d), and its '
               'screen\'s sum %s us by the emulator\'s blocks (the CRC-16: 15.4 ms)'
               % (st['rx_frames'], hus), st['rx_frames'] > 10 and st['rx_fletcher'] == st['rx_frames']
               and hus is not None and hus < 5000, (dict(st), hs))
@@ -422,7 +422,7 @@ def status_ok(h):
     return h.rv('status_text', 20) == b'Connecting to the Pi'
 
 def t_type():
-    """M3: Claude sees the program the console is up over and types into it
+    """Claude sees the program the console is up over and types into it
     (TESTKEY echoes its keys): the console goes, the keys play, and it comes
     back by itself with the program's screen; CODE-\\ stops the keys."""
     h = Res(); h.boot()
@@ -673,11 +673,11 @@ def peek_waits(script, base):
     return out
 
 def t_type_peek():
-    """audit3 X42 and its panel: a TSR's INT 16h peek from its INT 1Ch (a tick: the PIC's ISR set, so only the
+    """A TSR's INT 16h peek from its INT 1Ch (a tick: the PIC's ISR set, so only the
     stub's feeder runs) while the console's feeder moves a {WAIT} on: the peek sees the wait whole, and the
-    waits and keys play as typed.  rc_feed runs with interrupts off (the peek comes after it).  Before X42 a
+    waits and keys play as typed.  rc_feed runs with interrupts off (the peek comes after it).  Before 2026-10-26 a
     wait's end was stored after ks_wait, in two parts: the peek saw the last wait's end (passed) and the keys
-    after went at once.  Before the panel's fix, as a wait ended: a peek before ks_wait went 0 moved ks_pos on
+    after went at once.  Before a second fix, as a wait ended: a peek before ks_wait went 0 moved ks_pos on
     by 3 twice ('b' lost), one before ks_pos moved on, or between .l and the look at ks_wait, began the wait
     again and left ks_wait 1 for the next, cut short."""
     h = Res(); h.boot()
@@ -711,7 +711,7 @@ def t_type_peek():
 
 
 def t_title_room():
-    """audit3 X41: the band's title at its longest (the Pi's 36, a 12-character program name, 99 requests in
+    """The band's title at its longest (the Pi's 36, a 12-character program name, 99 requests in
     the background, DOS busy: 87 bytes and the NUL) stays in title_text's 69 bytes, status_text after it
     untouched; what the band shows (48 cells) as before."""
     h = Res(); h.boot()
@@ -787,7 +787,7 @@ def t_noscreen():
 
 
 def t_replies():
-    """audit3 R52: the console's own REPLYs (no data, or TYPE's flags) on the wire, byte for byte: the
+    """The console's own REPLYs (no data, or TYPE's flags) on the wire, byte for byte: the
     request's id and the status, from each place that makes one -- a request over REQMAX (F0h), a TYPE over
     KSMAX (F0h), an op it doesn't do (F6h), a file's with DOS busy as it comes (F7h) and as it is to run
     (F7h, req_service: dos_ok gone meanwhile), SCREEN with no screen kept (F5h)."""
@@ -843,7 +843,7 @@ def t_replies():
 
 
 def t_drive():
-    """M3's aim: Claude drives TM5000G, the console popped up over it (its
+    """Claude drives TM5000G, the console popped up over it (its
     module auto-detect through grid_type, the screen of what it found)."""
     if not TR.TM5000G:
         print('(no TM5000G.EXE: skipped)'); return
@@ -983,7 +983,7 @@ def t_driver():
             seg = h.rv('irq_ptr', 4)[2:]
             check('[%s] the console checks the Pi\'s frames by the driver\'s sum (1.23): all %d of them'
                   % (what, st.get('tx_frames', 0)),
-                  ok and h.rv('ksum') == 1 and h.rv('use_fl') == 2 and st.get('tx_frames', 0) > 5   # (use_fl 1 before audit3 R55)
+                  ok and h.rv('ksum') == 1 and h.rv('use_fl') == 2 and st.get('tx_frames', 0) > 5   # (use_fl 1 before 2026-10-28)
                   and abs(kok - st['tx_frames']) <= 1           # (the two counts read a frame apart at most)
                   and h.rv('n_bad', 2) == 0, (ok, h.rv('ksum'), kok, st))
             check('[%s] ... and its own go with the check the driver adds (02h AL=3), every one good at the Pi'
@@ -1109,7 +1109,7 @@ def t_driver():
               'device\'s SRQ edge meanwhile too' % (h.link.stats['rx_frames'] - f2),
               ok and bumped and h.naps == n2 and h.rv('srq_held') == 1 and h.link.stats['rx_frames'] - f2 > 3,
               (ok, bumped, h.naps - n2, h.rv('srq_held')))
-        # the line let go: the first answer's SRQ edge clears srq_held (X49; it was kept till HELLO)
+        # the line let go: the first answer's SRQ edge clears srq_held (before 2026-10-26 it was kept till HELLO)
         del h.m.chip.int_line
         n3 = h.naps
         h.term_type('freed'); h.press(ENTER)
@@ -1122,7 +1122,7 @@ def t_driver():
         h.close()
 
 def bg_looks(h):
-    """M4's background looks, counted from the console's own code (its page in window 0): how many, how many
+    """The background looks, counted from the console's own code (its page in window 0): how many, how many
     found work (bg_pass.w), and how long each held the program, in simulated µs: [(µs, found work)]."""
     st = {'n': 0, 'work': 0, 'held': [], 't0': None, 'wk': False, 'kept': 0}
     a0, aw = (0xE0000 + h.rsym[n] for n in ('bg_pass', 'bg_pass.w'))
@@ -1149,7 +1149,7 @@ def srq_state(h):
     return h.m.rd(0x60, Y['gp_shadow2'], 1)[0] & 0x40, h.m.u16(0x60, Y['gp_nsrq'])
 
 def t_bg():
-    """M4 (CLAUDE 1.10): Claude works in the background while the user is back in the program.  A quiet
+    """CLAUDE 1.10: Claude works in the background while the user is back in the program.  A quiet
     bridge (fw 2026-10-24: the status byte, no SRQ line); the stub calls the console every ~220 ms at the
     program's key calls; it serial-polls the bridge and, when the Pi has rung, runs the link without drawing:
     files and GPIB, and (CLAUDE 1.11) SCREEN; not TYPE.  The program's screen, keys, EMS windows and SRQ latch
@@ -1527,7 +1527,7 @@ def t_ops():
         h.close()
 
 def t_ops_codes():
-    """audit3 R51: OPS.INC's file and GPIB requests from the pop-up, each one's status and reply (DOS's
+    """OPS.INC's file and GPIB requests from the pop-up, each one's status and reply (DOS's
     error codes, the driver's) as claude_kernel's OPS_PROBE has them: the table test_claude_kernel's test_ops_codes
     holds CLAUDE.COM to (the same source in both binaries)."""
     h = Res(); h.boot()
@@ -1587,7 +1587,7 @@ def t_ops_mt():
         h.close()
 
 def t_bg_tm():
-    """M4 over TM5000G, which looks for keys (through DOS) between its bus work: Claude's files and an
+    """The background over TM5000G, which looks for keys (through DOS) between its bus work: Claude's files and an
     instrument query in the background, one while its auto-detect runs.  Its screen, its SRQ flag (set as
     if an instrument had asked), REN and the chip as it left them; auto-detect finds its three."""
     if not TR.TM5000G:
@@ -1637,11 +1637,11 @@ def t_bg_tm():
         h.close()
 
 def t_bg_mt():
-    """M4 with Lodestone's tasks (MULTITASK=1): the background over the front task's EMSUSE; over COPY CON
+    """The background with Lodestone's tasks (MULTITASK=1): the background over the front task's EMSUSE; over COPY CON
     (MT's key wait) files are F7h there as in the pop-up, GPIB works."""
     mt = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
     h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more={'A:\\BIG.TXT': BIG, 'A:\\LODEMT.SYS': mt})
-    h.boot()                                    # (ticks on time, irq_exact: the read then lasts 40 ticks, T5c)
+    h.boot()                                    # (ticks on time, irq_exact: the read then lasts 40 ticks)
     try:
         h.cmd('claude /r')
         h.cmd('emsuse')
@@ -1734,7 +1734,7 @@ def t_bg_screen():
         check('... grid_type still needs the console: refused, grid_program among the tools that work',
               r and r[1] and 'in the background' in r[0][0]['text'] and 'grid_program' in r[0][0]['text'], r)
         # a reply's first bytes still out on the kept screen (a SCREEN's reply cut short by a link failure; here
-        # on its row 3): op_bgscreen puts them back on that copy before it keeps the screen again (R50), so
+        # on its row 3): op_bgscreen puts them back on that copy before it keeps the screen again, so
         # they are not in this SCREEN's bytes
         h.rw('borrowed', b'\xEE' * 12); h.rw('borrow_at', struct.pack('<H', 0x10 + 3 * 160 + 20))
         h.rw('borrow_on', b'\1')
@@ -1767,7 +1767,7 @@ def t_bg_screen():
 
 
 def t_bg_ksum():
-    """audit3 R55's panel: use_fl is set at the Pi's HELLO (2: the driver keeps the check), but the link goes
+    """use_fl is set at the Pi's HELLO (2: the driver keeps the check), but the link goes
     on without one in the background.  A driver found there without the frame check (older than 1.23; here
     the kernel's, made to say 1.22) gets no 02h AL=3 or 03h AL=2: use_fl 1, the sum by software, and the
     request answered; the next pop-up's HELLO with 1.23 again: use_fl 2."""

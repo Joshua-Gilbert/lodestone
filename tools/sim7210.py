@@ -2,7 +2,7 @@
 # Models: ISR1 latches (cleared on read), DIR register, RFD holdoff (AUXRA bit0),
 # handshake completion on DIR read / rhdf, serial-poll status re-sent every
 # handshake, TCS waiting for a handshake (and TCA ignored while TCS pending),
-# stale bytes left in DIR.  Devices = Joshua's bus: FG5010@6, HP8753D@14, DC5009@29.
+# stale bytes left in DIR.  Devices = the author's bus: FG5010@6, HP8753D@14, DC5009@29.
 import os, sys, struct
 from unicorn import *
 from unicorn.x86_const import *

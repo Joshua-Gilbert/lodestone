@@ -20,7 +20,7 @@
 ;  of the 1520's age have no LBA), up to 127 sectors a command, polled
 ;  (REP INSW/OUTSW), each command tried twice, then INT 24h as for the
 ;  floppies.  A wait that IRQ 14 ends calls INT 15h AX=9000h after about
-;  2 ms (hd_waiy): with multitasking, other tasks run meanwhile (M12).  The FAT: HD_NWIN sectors of it at a time (the window), written
+;  2 ms (hd_waiy): with multitasking, other tasks run meanwhile.  The FAT: HD_NWIN sectors of it at a time (the window), written
 ;  to every copy when the kernel flushes its FAT (close, delete, ...) or
 ;  when a slot is needed.  The free clusters are counted once (INT 21h
 ;  36h) and kept up to date after that.
@@ -164,7 +164,7 @@ hd_cmd: pusha
 .s:     mov     ah, 09h                 ; DRQ, or ERR: each sector's comes
         cmp     cx, di                  ;  with IRQ 14 but a write's first
         jne     .y                      ;  (hd_waiy's 9000h only where one
-        cmp     byte [io_op], 3         ;  comes to end the wait, M12)
+        cmp     byte [io_op], 3         ;  comes to end the wait)
         jne     .y
         call    hd_wait
         jmp     short .g
@@ -224,7 +224,7 @@ hd_cmd: pusha
 ; until the drive isn't busy and shows one of the status bits AH (0: just
 ; not busy), 5 s at most.  -> AL = status.  CF: no (AL = 80h).  hd_waiy:
 ; the same, but still waiting after HD_SPIN looks (about 2 ms on the
-; 1520), INT 15h AX=9000h once, the AT BIOS's "fixed disk busy" (M12: MT
+; 1520), INT 15h AX=9000h once, the AT BIOS's "fixed disk busy" (MT
 ; gives the wait to other tasks till IRQ 14; the 1520's BIOS returns at
 ; once), then on as before.  Only for waits IRQ 14 ends.  Every register
 ; kept round it (the BIOS's zeroes AH), its CF not looked at

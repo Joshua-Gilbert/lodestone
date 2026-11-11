@@ -32,7 +32,7 @@ org 100h
 
 LBUF    equ 128
 PATHMAX equ 128                     ; the kernel's longest path, its NUL in
-FB_DTA  equ 0                       ; FOR's block (L4): its DTA, its set
+FB_DTA  equ 0                       ; FOR's block: its DTA, its set
 FB_BUF  equ 44                      ;  and command (each ending in 0),
 FB_ZERO equ FB_BUF + LBUF + 2       ;  and a 0 (the name a plain item adds)
 FB_PARAS equ (FB_ZERO + 1 + 15) / 16
@@ -1663,7 +1663,7 @@ do_for: cmp     byte [for_on], 0
         mov     bx, FB_PARAS            ; the set, the command and the DTA
         mov     ah, 48h                 ;  in a block of their own, out of
         int     21h                     ;  the way of the lines it runs and
-        jnc     .m                      ;  only while it runs (L4)
+        jnc     .m                      ;  only while it runs
         jmp     err_nomem
 .m:     mov     [for_seg], ax
         mov     es, ax
@@ -2693,7 +2693,7 @@ do_dir: xor     ax, ax
         cmp     al, '/'
         jne     .nm
         lodsb
-        or      al, al                  ; ("DIR /": the end, X14)
+        or      al, al                  ; ("DIR /": the end)
         jz      .ad
         call    upcase
         cmp     al, 'W'
@@ -2710,7 +2710,7 @@ do_dir: xor     ax, ax
 .ad:    mov     si, path1
         mov     di, pat
         call    make_pattern
-        jc      .nf                     ; (too long for pat: X26)
+        jc      .nf                     ; (too long for pat)
         mov     dl, [pat_drv]           ; no such drive: DOS's word, no
         call    drv_chk                 ;  header
         jc      vol_bad
@@ -4602,7 +4602,7 @@ do_cd:  call    getarg1
 .set:   mov     si, path1               ; a \ last (Tab puts one after a
         call    strend                  ;  directory's name) cut, not the
         dec     di                      ;  root's (\, X:\): DOS says 3 for
-        cmp     di, si                  ;  SUB\, as MS-DOS (X20)
+        cmp     di, si                  ;  SUB\, as MS-DOS
         jbe     .go
         cmp     byte [di], '\'
         jne     .go
@@ -4973,7 +4973,7 @@ do_wait:
         push    ax                      ;  to the prompt (Lodestone's 0Bh
         call    mt_mine                 ;  doesn't look for ^C).  Other keys
         cmp     al, ah                  ;  stay for the prompt.  In front the
-        pop     ax                      ;  BIOS's ring is ours; behind (X34,
+        pop     ax                      ;  BIOS's ring is ours; behind (
         je      .fw                     ;  asked at every pass: the front can
         cmp     al, 3                   ;  change) it is the front task's, and
         je      .tk                     ;  ours is MT's: the key at its head
@@ -5655,7 +5655,7 @@ getarg_sw:
         cmp     byte [si], '/'
         jne     .a
         inc     si
-        cmp     byte [si], 0            ; ("COPY X /": the end, X14)
+        cmp     byte [si], 0            ; ("COPY X /": the end)
         je      .a
         inc     si
         jmp     getarg_sw
@@ -6032,7 +6032,7 @@ for_var     resb 1
 for_cmdp    resw 1
 for_item    resw 1
 for_next    resw 1
-for_seg     resw 1                  ; FOR's block (L4): FB_DTA, FB_BUF, FB_ZERO
+for_seg     resw 1                  ; FOR's block: FB_DTA, FB_BUF, FB_ZERO
 bat_name    resb 14                 ; for errors (SHIFT moves %0)
 bat_args    resb LBUF + 2
 line        resb LBUF + 2

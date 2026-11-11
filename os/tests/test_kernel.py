@@ -25,7 +25,7 @@ def build():
                  (HERE, 'RUNCALC'), (os.path.join(GOS, 'src'), 'LCMD'), (os.path.join(GOS, 'src'), 'CALC')):
         subprocess.run(['nasm', '-f', 'bin', '-i', d + '/', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
 
-SCR = os.path.join(GOS, 'drivers', 'SCREEN.PRN')    # Shift-PrtSc's file writer (KC-2), read from the boot disk's root
+SCR = os.path.join(GOS, 'drivers', 'SCREEN.PRN')    # Shift-PrtSc's file writer, read from the boot disk's root
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [os.path.join(GOS, 'src', 'LODE.SYS')] + list(files))
 
@@ -381,7 +381,7 @@ def t_capture():
     check('disk full: a long beep, no SCREEN01.BMP, disk consistent, no write after the one that failed, closed once '
           '(and SCREEN.PRN, read)', beeps() == 4 and sorted(files()) == before and not probs
           and sum(1 for a in calls21 if a >> 8 == 0x40) == 1 and closes() == 2, (beeps(), sorted(files()), probs, [hex(a) for a in calls21]))
-    # KC-2: no SCREEN.PRN on the disk started from: no file, the long beep; nothing of it in the kernel
+    # no SCREEN.PRN on the disk started from: no file, the long beep; nothing of it in the kernel
     k = ktest.KPC(image('capnone.img', os.path.join(GOS, 'src', 'LCMD.COM'))); k.start()
     shot()
     check('no SCREEN.PRN on the boot disk: Shift-PrtSc gives the long beep, no file, PrtSc free again (cap_req 0)',
@@ -725,7 +725,7 @@ def t_emsboard():
     pc.w('ax', 0xE442); pc.w('dx', 0xFF); pc.int15()
     check('no EMS board: INT 15h E442h unanswered', pc.r('flags') & 1, hex(pc.r('ax')))
 
-EMS_BUDGET = 1984       # bytes the EMS manager may keep (with 88 pages): 124 paragraphs (S14's word-wise 57h: +16)
+EMS_BUDGET = 1984       # bytes the EMS manager may keep (with 88 pages): 124 paragraphs (the word-wise 57h: +16)
                         # (1808 before the disk cache moved into EMS: 159 bytes for that)
 TC_PARAS = 36 * 32      # the disk cache's memory, paragraphs (KDISK.INC)
 def ems_npg(k): return k.rd('ems42', 1, 1)[0]     # (patched into 42h's MOV AL)
@@ -1016,7 +1016,7 @@ def ems_rec(k, i):
     return b[0], b[1], b[2] | b[3] << 8
 
 def t_mdreview():
-    """The review's cases (0.3.14), each of which failed before its fix: a
+    """Regression cases (0.3.14), each of which failed before its fix: a
     closed file's slot on M: isn't an open file; EXEC with a drive the
     kernel doesn't have ("F:X.EXE") overran ex_name; M:'s EMS handle
     closed by a program by mistake and given to another: M: neither writes
@@ -1167,7 +1167,7 @@ def t_gridgpib():
 def t_gpcheck0():
     """02h AL=3 (the frame check appended) with no bytes: the check of nothing, 01 00, whatever ES:SI points at; and
     of two bytes, the second's from 1, 0.  (The start for the first byte's add, set at the write's entry since
-    audit3 X30, came from the byte at ES:SI even when there were none.)"""
+    2026-10-26, came from the byte at ES:SI even when there were none.)"""
     com = os.path.join(OUT, 'GPCHK0.COM')
     open(com, 'wb').write(bytes([0xBE, 0x1A, 0x01,          # mov si, ab
                                  0x31, 0xC9, 0xBB, 0x06, 0x00, 0xB8, 0x03, 0x02, 0xCD, 0x60,   # CX = 0 to 6, AL = 3
@@ -1208,7 +1208,7 @@ def t_gpirq():
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (they would be what ex_rel held from
-    before: the INT 21h stack's low area since K2); the whole one runs."""
+    before: the INT 21h stack's low area since 2026-11-03); the whole one runs."""
     import struct
     code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
     def exe(nrel, rels=b''):
@@ -1256,12 +1256,12 @@ def t_trunc():
     check('... disk consistent', not probs, probs)
 
 def t_dollar():
-    """S4 (2026-10-20 audit): INT 21h 09h's '$' string goes to handle 1 in
+    """INT 21h 09h's '$' string goes to handle 1 in
     one write, a file's or a device's, not one call a character: redirected
     to a file, the bytes as written and one file_write for the 1,502-byte
     string; an empty string ('$' alone) writes nothing (a write of 0 would
     cut the file there); on the screen, as before."""
-    print('== INT 21h 09h in one write (S4)')
+    print('== INT 21h 09h in one write')
     p = os.path.join(OUT, 'DOLLAR.ASM')
     open(p, 'w').write("""org 100h
         mov ah, 40h
@@ -1301,7 +1301,7 @@ lng     times 1500 db 'x'
           ('AB' + 'x' * 1500 + 'CD') in o.replace('\n', ''), o[:200])
 
 def t_kmedium():
-    """The 2026-10-20 audit's medium-risk kernel batch, where it shows: a
+    """The 2026-10-20 medium-risk kernel batch, where it shows: a
     file over 64 KB through the SFT's copies of its entry (time, date,
     cluster and size in the entry's order); FIND FIRST/NEXT's attributes
     (one scanner for them and the path lookups); standard input from a
@@ -1515,7 +1515,7 @@ pat     db '*.*', 0
 
 def t_renfull():
     """RENAME in a subdirectory full to its last entry: dir_slot gives the directory a cluster more, in the FAT kept
-    in memory.  That cluster is linked on the disk before the old entry is deleted there (audit3 X31); the FAT was
+    in memory.  That cluster is linked on the disk before the old entry is deleted there; the FAT was
     written last, so power lost between the two left the file with no entry at all, its clusters lost."""
     one = os.path.join(OUT, 'ONE.TXT')
     open(one, 'wb').write(b'x\r\n')
@@ -1645,7 +1645,7 @@ def run_long(k, cmd, sim_s=30):
     return k.settle(sim_s)
 
 def t_nul():
-    """A device's name after a directory (X18, "IF EXIST DIR\\NUL"): OPEN, CREATE and CREATE NEW find the
+    """A device's name after a directory ("IF EXIST DIR\\NUL"): OPEN, CREATE and CREATE NEW find the
     device only where the directory is there, [X:]\\DEV\\ in front is the devices' own, and a wildcard or a
     bad name after the directory is 2, as GRiD MS-DOS 3.30 answers; NUL, A:NUL and Q:NUL need no disk."""
     com = ms_build('NULDIR')
@@ -2041,7 +2041,7 @@ def t_copycat():
           'was and not counted, nothing said; "2 File(s) copied"', f.get('A:\\X1.TXT') == b'x1r1\x1a'
           and f.get('A:\\X2.TXT') == b'x2r2\x1a' and f.get('A:\\X3.TXT') == b'x3' and '2 File(s) copied' in o
           and 'onto itself' not in o and not fatcheck.check(raw())[0], (o, f.get('A:\\X3.TXT')))
-    # the review of 0444069's cases
+    # COPY's destination from the first source found (2026-11-08): regression cases
     def lcmd21(k, fn):
         # fn(AH, pc) at each INT 21h LCMD makes (its segment: the kernel's current PSP, at the prompt)
         seg = k.u16('cur_psp')
@@ -2136,7 +2136,7 @@ def t_copycat():
     check('Ctrl-C with CON in the list: the user\'s (K.TXT) exactly as it was; one to be made (MADE.DAT) not made; a '
           'copy still works after', f.get('A:\\K.TXT') == K0 and 'A:\\MADE.DAT' not in f and f.get('A:\\M2.TXT') == b'm'
           and not fatcheck.check(bytes(k.pc.drives[0].img))[0], (f.get('A:\\K.TXT'), sorted(f)))
-    # the review of d6ef9cd's cases.  The destination made only when the first data go out (MS-DOS's): Ctrl-C
+    # more regression cases (2026-11-08).  The destination made only when the first data go out (MS-DOS's): Ctrl-C
     # while CON is typed into leaves one there of that name as it was
     k, sh, F = fresh('catr8.img', 'NOTES.TXT=' + mkf('rn8', b'USER-NOTES'), 'OUT.DAT=' + mkf('ro8', b'USER-OUT'),
                      'A.TXT=' + mkf('ra8', b'aaa'), 'K.TXT=' + mkf('rk8', b'keep\x1a'))
@@ -4345,7 +4345,7 @@ DEVNAME_EMS = {'A.B\\EMMXXXX0': ('ok', 'ok', '6/0'), 'EMMXXXX0': ('ok', 'ok', '6
 
 
 def t_nomatch():
-    """FIND FIRST that finds nothing is 18, "no more files", as in GRiD MS-DOS 3.30 (X22; it was 2): a name
+    """FIND FIRST that finds nothing is 18, "no more files", as in GRiD MS-DOS 3.30 (it was 2): a name
     that isn't there, a pattern that matches nothing, an empty directory, a hidden file without the bit; a
     directory that isn't there is still 3.  (LCMD looks at CF only; the Executive's two that took 2 as "not
     there" are test_apps's: Copy and Move to a new name, a Copy to a subject that isn't there.)"""
@@ -4369,7 +4369,7 @@ def t_nomatch():
           o.count('File not found') == 3 and 'yes' not in o.replace('echo yes', ''), o)
 
 def t_slashend():
-    """A "/" at the very end of a line (X14): COPY, DEL, DIR and CHOICE stop there, and don't read on into what an
+    """A "/" at the very end of a line: COPY, DEL, DIR and CHOICE stop there, and don't read on into what an
     earlier, longer line left in the buffer (COPY X.TXT / made a file named from it; DIR / listed it)."""
     open(os.path.join(OUT, 'NM_x.TXT'), 'wb').write(b'x\r\n')
     img = image('slash.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'X.TXT=' + os.path.join(OUT, 'NM_x.TXT'))
@@ -4409,7 +4409,7 @@ def t_slashend():
           and 'B' * 79 not in e and 'C' * 78 + '=Y' in e.upper().replace('\n', ''), (o, e))
 
 def t_dirlong():
-    """DIR of a path whose pattern is longer than pat takes (X26): "File not found", and the shell goes on.  Its
+    """DIR of a path whose pattern is longer than pat takes: "File not found", and the shell goes on.  Its
     directory part ran past pat into pat_dir, and canon then copied over LCMD's own code: the machine hung.  The
     pattern (the path with its \\*.* or .*) may be 79 characters: a real 79-character path, the longest MS-DOS
     has, is listed.  DIR and COPY on a drive that isn't there start from "X:\\" each time.  DIR from a deep
@@ -4455,7 +4455,7 @@ def t_dirlong():
 
 
 def t_attr():
-    """CREATE, CREATE NEW and CREATE TEMPORARY give a file the archive bit, new or made anew (X19), as GRiD MS-DOS
+    """CREATE, CREATE NEW and CREATE TEMPORARY give a file the archive bit, new or made anew, as GRiD MS-DOS
     3.30 does; CREATE and CREATE NEW refuse CX with 10h, 40h or 80h (5, before the path is looked at, for a
     device too) and leave CX's high byte alone; a file written gets the archive bit, one only opened doesn't."""
     com = ms_build('ATTR')
@@ -4490,12 +4490,12 @@ def t_attr():
           and fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\W.TXT') == before, (o, before))
 
 def t_errs():
-    """X17 and X20: the path calls (OPEN, CREATE, CREATE NEW, DELETE, GET ATTRIBUTES, FIND FIRST, MKDIR, RMDIR, CHDIR,
+    """The path calls (OPEN, CREATE, CREATE NEW, DELETE, GET ATTRIBUTES, FIND FIRST, MKDIR, RMDIR, CHDIR,
     RENAME) answer as GRiD MS-DOS 3.30 does for a missing directory with a bad last name (2 for open and create),
     a \\ last (3), two \\s (one), a wildcard where one name is wanted (3), an invalid drive (3), ".." in the root
     (3), a device's name with a second dot (no device), RENAME of a device's name (5), RMDIR of the current
     directory or of a wildcard (16) and of a file or a name not there (5).  ERRS_MS.TXT holds MS-DOS's answers;
-    what is left as it is (X20's row) is not in ERRS.ASM."""
+    what is left as it is is not in ERRS.ASM."""
     com = ms_build('ERRS')
     open(os.path.join(OUT, 'ER_a.TXT'), 'wb').write(b'a\r\n')
     a = os.path.join(OUT, 'ER_a.TXT')
@@ -4893,7 +4893,7 @@ def t_cmdedit():
     check('EXIT: the Executive', k.pc.mode() == 0x40, k.where())
 
 def t_cmdshare():
-    """The 2026-10-20 audit's LCMD batch: messages byte for byte with their
+    """The 2026-10-20 LCMD batch: messages byte for byte with their
     new line from err, INT 24h's message for each code (counted out of one
     run of strings), buffers that share space, the built-ins as one table,
     .COM before .EXE before .BAT, PROMPT $D $T; DIR after a path that named
@@ -5037,7 +5037,7 @@ def t_cmdshare():
           and all(f.get('A:\\PP\\A%d.T' % i) == f0.get('A:\\PP\\A%d.T' % i) for i in (1, 2))
           and not [n for n in f if n.startswith('A:\\PP\\') and n.endswith('.O')],
           (o, {n: f.get(n) for n in f if n.startswith('A:\\PP')}))
-    # X29: a name found by a pattern in a 68- or 69-character directory runs past src's 79 characters;
+    # a name found by a pattern in a 68- or 69-character directory runs past src's 79 characters;
     # COPY hung.  Now such a name is skipped and the rest copied (LONGNAME.TXT, 80, before LONGNAME.TX, 79)
     # (directories deeper than CD goes: made, and written in, by their paths)
     x29 = ''.join('\\' + c * 8 for c in 'ABCDEFG') + '\\HH'
@@ -5068,7 +5068,7 @@ def t_cmdshare():
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
     check('back in the Executive, disk consistent', k.pc.mode() == 0x40 and not probs, probs)
-    # X43: a COMSPEC of 80 characters lost its NUL in prog2, and MT_SPAWN got it and the tail as its path
+    # a COMSPEC of 80 characters lost its NUL in prog2, and MT_SPAWN got it and the tail as its path
     k = ktest.KPC(ini_image('sharemt.img', b'MULTITASK=1\r\n', os.path.join(GOS, 'src', 'LCMD.COM'),
                             'LODEMT.SYS=' + os.path.join(GOS, 'src', 'LODEMT.SYS'), bat('TB.BAT', '@echo off', 'echo ran > tb.txt')),
                   ems_pages=88)
@@ -5191,7 +5191,7 @@ def t_calc():
                     ('+5', '5'), ('0^0.5', '0'), ('abcdefghijklmno=7', '7')):
         o = sh.run('calc ' + e)
         check('CALC %s = %s' % (e, want), one(o) == want, o)
-    # degrees: reduced by 45 before radians, so the zeros are exact, on either chip (the persona review)
+    # degrees: reduced by 45 before radians, so the zeros are exact, on either chip
     DEG = (('/d cos(90)', '0'), ('/d sin(180)', '0'), ('/d tan(180)', '0'), ('/d sin(-360)', '0'), ('/d cos(-270)', '0'),
            ('/d tan(45)', '1'), ('/d sin(-270)', '1'), ('/d cos(360)', '1'), ('/d cos(60)', '0.5'), ('/d sin(150)', '0.5'),
            ('/d tan(-45)', '-1'), ('/d sin(45)^2', '0.5'))
@@ -5251,7 +5251,7 @@ def t_calc():
     check('a batch file counts with CALC i=i+1', res(o) == ['1', '2', '3', 'counted 3'], o)
     o = sh.run('pct')
     check('in a batch file %% is %', one(o) == '1', o)
-    # LCMD's environment nearly full (the review's cases)
+    # LCMD's environment nearly full
     def env():
         psp = k.pc.u16(0x60, k.Y['cur_psp'])
         b = k.pc.rd(k.pc.u16(psp, 0x2C), 0, 1024)
@@ -5329,7 +5329,7 @@ def t_calc():
         check('no coprocessor: CALC %s: "%s"' % (e, msg), 'CALC: ' + msg in o, o)
     o = sh.run('calc')
     check('no coprocessor: CALC alone says so', 'Coprocessor: none: whole numbers only' in o, o)
-    # a full disk: the answer can't be written, so ERRORLEVEL 1 and why, not an empty file and 0 (the persona review)
+    # a full disk: the answer can't be written, so ERRORLEVEL 1 and why, not an empty file and 0
     fimg = image('calcfull.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(GOS, 'src', 'CALC.COM'))
     d = subprocess.run(['mdir', '-i', fimg, '::'], capture_output=True, text=True, check=True).stdout
     free = int(re.sub(r'\D', '', re.search(r'([\d ]+) bytes free', d).group(1)))
@@ -5424,7 +5424,7 @@ def t_execabort():
     k.key('cls'); k.key(ktest.ENTER)
     k.key('big'); k.key(ktest.ENTER)
     check('... then it reads: BIG.COM runs', 'HELLO' in pc.text_screen(), pc.text_screen())
-    # K2: EXEC's buffers (ex_name, ex_rel, the header) are in the INT 21h stack's low area, where a screen capture
+    # EXEC's buffers (ex_name, ex_rel, the header) are in the INT 21h stack's low area, where a screen capture
     # puts its buffer: Shift-PrtSc at the prompt of an error inside EXEC, answered Retry.  The capture waits for
     # the next outermost DOS call (the handler's own calls are nested), after EXEC: both whole
     d.bad = {sec[1]}
@@ -5437,7 +5437,7 @@ def t_execabort():
     pc.keys.append(ord('r')); k.settle(3)
     o = pc.text_screen()
     shots = [n for n in fatcheck.read_files(d.img) if 'SCREEN0' in n]
-    check('Shift-PrtSc at the prompt of an error inside EXEC (K2: the low area), answered Retry: BIG.COM loads and runs '
+    check('Shift-PrtSc at the prompt of an error inside EXEC (the low area), answered Retry: BIG.COM loads and runs '
           'whole, and the screen is saved after (SCREEN01.TXT)', 'Fail?' in o1 and 'HELLO' in o and shots == ['A:\\SCREEN01.TXT']
           and not k.crashed, (o[-300:], shots))
     k.key('exit'); k.key(ktest.ENTER)

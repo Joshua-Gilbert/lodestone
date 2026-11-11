@@ -199,7 +199,7 @@ def t_mt():
           'other tasks are running' in o and bytes(k.pc.drives[1].img) == raw, o)
 
 def t_review():
-    # the review panel's findings, each held to
+    # regression cases, each held to
     import fat16img as F
     BOOT = open(os.path.join(SRC, 'BOOT.BIN'), 'rb').read()
     f = F.Fat(2880, 1, 0, False, rootents=224, spt=18, heads=2)

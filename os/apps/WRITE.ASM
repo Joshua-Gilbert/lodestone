@@ -32,7 +32,7 @@
 ;  CODE-Z cuts and CODE-C copies a drag's selection to the clipboard every
 ;  .RUN shares (UI_CLIP); CODE-V pastes it (over a drag's selection).
 ;
-;  With MULTITASK=1 it is a window .RUN (M8b): a window that moves,
+;  With MULTITASK=1 it is a window .RUN: a window that moves,
 ;  closes and is resized, with the text, its rule and the status line
 ;  inside, beside other windows and other Writes.  CODE-T is then the
 ;  Tasks window's, so Transfer is CODE-X.  With the switch off it has the
@@ -62,7 +62,7 @@ M_FOUND equ 3                           ; showing what Find found
 start:  mov     di, fname               ; the argument: the file to open
         call    UI_SBSTR
         mov     byte [di], 0
-        mov     ax, 0F01Dh              ; a window .RUN's session? (MT_WIN, M8b:
+        mov     ax, 0F01Dh              ; a window .RUN's session? (MT_WIN:
         stc                             ;  it fails with the switch off, and
         int     21h                     ;  with a LODEMT.SYS from before it)
         jc      .full
@@ -1449,7 +1449,7 @@ k_scopy:
 
 ; Paste: what it holds at the cursor, over a drag's selection; no room
 ; for it: said, nothing changes.  Read into the gap first, then the
-; selection erased (X46): a read that fails (an EMS or disk error) is
+; selection erased: a read that fails (an EMS or disk error) is
 ; said, the text as it was.  Only when it needs the selection's room too
 ; does the selection go first (then a failed read has lost it)
 k_paste:

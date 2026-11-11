@@ -1,4 +1,4 @@
-; MTFAST.COM - for test_mt.py: a program that runs the timer fast (M9b).
+; MTFAST.COM - for test_mt.py: a program that runs the timer fast.
 ;   MTFAST T FILE [K][C]
 ; Runs counter 0 four times as fast (mode 3, 4000h) and hooks INT 08h
 ; (AH=35h/25h) with a handler that counts its calls and goes on to the

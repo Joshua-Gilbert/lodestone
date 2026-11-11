@@ -3,7 +3,7 @@
 # map), the start-up picture LODE.PIC, LCMD.COM (the shell), FORMAT.COM, CHKDSK.COM, FDISK.COM, SYS.COM, LABEL.COM, DISKCOPY.COM, DISKCOMP.COM, ATTRIB.COM, XCOPY.COM, TREE.COM, FIND.COM, MORE.COM, SORT.COM, COMP.COM, DEFRAG.COM, HEADCLN.COM, CALC.COM, the .RUN programs
 # (apps/, with mkrun.py), the font files (fonts/), the printer drivers (drivers/), the test programs and BENCH.  Then:
 # python3 tests/test_kernel.py, tests/test_apps.py, and bench/run_bench.py ROM-image.  (On Windows: under
-# WSL.  The BUILD.BAT files were retired by the 2026-10-26 audit's H13: they had fallen behind and made
+# WSL.  The BUILD.BAT files were retired on 2026-10-30: they had fallen behind and made
 # no ROM images)
 set -e
 cd "$(dirname "$0")/src"
@@ -31,7 +31,7 @@ nasm -f bin -o GRIDFONT.FNT GRIDFONT.ASM  # GRiD's TC8X16 (the built-in font, sr
 nasm -f bin -o TERM.FNT TERM.ASM          # the terminal window's (TERM437.INC: ../tools/mkfnt437.py)
 cd ../drivers
 nasm -f bin -o PS.PRN PS.ASM            # printer drivers, read at PrtSc
-nasm -f bin -o SCREEN.PRN SCREEN.ASM    # Shift-PrtSc's file writer (KC-2)
+nasm -f bin -o SCREEN.PRN SCREEN.ASM    # Shift-PrtSc's file writer
 cd ..
 for a in SYSTEM WRITE CALC TASKS TERM PAINT; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; done
 python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN

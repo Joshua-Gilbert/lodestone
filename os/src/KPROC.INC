@@ -29,7 +29,7 @@ ex_tail     resw 2              ;  moves it in one go: keep the order)
 ex_fcb1     resw 2
 ex_fcb2     resw 2
 section .text
-; in the INT 21h stack's low area (KCORE.INC, K2): EXEC runs no RENAME,
+; in the INT 21h stack's low area (KCORE.INC): EXEC runs no RENAME,
 ; so its header can be in rename's ren_de
 ex_name     equ KL_EXN          ; full program name for the environment (132)
 ex_hdr      equ ren_de          ; .EXE header (28 of its 32 bytes)

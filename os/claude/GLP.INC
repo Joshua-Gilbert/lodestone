@@ -30,7 +30,7 @@ HF_FCS    equ 04h                ; the Pi's HELLO: frames carry the Fletcher sum
                                  ;  (every gridlink that reads our HELLO says it: not looked at)
 GF_TERM   equ 01h                ; our HELLO: we can be a terminal (Term)
 GF_FCS    equ 04h                ; our HELLO: we check frames with the Fletcher sum (every
-                                 ;  frame since audit3 R56, the HELLO too: no CRC-16)
+                                 ;  frame since 2026-10-29, the HELLO too: no CRC-16)
 GF_WAKE   equ 08h                ; our HELLO: an SRQ while we are idle makes us POLL at once
 GF_QUAD   equ 10h                ; our HELLO: we draw the block elements A1h-AEh (CLAUDE 1.8; RCON 1.12)
 GF_BG     equ 20h                ; our HELLO: resident Claude's console works in the background
@@ -38,8 +38,8 @@ GF_BG     equ 20h                ; our HELLO: resident Claude's console works in
 HF_BG     equ 08h                ; the Pi's HELLO: it does (its bridge can be quiet: no SRQ line)
 HF_SAVER  equ 10h                ; the Pi's HELLO: EVENT 07h (the GRiD's screen saver) understood:
                                  ;  its tools stay on meanwhile, and it rings (CLAUDE 1.14)
-HF_SIZE   equ 20h                ; the Pi's HELLO: EVENT 08h (the terminal's rows, 4-24) understood (T5e)
-EV_SIZE   equ 08h                ; EVENT: the rows of the Pi's terminal (a window's, T5e)
+HF_SIZE   equ 20h                ; the Pi's HELLO: EVENT 08h (the terminal's rows, 4-24) understood
+EV_SIZE   equ 08h                ; EVENT: the rows of the Pi's terminal (a window's)
 OP_SCREEN equ 11h                ; REQUEST ops the console answers (CLAUDE.COM's
 OP_TYPE   equ 12h                ;  optab has its own); TYPE is the console's only
 
