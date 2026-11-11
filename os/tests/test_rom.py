@@ -192,7 +192,7 @@ def t_rom2():
     paint = open(os.path.join(GOS, 'apps', 'PAINT.RUN'), 'rb').read()
     ccom = open(os.path.join(GOS, 'claude', 'CLAUDE.COM'), 'rb').read()
     gfnt = open(os.path.join(GOS, 'fonts', 'GRIDFONT.FNT'), 'rb').read()
-    tfnt = open(os.path.join(GOS, 'fonts', 'TERMINUS.FNT'), 'rb').read()
+    tfnt = open(os.path.join(GOS, 'fonts', 'TERMBOLD.FNT'), 'rb').read()
     r1 = rom()
     check('ROM 1\'s FAT: its clusters, then R:\'s 254-340 bad (the gap) and the low half of 341, split over R:\'s two FAT '
           'sectors, too', all(fat_get(r1[512:1024] + b'\xFF', n) == 0xFF7 for n in range(254, 342)) and fat_get(r1[512:1024], 253) == 0xFF7
@@ -466,20 +466,20 @@ def t_rom2_paint():
 
 def t_rom2_fonts():
     """The other fonts from ROM 2: started from the ROM, FONT= in C:\\LODE.INI
-    loads GRIDFONT.FNT or TERMINUS.FNT from R:, and Display lists and cycles
+    loads GRIDFONT.FNT or TERMBOLD.FNT from R:, and Display lists and cycles
     them (not TERM.FNT); with ROM 1 alone the line is passed over: Lodefont."""
     print('== the fonts on ROM 2')
     grid = open(os.path.join(GOS, 'fonts', 'GRIDFONT.FNT'), 'rb').read()
-    term = open(os.path.join(GOS, 'fonts', 'TERMINUS.FNT'), 'rb').read()
+    term = open(os.path.join(GOS, 'fonts', 'TERMBOLD.FNT'), 'rb').read()
     name = lambda f: {grid: 'GRIDFONT', term: 'TERMINUS', A.LODEF: 'Lodefont'}.get(f, '?')
     for tag, rs in (('ROM 1 and ROM 2', {0: rom2(), 1: rom()}), ('ROM 1 alone', {1: rom()})):
         two = len(rs) == 2
         got = []
-        for ini in (b'FONT=GRIDFONT.FNT\r\n', b'FONT=TERMINUS.FNT\r\n', b'FONT=TERM.FNT\r\n'):
+        for ini in (b'FONT=GRIDFONT.FNT\r\n', b'FONT=TERMBOLD.FNT\r\n', b'FONT=TERM.FNT\r\n'):
             k = boot(ata=sysinfo_hd(('LODE.INI', ini)), roms=rs)
             got.append(name(A.core_font(k)) if not k.crashed else 'crashed')
         want = ['GRIDFONT', 'TERMINUS', 'Lodefont'] if two else ['Lodefont'] * 3
-        check('%s: FONT=GRIDFONT.FNT, TERMINUS.FNT, TERM.FNT (4 KB) in C:\\LODE.INI: %s' % (tag, ', '.join(want)), got == want, got)
+        check('%s: FONT=GRIDFONT.FNT, TERMBOLD.FNT, TERM.FNT (4 KB) in C:\\LODE.INI: %s' % (tag, ', '.join(want)), got == want, got)
         k = boot(ata=sysinfo_hd(), roms=rs)
         A.to_display(k)
         m = re.findall(r'Lodefont \(built in\).*$', A.screen(k), re.M)       # (the Font line's, then the list's)
@@ -489,9 +489,9 @@ def t_rom2_fonts():
             k.key(ktest.ENTER)
             cyc.append((name(A.core_font(k)), hd_file(k, 'LODE.INI')))
         if two:
-            ok = m and m.group(0).strip() == 'Lodefont (built in), GRIDFONT.FNT, TERMINUS.FNT' and cyc == [
-                ('GRIDFONT', b'FONT=GRIDFONT.FNT\r\n'), ('TERMINUS', b'FONT=TERMINUS.FNT\r\n'), ('Lodefont', None)]
-            check('%s: Display lists Lodefont, GRIDFONT.FNT and TERMINUS.FNT from R:; Return goes through them and back, '
+            ok = m and m.group(0).strip() == 'Lodefont (built in), GRIDFONT.FNT, TERMBOLD.FNT' and cyc == [
+                ('GRIDFONT', b'FONT=GRIDFONT.FNT\r\n'), ('TERMINUS', b'FONT=TERMBOLD.FNT\r\n'), ('Lodefont', None)]
+            check('%s: Display lists Lodefont, GRIDFONT.FNT and TERMBOLD.FNT from R:; Return goes through them and back, '
                   'C:\\LODE.INI written each time (and gone at Lodefont)' % tag, ok and not k.crashed, (m and m.group(0), cyc))
         else:
             check('%s: Display lists Lodefont alone; Return stays on it' % tag,

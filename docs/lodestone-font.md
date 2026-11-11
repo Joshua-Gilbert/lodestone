@@ -36,8 +36,8 @@ Column 7 is the gap between characters. The baseline and x-height are GRiD's TC8
 
 ## The other fonts
 
-`GRIDFONT.FNT` (GRiD's) and `TERMINUS.FNT` are on ROM 2, which joins R:, so started from the ROM, System's Display lists them and Return switches to them; without ROM 2 there is only Lodefont. On a floppy they work from the root of the start-up disk, as any font file does: exactly 1,536 bytes. Display lists only files of that size (the terminal window's 4 KB `TERM.FNT` isn't one).
+`GRIDFONT.FNT` (GRiD's) and `TERMBOLD.FNT` are on ROM 2, which joins R:, so started from the ROM, System's Display lists them and Return switches to them; without ROM 2 there is only Lodefont. On a floppy they work from the root of the start-up disk, as any font file does: exactly 1,536 bytes. Display lists only files of that size (the terminal window's 4 KB `TERM.FNT` isn't one).
 
-The screen reader in the tests (`ktest.font()`) knows Lodefont, GRiD's font and Terminus; no glyph of one is another character's in the others.
+The screen reader in the tests (`ktest.font()`) knows Lodefont, GRiD's font and the Terminus-derived glyphs (TERMBOLD.FNT, CLAUDE.COM's); no glyph of one is another character's in the others.
 
-Not in Lodefont yet: CLAUDE.COM's console still draws in Terminus (its own glyphs from 80h were drawn to match it), and the pictures the Pi draws (`claude-link/gridlink/gridfont.py`) still use GRiD's glyphs.
+Not in Lodefont yet: CLAUDE.COM's console still draws with glyphs from Terminus Font (its own glyphs from 80h were drawn to match it), and the pictures the Pi draws (`claude-link/gridlink/gridfont.py`) still use GRiD's glyphs.

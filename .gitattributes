@@ -12,3 +12,4 @@
 *.png binary
 *.uf2 binary
 *.tar.gz binary
+OFL.TXT -text

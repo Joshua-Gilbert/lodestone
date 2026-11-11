@@ -57,7 +57,7 @@ Keep WRITE.RUN, SYSTEM.RUN and TASKS.RUN in the root of this disk (or
 in the subject you work in).  A DOS program gets about 566 KB: while it
 runs the Executive lends it the memory of its file list.  The screen font is
 Lodefont, Lodestone's own.  GRIDFONT.FNT is GRiD's: the InteGRiD system
-font (TC8X16), as GRID.EXE drew it, and TERMINUS.FNT the font Lodestone
+font (TC8X16), as GRID.EXE drew it, and TERMBOLD.FNT the font Lodestone
 had first (on ROM 2; from a floppy, copy them to its root); in System,
 Display, Return switches between them (and any other font file in the
 root of the start-up disk).  The choice is kept in LODE.INI as
@@ -326,7 +326,7 @@ the GRiD MS-DOS EPROM can go in the first).  It starts on C: (or R:).
 R: is the ROM: LODE.SYS, LODEMT.SYS, LCMD, System, Write, the
 calculator, Tasks, the picture and LODE.INI, read-only; ROM 2, if it is
 in, joins R: with DEFRAG, Paint, CLAUDE, the terminal window's font and
-GRIDFONT.FNT and TERMINUS.FNT.  R:\LODE.INI holds the ROM's settings;
+GRIDFONT.FNT and TERMBOLD.FNT.  R:\LODE.INI holds the ROM's settings;
 what you change in System goes in C:\LODE.INI (A:\LODE.INI without the
 hard disk) and is read over them: System's Settings topic shows which,
 and Return there goes back to the ROM's.

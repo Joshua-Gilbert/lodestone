@@ -151,16 +151,16 @@
   - **The BIOS** has only the IBM 8×8 CGA font (F000:FA6E). In mode 40h its INT 10h draws each row twice.
   - **InteGRiD's fonts**, `InterGRiD\PROGRAMS\*.TYP`: 21 bitmap fonts from 4×8 to 24×32. **TC8X16 is byte for byte the 8×16 font built into GRID.EXE**, the system font InteGRiD used on 640×400 screens.
 - **The .TYP format**, decoded: an OMF object module (GRiD linked fonts into programs). Its data segment is an 8-byte header (number of characters, width, height, line height, baseline, 0, 0, 0), then the glyphs as a strike: row 0 of every character, then row 1, and so on, MSB = leftmost pixel. TC8X16 has 255 characters: two-letter control-code glyphs, ASCII, then arrows, ©, a four-glyph GRiD logo, Latin-1 letters and box drawing.
-- **Now:** `src/FONT.INC` is TC8X16, made by `typfont.py` (which also draws any .TYP as a sheet). Only codes 32–127 are kept, so it costs the same 1,536 bytes as Terminus did. The Executive, the core, System, Write and DEFRAG use it.
+- **Now:** `src/FONT.INC` is TC8X16, made by `typfont.py` (which also draws any .TYP as a sheet). Only codes 32–127 are kept, so it costs the same 1,536 bytes as the Terminus-derived font did. The Executive, the core, System, Write and DEFRAG use it.
   - The glyphs fill the 16-pixel cell (capitals rows 0–13, descenders to row 15), as on GRiD's own screens.
-  - CLAUDE.COM keeps Terminus (`src/TERMINUS.INC`) for now, because its extra glyphs (●, ⎿, box corners) were drawn to match it.
+  - CLAUDE.COM keeps its glyphs from Terminus Font (`src/TERMINUS.INC`) for now, because its extra glyphs (●, ⎿, box corners) were drawn to match it.
   - The screen reader in the tests knows both fonts.
 - **Rights:** GRiD Systems was bought by Tandy in 1988 and its products sold on after that. In the US, the design of a bitmap typeface generally isn't protected by copyright. The original .TYP files stay out of the repo; `FONT.INC` holds only the 96 glyphs. (Not legal advice.)
 
 ## Switching fonts (2026-10-06, API 2)
 - GRiD's font stays built in, and other fonts are files.
   - A **.FNT** file is the 96 glyphs of codes 32–127, 8×16, 16 bytes each, top row first: exactly 1,536 bytes.
-  - `fonts/TERMINUS.FNT` (the font 0.3 started with) is built from `src/TERMINUS.INC` by `fonts/TERMINUS.ASM`. `typfont.py X.TYP --fnt X.FNT` makes one from any 8×16 GRiD font.
+  - `fonts/TERMBOLD.FNT` (the font 0.3 started with) is built from `src/TERMINUS.INC` by `fonts/TERMBOLD.ASM`. `typfont.py X.TYP --fnt X.FNT` makes one from any 8×16 GRiD font.
 - **The core:**
   - one font slot, as before;
   - `UI_FONT` (jump-table entry 45, so `UI_API` is now 2): AL = 0 gives the name in use, AL = 1 sets glyphs and a name;
@@ -179,13 +179,13 @@
   - the font file is 1,536 bytes on the disk.
 - **Tests (`t_font`, 11 checks):**
   - GRiD's at the start;
-  - the Display topic; Return to Terminus, with the screen redrawn in it;
-  - LODE.INI written, and Terminus again after a restart;
-  - the saver's DEFRAG in Terminus;
+  - the Display topic; Return to TERMBOLD.FNT, with the screen redrawn in it;
+  - LODE.INI written, and TERMBOLD.FNT again after a restart;
+  - the saver's DEFRAG in TERMBOLD.FNT;
   - back to GRiD's, with LODE.INI deleted;
   - other INI lines kept, in any case;
   - a missing file, and a wrong-sized .FNT passed over.
-- CLAUDE.COM keeps Terminus built in for now.
+- CLAUDE.COM keeps its Terminus-derived glyphs built in for now.
 
 ## The mouse for DOS programs (0.3.1, 2026-10-06)
 - **TM5000G said "No mouse detected"**, though the mouse works in the Executive. The core had a working serial-mouse driver: it finds the mouse on COM2/COM1 and decodes its packets. But DOS programs had only the kernel's INT 33h stub, which returned AX = 0, and the core switched the mouse off before every DOS program.
@@ -1211,7 +1211,7 @@ A program can name its own modes, which the Executive's right-click menu then of
 - **The shell:** LCMD's version strings say 0.3.
 
 ## For the 1520
-- **Copy to the floppy:** `LODE.SYS` (30,292 bytes, with the CODE-? fix, GRiD's font, the fixes above and the font switch), `LCMD.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `LODE.TXT`, `DEFRAG.COM` and `TERMINUS.FNT`. All are in `releases/0.3`. Copy each on its own and read it back, as usual.
+- **Copy to the floppy:** `LODE.SYS` (30,292 bytes, with the CODE-? fix, GRiD's font, the fixes above and the font switch), `LCMD.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `LODE.TXT`, `DEFRAG.COM` and `TERMBOLD.FNT`. All are in `releases/0.3`. Copy each on its own and read it back, as usual.
 - **Check:**
   - CODE-U (System), each topic, and setting the clock;
   - CODE-W (Write): type, Quit, name it;

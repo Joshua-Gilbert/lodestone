@@ -26,7 +26,7 @@ nasm -f bin -o DEFRAG.COM DEFRAG.ASM
 nasm -f bin -o HEADCLN.COM HEADCLN.ASM
 nasm -f bin -o CALC.COM CALC.ASM
 cd ../fonts
-nasm -f bin -i ../src/ -o TERMINUS.FNT TERMINUS.ASM
+nasm -f bin -i ../src/ -o TERMBOLD.FNT TERMBOLD.ASM
 nasm -f bin -o GRIDFONT.FNT GRIDFONT.ASM  # GRiD's TC8X16 (the built-in font, src/FONT.INC, is Lodefont: lodefont.py)
 nasm -f bin -o TERM.FNT TERM.ASM          # the terminal window's (TERM437.INC: ../tools/mkfnt437.py)
 cd ../drivers
@@ -42,7 +42,7 @@ python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODE
 # ROM 2, a data ROM joined to R: (KROM.INC): what ROM 1 has no room for, and the disk utilities.
 # (tests/test_rom.py reads this line for ROM 2's files)
 # CLAUDE.COM as committed: run claude/build.sh first after a change to it
-python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM fonts/TERM.FNT apps/PAINT.RUN claude/CLAUDE.COM fonts/GRIDFONT.FNT fonts/TERMINUS.FNT \
+python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM fonts/TERM.FNT apps/PAINT.RUN claude/CLAUDE.COM fonts/GRIDFONT.FNT fonts/TERMBOLD.FNT fonts/OFL.TXT \
     src/FORMAT.COM src/CHKDSK.COM src/FDISK.COM src/SYS.COM src/LABEL.COM src/DISKCOPY.COM src/DISKCOMP.COM \
     src/ATTRIB.COM src/XCOPY.COM src/TREE.COM \
     src/FIND.COM src/MORE.COM src/SORT.COM src/COMP.COM

@@ -54,9 +54,9 @@ Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
 subject you work in).  A DOS program gets about 566 KB: while it runs
 the Executive lends it the memory of its file list.  The screen font is
 GRiD's own: the InteGRiD system font (TC8X16), as GRID.EXE drew it.
-TERMINUS.FNT is the font Grid-OS had before; in System, Display, Return
+TERMBOLD.FNT is the font Grid-OS had before; in System, Display, Return
 switches between them (and any other .FNT in the root of the disk).  The
-choice is kept in GRIDOS.INI as FONT=TERMINUS.FNT; without that line, or
+choice is kept in GRIDOS.INI as FONT=TERMBOLD.FNT; without that line, or
 without the file, it is GRiD's.  CODE-? opens the help everywhere (F1 too).
 
 0.3.1: DOS programs have the mouse too: Grid-OS answers the Microsoft mouse
