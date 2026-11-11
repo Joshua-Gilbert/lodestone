@@ -143,7 +143,7 @@ def t_typeahead():
 def t_ini():
     print('== SPLASH= in LODE.INI')
     off = [b'SPLASH=0\r\n', b'splash=0\r\n', b'SPLASH=No\r\n', b'Splash=off\r\n', b'SPLASH=OFF', b'KEYS=1\r\nSPLASH=0\r\nLAST=2\r\n']
-    on = [b'SPLASH=1\r\n', b'SPLASH=On\r\n', b'SPLASH=yes\r\n', b'XSPLASH=0\r\n', b'KEYS=1\r\nFONT=TERMINUS.FNT\r\n',
+    on = [b'SPLASH=1\r\n', b'SPLASH=On\r\n', b'SPLASH=yes\r\n', b'XSPLASH=0\r\n', b'KEYS=1\r\nFONT=TERMBOLD.FNT\r\n',
           b'NOTES SPLASH=0\r\n']
     for text, want in [(t, False) for t in off] + [(t, True) for t in on]:
         k = ktest.KPC(A.image('sp_ini.img', PIC, A.LCMD, ini_file(text)))
@@ -209,12 +209,12 @@ def t_system():
     check('"splash=no" among other lines: no picture', ON not in marks(k), marks(k))
     A.to_display(k)
     check('... System says "no"', re.search(r'Start-up picture\s+no', screen(k)), screen(k))
-    k.key(ktest.ENTER)                  # the next font: TERMINUS.FNT
+    k.key(ktest.ENTER)                  # the next font: TERMBOLD.FNT
     check('Return (the font): SPLASH=0 kept with it, the other lines too',
-          disk_file(k, 'LODE.INI') == b'KEYS=1\r\nFONT=TERMINUS.FNT\r\nSAVER=10\r\nSPLASH=0\r\n', disk_file(k, 'LODE.INI'))
+          disk_file(k, 'LODE.INI') == b'KEYS=1\r\nFONT=TERMBOLD.FNT\r\nSAVER=10\r\nSPLASH=0\r\n', disk_file(k, 'LODE.INI'))
     k.key(SPACE)
     check('Space: the picture on; only its line goes',
-          disk_file(k, 'LODE.INI') == b'KEYS=1\r\nFONT=TERMINUS.FNT\r\nSAVER=10\r\n', disk_file(k, 'LODE.INI'))
+          disk_file(k, 'LODE.INI') == b'KEYS=1\r\nFONT=TERMBOLD.FNT\r\nSAVER=10\r\n', disk_file(k, 'LODE.INI'))
     k.key(ktest.ESC)
     # System doesn't read LODE.INI to start (a disk read): only for Display
     k = ktest.KPC(A.image('sp_sys5.img', PIC, A.SYSTEM, ini_file(b'SPLASH=0\r\n'))); k.pc.mouse = True; k.start()

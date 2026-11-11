@@ -18,7 +18,7 @@ Lodestone was developed from a boot floppy before it moved to EPROM (`lodestone-
   - Releases are kept in `os\releases\`, each with its files; an earlier release's LODE.SYS is the rollback.
   - The Executive runs in mode 40h (640×400); other 8×16 fonts are `.FNT` files (System → Display, saved as `FONT=` in `A:\LODE.INI`). Microsoft mouse on COM2/COM1, XOR arrow.
 - **The .RUN programs** — SYSTEM.RUN (CODE-U), WRITE.RUN (CODE-W, and opening text files from the list), CALC, TASKS, TERM, PAINT: programs on the UI core. `mkrun.py` (needs Python) builds them from `apps\*.ASM`.
-- **TERMINUS.FNT** (1,536 bytes) — the Terminus font as a file for System's Display topic. Built from `fonts\TERMINUS.ASM`; `typfont.py X.TYP --fnt X.FNT` makes one from any 8×16 GRiD .TYP font.
+- **TERMBOLD.FNT** (1,536 bytes) — a font from Terminus Font's glyphs, as a file for System's Display topic. Built from `fonts\TERMBOLD.ASM`; `typfont.py X.TYP --fnt X.FNT` makes one from any 8×16 GRiD .TYP font.
 - **DEFRAG.COM** — the disk tidier, and the screen saver's first act. It keeps going on worn disks (marks bad clusters, logs to DEFRAG.TXT), and `DEFRAG /T` tests the free space. See `lodestone-defrag.md`.
 - **HEADCLN.COM** — floppy head cleaning with a wet cleaning disk (0.2.3).
 - **LCMD.COM** — the command prompt (CODE-P) and CLAUDE's `COMSPEC /C`.
@@ -72,7 +72,7 @@ The files to boot from are listed in the top-level README ("From a floppy"); the
 | SYSTEM.RUN, WRITE.RUN, CALC.RUN, TASKS.RUN, TERM.RUN, PAINT.RUN | the programs on the UI core |
 | CALC.COM | the calculator at the command prompt |
 | SCREEN.PRN | Shift-PrtSc's file writer (read from the root of the start-up disk) |
-| TERM.FNT, TERMINUS.FNT, GRIDFONT.FNT | the terminal window's font; the Terminus font and GRiD's TC8X16 for System → Display |
+| TERM.FNT, TERMBOLD.FNT, GRIDFONT.FNT | the terminal window's font; a font from Terminus Font's glyphs and GRiD's TC8X16 for System → Display |
 | DEFRAG.COM | disk tidier / screen saver (`DEFRAG [B:]`, `DEFRAG [B:] /T` to test the free space, `DEFRAG /S` as the saver runs it) |
 | DEFRAG.TXT | DEFRAG's log |
 | HEADCLN.COM | floppy head cleaning with a wet cleaning disk |

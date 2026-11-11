@@ -1249,7 +1249,7 @@ t_about:
 ; ---------------------------------------------------------------------
 ;  Display: the screen font.  Lodefont is built into the core (and copied
 ;  here, to switch back to); others are .FNT files in the disk's root:
-;  FONT_BYTES of 8x16 glyphs (GRIDFONT.FNT, GRiD's own, and TERMINUS.FNT
+;  FONT_BYTES of 8x16 glyphs (GRIDFONT.FNT, GRiD's own, and TERMBOLD.FNT
 ;  are on ROM 2).  The choice goes in \LODE.INI as FONT=,
 ;  which the core reads at start-up.  And the start-up picture (the
 ;  kernel's, KSPLASH.INC): Space turns it off or on, SPLASH=0 in LODE.INI

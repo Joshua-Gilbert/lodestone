@@ -28,7 +28,7 @@ M33TEST = os.path.join(HERE, 'M33TEST.COM')
 M33 = {n: os.path.join(HERE, n + '.COM') for n in ('M33GFX', 'M33QUIT', 'M33HSET', 'M33HVIC')}
 LCMD = os.path.join(GOS, 'src', 'LCMD.COM')
 TM5000G = os.environ.get('TM5000G') or os.path.join(GOS, '..', 'tools', 'TM5000G.EXE')
-TERMFNT = os.path.join(GOS, 'fonts', 'TERMINUS.FNT')
+TERMFNT = os.path.join(GOS, 'fonts', 'TERMBOLD.FNT')
 GRIDFNT = os.path.join(GOS, 'fonts', 'GRIDFONT.FNT')
 TERM437 = os.path.join(GOS, 'fonts', 'TERM.FNT')        # (the terminal window's: 4,096 bytes, not a screen font)
 DEFRAG = os.path.join(GOS, 'src', 'DEFRAG.COM')
@@ -1135,7 +1135,7 @@ def t_font():
     shot(k, 'system_display')
     m = re.search(r'Lodefont \(built in\),.*$', screen(k), re.M)
     check('Display: the font in use and the font files on the disk, not the terminal window\'s TERM.FNT (4,096 bytes)',
-          m and m.group(0).strip() == 'Lodefont (built in), GRIDFONT.FNT, TERMINUS.FNT'
+          m and m.group(0).strip() == 'Lodefont (built in), GRIDFONT.FNT, TERMBOLD.FNT'
           and has(k, 'Fonts on the start-up disk:') and 'RETURN: the next font' in ' '.join(k.band()), (screen(k), k.band()))
     k.key(ktest.ENTER)
     shot(k, 'system_display_gridfont')
@@ -1158,22 +1158,22 @@ def t_font():
     k.key(ktest.ESC); k.settle(8)
     to_display(k)
     k.key(ktest.ENTER)
-    check('Return again: TERMINUS.FNT, TERM.FNT (between them on the disk) passed over',
-          core_font(k) == term and disk_file(k, 'LODE.INI') == b'FONT=TERMINUS.FNT\r\n', disk_file(k, 'LODE.INI'))
+    check('Return again: TERMBOLD.FNT, TERM.FNT (between them on the disk) passed over',
+          core_font(k) == term and disk_file(k, 'LODE.INI') == b'FONT=TERMBOLD.FNT\r\n', disk_file(k, 'LODE.INI'))
     k.key(ktest.ENTER)
     check('Return again: Lodefont, and LODE.INI goes (nothing else in it)', core_font(k) == LODEF and disk_file(k, 'LODE.INI') is None,
           disk_file(k, 'LODE.INI'))
     # other lines in LODE.INI stay; any case; a missing or wrong-sized file
-    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'KEYS=1\r\nfont=terminus.fnt\r\nLAST=2')
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'KEYS=1\r\nfont=termbold.fnt\r\nLAST=2')
     k = ktest.KPC(image('font3.img', SYSTEM, TERMFNT, ini)); k.pc.mouse = True; k.start()
-    check('"font=terminus.fnt" among other lines: Terminus at the start', core_font(k) == term)
+    check('"font=termbold.fnt" among other lines: Terminus at the start', core_font(k) == term)
     to_display(k)
     k.key(ktest.ENTER)
     check('... Return: Lodefont again, the other lines kept', core_font(k) == LODEF and disk_file(k, 'LODE.INI') == b'KEYS=1\r\nLAST=2\r\n',
           disk_file(k, 'LODE.INI'))
     k.key(ktest.ENTER)                  # (the font file is read where LODE.INI is: it must be in use before that)
     check('... Return: Terminus again, every glyph, with a LODE.INI to rewrite', core_font(k) == term
-          and disk_file(k, 'LODE.INI') == b'KEYS=1\r\nLAST=2\r\nFONT=TERMINUS.FNT\r\n', disk_file(k, 'LODE.INI'))
+          and disk_file(k, 'LODE.INI') == b'KEYS=1\r\nLAST=2\r\nFONT=TERMBOLD.FNT\r\n', disk_file(k, 'LODE.INI'))
     open(ini, 'wb').write(b'FONT=NOSUCH.FNT\r\n')
     bad = os.path.join(OUT, 'BAD.FNT'); open(bad, 'wb').write(term[:1000])
     k = ktest.KPC(image('font4.img', SYSTEM, bad, ini)); k.start()
@@ -1261,8 +1261,8 @@ def t_saver_delay():
     k = reboot(k, 'svd2.img')
     check('after a restart: 1 minute from LODE.INI', k.rd('saver_min', 1) == b'\x01', k.rd('saver_min', 1))
     to_display(k); k.key(ktest.ENTER); k.key(ktest.ESC)
-    check('a font too: FONT= and SAVER= both in LODE.INI', disk_file(k, 'LODE.INI') == b'FONT=TERMINUS.FNT\r\nSAVER=1\r\n', disk_file(k, 'LODE.INI'))
-    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'KEYS=1\r\nsaver=2\r\nFONT=TERMINUS.FNT\r\n')
+    check('a font too: FONT= and SAVER= both in LODE.INI', disk_file(k, 'LODE.INI') == b'FONT=TERMBOLD.FNT\r\nSAVER=1\r\n', disk_file(k, 'LODE.INI'))
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'KEYS=1\r\nsaver=2\r\nFONT=TERMBOLD.FNT\r\n')
     k = ktest.KPC(image('svd3.img', SYSTEM, TERMFNT, ini)); k.start()
     check('"saver=2" (any case) before FONT=: both taken at start-up', k.rd('saver_min', 1) == b'\x02' and core_font(k) == open(TERMFNT, 'rb').read(),
           k.rd('saver_min', 1))
@@ -1270,14 +1270,14 @@ def t_saver_delay():
     for _ in range(6): k.key(ktest.DOWN, settle=False)
     k.settle()
     k.key(ktest.ENTER)
-    check('Return: 5 minutes again, its SAVER= line gone, the others kept', disk_file(k, 'LODE.INI') == b'KEYS=1\r\nFONT=TERMINUS.FNT\r\n',
+    check('Return: 5 minutes again, its SAVER= line gone, the others kept', disk_file(k, 'LODE.INI') == b'KEYS=1\r\nFONT=TERMBOLD.FNT\r\n',
           disk_file(k, 'LODE.INI'))
     ini2 = os.path.join(OUT, 'LODE2.INI'); open(ini2, 'wb').write(b'SAVER=99\r\n')
     k = ktest.KPC(image('svd4.img', 'LODE.INI=' + ini2)); k.start()
     check('SAVER=99: 30 minutes at most', k.rd('saver_min', 1) == b'\x1e' and k.u16('saver_t') == 32760, k.rd('saver_min', 1))
     # past 511 bytes of other lines (System keeps a LODE.INI up to 1 KB and
     # puts its own lines last): font_boot read only the first 511
-    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'X1=1\r\n' * 160 + b'saver=2\r\nFONT=TERMINUS.FNT\r\nTIDY=0\r\n')
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'X1=1\r\n' * 160 + b'saver=2\r\nFONT=TERMBOLD.FNT\r\nTIDY=0\r\n')
     k = ktest.KPC(image('svd5.img', SYSTEM, TERMFNT, ini)); k.start()
     check('SAVER=, FONT= and TIDY=0 after 960 bytes of other lines: all three taken at start-up (%d bytes)' % os.path.getsize(ini),
           k.rd('saver_min', 1) == b'\x02' and core_font(k) == open(TERMFNT, 'rb').read() and k.rd('sv_notidy', 1) == b'\x01',
@@ -1289,7 +1289,7 @@ def t_ini_keys():
     keeps the others; SPLASH= and MULTITASK= read back first (ini_find)"""
     print('== LODE.INI rewritten by System: every key of its own replaced, the other lines kept')
     ini = os.path.join(OUT, 'LODE.INI')
-    open(ini, 'wb').write(b'KEYS=1\r\nfont=TERMINUS.FNT\r\nSaver=2\r\ntidy=0\r\nsplash=0\r\nprinter=\r\nmultitask=on\r\n'
+    open(ini, 'wb').write(b'KEYS=1\r\nfont=TERMBOLD.FNT\r\nSaver=2\r\ntidy=0\r\nsplash=0\r\nprinter=\r\nmultitask=on\r\n'
                           b'mdisk=512\r\nLAST=2')
     k = ktest.KPC(image('inik.img', SYSTEM, TERMFNT, ini)); k.start()
     k.key(CODE['U'])
@@ -1299,7 +1299,7 @@ def t_ini_keys():
     got = disk_file(k, 'LODE.INI')
     check('Return (the saver\'s delay, 2 -> 5 minutes: no SAVER= line): FONT=, SAVER=, TIDY=, SPLASH=, PRINTER= and MULTITASK= '
           'lines replaced, MDISK= (no EMS) and the others kept, the last given a line end',
-          got == b'KEYS=1\r\nmdisk=512\r\nLAST=2\r\nFONT=TERMINUS.FNT\r\nTIDY=0\r\nSPLASH=0\r\nMULTITASK=1\r\n', got)
+          got == b'KEYS=1\r\nmdisk=512\r\nLAST=2\r\nFONT=TERMBOLD.FNT\r\nTIDY=0\r\nSPLASH=0\r\nMULTITASK=1\r\n', got)
 
 
 def t_saver_tidy():
@@ -1599,7 +1599,7 @@ def t_form():
               'DOS.330\\DEEP\\X.TXT=' + notes, 'WORK\\')
     b = mkimg.build(os.path.join(OUT, 'formb.img'), ['NOTES.TXT=' + notes, 'DATA\\'])
     k = ktest.KPC(a, b=b); k.pc.mouse = True; k.start()
-    check('the titles only (subjects are their own item); Title outlined', k.exec_list() == ['LODE.SYS', 'SYSTEM.RUN', 'TERMINUS.FNT', 'WRITE.RUN']
+    check('the titles only (subjects are their own item); Title outlined', k.exec_list() == ['LODE.SYS', 'SYSTEM.RUN', 'TERMBOLD.FNT', 'WRITE.RUN']
           and focus(k) == 0 and outlined(k, 2) and not outlined(k, 0), k.exec_list())
     check('the form: Device Floppy A:, Subject Root, the title and its kind', form(k)[:3] == ['Floppy A:', 'Root', 'LODE'] and form(k)[3].startswith('System'), form(k))
     k.key(CODE['W']); k.key(ktest.ESC); k.key(ktest.ENTER)    # (a .RUN and back: the place is kept)
@@ -1634,9 +1634,9 @@ def t_form():
     check('CODE-U from B:: System, from the start-up disk', has(k, 'Free for programs'), screen(k))
     for _ in range(5): k.key(ktest.DOWN, settle=False)
     k.settle()
-    check('Display lists the fonts on the start-up disk (A:)', has(k, 'TERMINUS.FNT') and has(k, 'Fonts on the start-up disk:'), screen(k))
+    check('Display lists the fonts on the start-up disk (A:)', has(k, 'TERMBOLD.FNT') and has(k, 'Fonts on the start-up disk:'), screen(k))
     k.key(ktest.ENTER)
-    check('... and LODE.INI goes to A:, not B:', disk_file(k, 'LODE.INI') == b'FONT=TERMINUS.FNT\r\n' and
+    check('... and LODE.INI goes to A:, not B:', disk_file(k, 'LODE.INI') == b'FONT=TERMBOLD.FNT\r\n' and
           fatcheck.read_files(k.pc.drives[1].img).get('A:\\LODE.INI') is None, disk_file(k, 'LODE.INI'))
     k.key(ktest.ENTER); k.key(ktest.ESC)
     check('back in the Executive, still on B:', k.exec_list() == ['NOTES.TXT'] and form(k)[0] == 'Floppy B:', (k.exec_list(), form(k)))
