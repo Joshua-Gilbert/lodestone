@@ -11,3 +11,4 @@
 *.img binary
 *.png binary
 *.uf2 binary
+*.tar.gz binary
