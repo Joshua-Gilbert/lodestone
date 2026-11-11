@@ -367,6 +367,21 @@ def t_fatwrite():
     check('C:\'s FAT never written, Fail each time: A:\\F.DAT on the floppy all the same, C:\'s other files whole',
           n >= 2 and 'X close failed' in o and not fl and ffiles.get('\\F.DAT') == 12288 and
           all('X.DAT' in p or 'lost' in p for p in probs) and files.get('\\README.TXT') == README, (o, fl, probs))
+    # a write that grows the file inside the cluster it has, then fails (no cluster taken): its size given back
+    # with its position (WRGROW.COM: README.TXT's second sector won't take the write, the program's Fail)
+    c = os.path.join(OUT, 'WRGROW.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', c, os.path.join(HERE, 'WRGROW.ASM')], check=True)
+    d, f = std()
+    v = F.Volume(d, PLBA)
+    cl = next(c_ for n_, a_, c_, s_ in v.entries(0) if n_ == 'README.TXT')
+    ata = drive(d, badw=[PLBA + v.data + (cl - 2) * 4 + 1])
+    k, t = boot('wrgrow', ata, files=(LCMD, c))
+    o = Shell(k).run('a:wrgrow')
+    files, probs = vol(ata).files(f.gaps)
+    check('a write growing README.TXT (21 bytes) inside its cluster, its second sector refusing it, Fail: the error '
+          '(1Bh), position and size back at 21, and so on the disk after the close',
+          'W-001B P0015 S0015' in o and files.get('\\README.TXT') == README and not probs, (o, probs,
+          len(files.get('\\README.TXT', b''))))
 
 def t_abs():
     """INT 25h/26h on C: (DOS 4's form): a read; A: and the old form
@@ -518,10 +533,18 @@ def t_mem():
     """The memory a program gets: this kernel without the drive against the
     one before the hard disk (the core's share), and with it (the module)."""
     memsz = os.path.join(HERE, 'MEMSZ.COM')
+    exact = {}
     def kb(name, sysfile, ata=None, **kw):              # (from the shell: any kernel's map)
         img = mkimg.build(os.path.join(OUT, name + '.img'), ['LODE.SYS=' + sysfile, memsz, LCMD])
         k = ktest.KPC(img, ata=ata, **kw); k.start()
         m = re.search(r'([\d.]+) KB for programs', Shell(k).run('memsz'))
+        seg, big = k.pc.u16(0x60, k.Y['first_mcb']), 0  # (and the largest free block after it, in
+        while True:                                     #  paragraphs: MEMSZ's tenths are cut, so a
+            t, own, sz = k.pc.rd(seg, 0, 1)[0], k.pc.u16(seg, 1), k.pc.u16(seg, 3)   # difference of two
+            if own == 0: big = max(big, sz)             #  can be 0.1 out)
+            if t == 0x5A: break
+            seg += sz + 1
+        exact[name] = big / 64
         return float(m.group(1)) if m else None
     base = os.environ.get('BASE_SYS')
     new = os.path.join(SRC, 'LODE.SYS')
@@ -535,10 +558,12 @@ def t_mem():
         z = kb('m_base', base)
         y = kb('m_base_ems', base, ems_pages=88)
         out += '; before the hard disk %.1f KB, with EMS %.1f KB' % (z, y)
+    ce, cn = exact['m_ems'] - exact['m_hdems'], exact['m_new'] - exact['m_hd']
+    out += ' (C: exactly %.2f KB with EMS, %.2f without)' % (ce, cn)
     print('   ' + out)
     check('memory: C: costs under 3 KB with EMS, 3.5 KB without (the window then fills EMS\'s place)' +
           (', the kernel without it under 0.3 KB' if base else ''),
-          e - g < 3.0 and a - b < 3.5 and (not base or (z - a < 0.3 and y - e < 0.3)), out)
+          ce < 3.0 and cn < 3.5 and (not base or (z - a < 0.3 and y - e < 0.3)), out)
 
 def t_mdisk():
     """C: and M: (the temporary disk in EMS) together: COPY both ways, the
@@ -584,7 +609,55 @@ def t_mdisk():
     on, off = kb('md_on', []), kb('md_off', [ini])
     check('C: and EMS: DOS programs get as much with M: on as off (%.1f KB, %.1f KB)' % (on, off), on == off and on, (on, off))
 
-TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_system, t_testdos, t_exec, t_mem, t_mdisk]
+def t_wpfail():
+    # (KDISK.INC's rules for writes that fail, on C:)
+    def probe(n):
+        c = os.path.join(OUT, n + '.COM')
+        subprocess.run(['nasm', '-f', 'bin', '-o', c, os.path.join(HERE, n + '.ASM')], check=True)
+        return n + '.COM=' + c
+    # a create over C:\FAR\NOTE.TXT, its directory past C:'s first 64K sectors, the write refused and Abort
+    # (WPCRFA, its own INT 24h): that buffer forgotten (C:'s keyed with the high part: buf_inval missed it, and
+    # the next write to the sector took NOTE.TXT's new entry, size 0, to the disk)
+    d, f = std(); v = F.Volume(d, PLBA)
+    far = next(c for n, a, c, s in v.entries(0) if n == 'FAR')
+    lba = PLBA + v.data + (far - 2) * 4
+    ata = drive(d, badw=[lba])
+    k, _ = boot('wpc', ata, files=(LCMD, probe('WPCRFA')))
+    sh = Shell(k)
+    answer(k, 'wpcrfa', 'f')
+    ata.badw.clear()
+    sh.run('echo hello> c:\\far\\new.txt')
+    files, probs = vol(ata).files(f.gaps)
+    check('a create over C:\\FAR\\NOTE.TXT (past 64K sectors) refused, Abort: NOTE.TXT as it was, a file written '
+          'there after, C: consistent', not probs and files.get('\\FAR\\NOTE.TXT') == NOTE
+          and files.get('\\FAR\\NEW.TXT') == b'hello\r\n', (probs, sorted(files)[:8]))
+    # an append refused on a write-protected A: (WPAPW, Fail): C:'s calls flush C:'s FAT alone, and the append
+    # gave back its clusters: a copy to C:, DEL, MD on C: all done, no prompt (each asked "Write protect error
+    # writing drive A" and said it failed, though DEL had deleted and COPY left a 0-byte file)
+    # (and with only A:'s FAT refusing, its data written: the cache left changed, its flush failed, Fail: rule 3)
+    t = os.path.join(OUT, 'wpk1024'); open(t, 'wb').write(b'k' * 1024)
+    class FatBad:
+        def __init__(s, pc): s.pc = pc
+        def __bool__(s):
+            pc = s.pc; d = pc.drives[0]
+            cx, dx, al = pc.r('cx'), pc.r('dx'), pc.r('ax') & 0xFF
+            lba = ((cx >> 8) * d.heads + (dx >> 8)) * d.spt + (cx & 63) - 1
+            return lba < 19 and lba + al > 1
+    for how in ('an append refused on a write-protected A:', 'an append to A:, its FAT refusing'):
+        d, f = std(); ata = drive(d)
+        k, _ = boot('wpcs', ata, files=(LCMD, 'K.TXT=' + t, probe('WPAPW'), probe('WPNOP')))
+        sh = Shell(k)
+        k.pc.drives[0].wp = True if 'protected' in how else FatBad(k.pc)
+        answer(k, 'wpapw', 'f')
+        outs = [answer(k, c, 'f') for c in ('copy a:wpnop.com c:\\x.com', 'del c:\\readme.txt', 'md c:\\newd')]
+        files, probs = vol(ata).files(f.gaps)
+        check('%s (WPAPW, Fail), then COPY A:WPNOP.COM C:\\X.COM, DEL C:\\README.TXT and MD '
+              'C:\\NEWD: no prompt, each done, C: consistent' % how, all(n == 0 for n, o in outs)
+              and '1 File(s) copied' in outs[0][1] and files.get('\\X.COM') is not None and '\\README.TXT' not in files
+              and not probs, (outs, probs))
+
+TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_system, t_testdos, t_exec, t_mem, t_mdisk,
+         t_wpfail]
 if __name__ == '__main__':
     want = sys.argv[1:]
     for n in ('HDFLUSH', 'HDABS'):

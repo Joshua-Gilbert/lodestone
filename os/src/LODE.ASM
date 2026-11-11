@@ -1,5 +1,5 @@
 ; =====================================================================
-;  LODE.SYS  -  Lodestone 1.0 kernel for the GRiDCase 1520
+;  LODE.SYS  -  Lodestone 1.1 kernel for the GRiDCase 1520
 ;  nasm -f bin -o LODE.SYS LODE.ASM
 ;
 ;  A small DOS 3.30-compatible kernel plus the GRiD-style Executive.
@@ -13,7 +13,8 @@
 ;           cache, sector buffers, critical errors
 ;    KFAT   names, paths, directories, clusters
 ;    KFILE  handles (SFT + per-process JFT), files and devices (CON, NUL,
-;           AUX, PRN, COM1/2, LPT1, GPIBnn), find first/next, dir calls
+;           AUX, PRN, COM1/2, LPT1, GPIBnn), find first/next (and the FCB
+;           calls' 11h/12h), dir calls
 ;    KPROC  PSP, environment, EXEC (.COM/.EXE), terminate, TSR, ^C
 ;    KGPIB  the GRIDGPIB driver on INT 60h (same API and signature)
 ;    KEMS   the EMS manager (LIM 4.0, INT 67h) - only resident when the
@@ -46,7 +47,7 @@ cpu 286
 org 0
 
 KSEG    equ 0060h               ; where the kernel lives
-VERSION equ 0100h               ; Lodestone 1.0
+VERSION equ 0101h               ; Lodestone 1.1
 
 section .bss nobits align=16 follows=.text
 bss_start:                      ; = image_end (KCORE.INC's CAP_SEG counts on it)
@@ -66,9 +67,11 @@ section boot progbits align=16 follows=hd vfollows=hd valign=16
 ; the disk cache's EMS (the installer runs there, at E000:MD_TPG)
 %define MDB(x) (section.boot.start + ((x) - section.boot.vstart))   ; (in the load image)
 MD_TPG  equ 1000h                       ; (its place in the cache's second page)
-section mdt progbits align=16 follows=boot vstart=MD_TPG
+MD_CWDL equ 44h                         ; (KDISK.INC's CWDLEN: KMDISK.INC's md_cwd,
+section mdt progbits align=16 follows=boot vstart=MD_TPG+MD_CWDL     ;  not in the file)
 ; KROM.INC: R:'s resident part, assembled from 0 and relocated where it goes
-section rmt progbits align=16 follows=mdt vstart=0
+R_ZERO  equ 80 + 44h                     ; (KROM.INC: r_tbl and r_cwd, not in the
+section rmt progbits align=16 follows=mdt vstart=R_ZERO   ;  file)
 ; the start-up code, run in the place of the disk buffers (in KSEG): see
 ; init.  (A constant: the assertions at the end of this file keep it
 ; inside them.)
@@ -82,16 +85,14 @@ start:  cli                     ; at 1000:0000 from the boot sector
         mov     sp, 0FFFEh
         sti
         cld
-        push    cs
-        pop     es
-        mov     di, section.ovl.start + (bootbpb - init)  ; (in this image)
-        mov     cx, 64
-        rep     movsb           ; BPB from DS:SI (the boot sector)
+        mov     ax, KSEG
+        mov     es, ax
+        mov     di, bootbpb     ; BPB from DS:SI (the boot sector), past
+        mov     cx, 64          ;  the start-up code (none of the image
+        rep     movsb           ;  goes there)
         mov     [cs:bootdrv], dl
         push    cs
         pop     ds
-        mov     ax, KSEG
-        mov     es, ax
         xor     si, si
         xor     di, di
         mov     cx, (image_end - start + 1) / 2
@@ -124,8 +125,8 @@ init:   cli
         mov     cx, OVL_AT
         sub     cx, di
         rep     stosb
-        mov     di, ovl_end
-        mov     cx, bss_end - ovl_end
+        mov     di, ovl_mend
+        mov     cx, bss_end - ovl_mend
         rep     stosb
         call    ivt_init
         call    sft_init
@@ -231,7 +232,7 @@ section .text
         EVEN    rw_start, rw_step, use_drive_si, sft_cluster, sft_cluster.w, sft_cluster.got
         EVEN    rw_where.one, file_read.loop, file_read.ext, file_read.go, file_read.part
         EVEN    sec_of, pos_sec, rw_setra, file_write.loop
-        EVEN    use_drive, fat_load, fat_get, fat_get.e, fat_flush.k, fat_flush.run, fat_flush.dirty
+        EVEN    use_drive, fat_load, fat_get, fat_get.e
         EVEN    fat_set.one, clu2lba
         EVEN    buf_getd, buf_get, buf_get.s, buf_get.f, buf_get.n, buf_get.hit
         EVEN    disk_io, dio.more, dio.ok, tc_piece, tc_mine
@@ -246,9 +247,10 @@ section .text
 %endif
 
 section ovl
-bootbpb     times 64 db 0
             align 2
-ovl_end:
+ovl_end:                                ; (the file's part; then in memory
+bootbpb     equ ovl_end                 ;  only, `start' copies the boot
+ovl_mend    equ bootbpb + 64            ;  sector's BPB there)
 section .text
 bootdrv     db 0
 capdrv      db 'A'                      ; screen captures go here (from the ROM:
@@ -260,9 +262,11 @@ lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
                                         ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
                                         ;  18 with R: (KROM.INC)
             align 16                    ; (free: the BSS starts on a paragraph;
-                                        ;  none at lastdrv 40CFh.  The EVEN pads
-                                        ;  make a change before gp_isr's move
-                                        ;  this by its size +-1, so in steps of 2)
+                                        ;  2 bytes after lastdrv, 466Dh, on
+                                        ;  2026-11-08: LODE.MAP has it now).
+                                        ;  The EVEN pads make a change before
+                                        ;  gp_isr's move this by its size +-1,
+                                        ;  so in steps of 2)
 image_end:                              ; everything above is copied low;
                                         ; the EMS section starts right here
 section .bss
@@ -291,14 +295,16 @@ ui_bss_start:
 section uiboot                          ; (its attributes at the end: it runs
 uiboot_start:                           ;  at UIBOOT_ORG, known only there)
 section ui
+%include "FONTPACK.INC"                 ; (FONT_UNPACK, for ui_boot)
 %include "UICORE.INC"                   ; (the jump table is at offset 0)
 %include "EXEC.INC"
-%include "FONT.INC"
             align 2
 ui_image_end:
 
 section uibss
             ualignb(2)
+font        resb FONT_BYTES             ; the font in use (Lodefont: ui_boot
+                                        ;  unpacks it from font_z)
             resb 2560
 ui_stack_top:                           ; the Executive's (and .RUNs') stack
 ui_keep_end:                            ; while a DOS program runs, the UI
@@ -322,6 +328,9 @@ UI_KEEP_PARAS   equ UI_IMG_PARAS + ((ui_keep_end - ui_bss_start + 15) >> 4)
 UIBOOT_ORG      equ (UI_IMG_PARAS << 4) + (FONT_BUF - ui_bss_start) + FONT_BYTES + 2   ; (even)
 UIBOOT_WORDS    equ (uiboot_end - uiboot_start + 1) >> 1
 section uiboot
+; Lodefont (FONT.INC) packed (FONTPACK.INC): ui_boot unpacks it into font
+%define FONTPACK_NAME font_z
+%include "FONTPACK.INC"
 uiboot_end:
         times   -(UIBOOT_ORG + (uiboot_end - uiboot_start) > (UI_IMG_PARAS << 4) + (ui_bss_end - ui_bss_start)) db 0
         times   -((INI_READ + 1 + FONT_BYTES) & 1) db 0   ; (entries is even: ualignb(2))
@@ -354,7 +363,7 @@ section ui                              ; (UI_PARAS: ui_image_end ends it)
         EVEN    compose.r1, compose.r2, compose.noold, compose.r3, compose.r4, compose.old1
         EVEN    hide_cursor, hide_cursor.row, fill_band, fill_band.r, clip_rows, clip_rows.ok
         EVEN    invert_band, invert_band.r, vline.r, puts, putsn, putsn.x, putsn.ok, strlen, strlen.l, strlen.x
-        EVEN    sb_str, sb_str.x, sb_u32.p, sb_u32.x, sb_2d, sb_date, sb_date.m, bcd, sb_title, sb_title.c, sb_title.x
+        EVEN    sb_str, sb_str.x, sb_u32.p, sb_u32.x, sb_2d, sb_date, sb_date.m, bcd, sb_title, sb_title.t, sb_title.x
         EVEN    win_save.r, win_restore.r, win_ev, win_ev.pass, ui_dispatch.l, ui_dispatch.n, lv_row, lv_row.f, xor_rect.vl
         EVEN    ..@ui_retf, run_app.abs, saver.l, saver.z, ..@ui_sidle, tick
         EVEN    dta2ent, ent_cmp, ent_ptr, kind_of.k, kind_of.n, to_fcb, to_fcb.n, to_fcb.e, to_fcb.el
@@ -365,4 +374,4 @@ section ui                              ; (UI_PARAS: ui_image_end ends it)
 ; first in it)
 [absolute 0]
         times   -(OVL_AT < (image_end - start) + (bufs - bss_start)) resb 1
-        times   -(OVL_AT + (ovl_end - init) > (image_end - start) + (fatbuf - bss_start) + 512 * MAXSPF) resb 1
+        times   -(OVL_AT + (ovl_mend - init) > (image_end - start) + (fatbuf - bss_start) + 512 * MAXSPF) resb 1

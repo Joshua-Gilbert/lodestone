@@ -99,7 +99,7 @@ calc_eval:
         call    c_skip
         or      al, al
         jnz     c_esyn
-        cmp     byte [c_fpu], 0
+        call    c_isfpu
         je      .int
         call    c_check
         fstp    tword [c_ans]
@@ -133,6 +133,13 @@ c_check:
         jmp     short c_enan
 .x:     ret
 
+; (CALC.RUN's hot pads: none in CALC.COM, whose labels needn't be even)
+%macro RPAD 1
+%ifdef CALC_RUN
+        times ($ + %1 - $$) & 1 db 90h
+%endif
+%endmacro
+
 ; the errors: back to calc_eval's caller from any depth
 c_esyn: mov     al, E_SYN
         jmp     short c_fail
@@ -149,7 +156,7 @@ c_edeep: mov    al, E_DEEP
 c_elnam: mov    al, E_LNAME
 c_fail: mov     sp, [c_sp]
         cbw
-        cmp     byte [c_fpu], 0
+        call    c_isfpu
         je      .x
         fninit
 .x:     stc
@@ -260,7 +267,7 @@ c_prim: call    c_skip
         call    c_expr
         call    c_close
         pop     dx
-        cmp     byte [c_fpu], 0
+        call    c_isfpu
         jne     .go
         cmp     dx, f_abs               ; (without a coprocessor, only ABS)
         je      .go
@@ -350,7 +357,7 @@ c_push: mov     bx, [c_vsp]
         jmp     c_edeep
 .ok:    add     word [c_vsp], 10
         add     bx, c_vs
-        cmp     byte [c_fpu], 0
+        call    c_isfpu
         je      .i
         fstp    tword [bx]
         ret
@@ -370,14 +377,14 @@ c_bin:  push    si
         add     si, 5
         jmp     .f
 .h:     mov     ax, [si+1]
-        cmp     byte [c_fpu], 0
+        call    c_isfpu
         jne     .x
         mov     ax, [si+3]
 .x:     mov     [c_h], ax
         sub     word [c_vsp], 10
         mov     bx, [c_vsp]
         add     bx, c_vs
-        cmp     byte [c_fpu], 0
+        call    c_isfpu
         je      .i
         fld     tword [bx]
         call    [c_h]
@@ -394,7 +401,7 @@ c_bin:  push    si
         ret
 
 c_ldans:
-        cmp     byte [c_fpu], 0
+        call    c_isfpu
         je      .i
         fld     tword [c_ans]
         ret
@@ -404,13 +411,13 @@ c_ldans:
         mov     [c_iacc+2], ax
         ret
 
-k_pi:   cmp     byte [c_fpu], 0
+k_pi:   call    c_isfpu
         jne     .f
         jmp     c_e287
 .f:     fldpi
         ret
 
-c_neg:  cmp     byte [c_fpu], 0
+c_neg:  call    c_isfpu
         je      .i
         fchs
         ret
@@ -428,7 +435,7 @@ c_neg:  cmp     byte [c_fpu], 0
 
 ; ---- numbers --------------------------------------------------------
 ; SI at a digit or '.': the number -> the number being worked on
-c_num:  cmp     byte [c_fpu], 0
+c_num:  call    c_isfpu
         je      .int
         fldz
         xor     bx, bx                  ; its power of ten
@@ -578,14 +585,12 @@ f_rem:  call    c_check
 f_pow:  fld     st1
         frndint
         fcomp   st2
-        fstsw   ax
-        sahf
+        call    c_sw
         jne     .real
         fld     st1
         fabs
         ficomp  word [c_k32k]
-        fstsw   ax
-        sahf
+        call    c_sw
         ja      .real
         fld     st1
         fistp   word [c_w]
@@ -595,9 +600,7 @@ f_pow:  fld     st1
         mov     ax, [c_w]
         call    c_ipow
         jmp     f_drop
-.real:  ftst
-        fstsw   ax
-        sahf
+.real:  call    c_ftst
         jb      .nan                    ; (a fraction of a negative)
         jne     .pos
         fxch                            ; 0^y: 0, or for y < 0 1/0
@@ -641,14 +644,11 @@ c_exp2: fld     st0
         fld     st0
         fabs
         ficomp  word [c_klim]
-        fstsw   ax
-        sahf
+        call    c_sw
         ja      .far
         fsub    st1, st0                ; i f   (|f| <= 1/2)
         fxch                            ; f i
-        ftst
-        fstsw   ax
-        sahf
+        call    c_ftst
         jae     .p
         fabs                            ; 2^-|f| = 1 / 2^|f|
         f2xm1
@@ -664,9 +664,7 @@ c_exp2: fld     st0
         fstp    st1
         ret
 .far:   fstp    st0                     ; z
-        ftst
-        fstsw   ax
-        sahf
+        call    c_ftst
         jb      .zero
         jmp     c_ebig
 .zero:  fstp    st0                     ; 2^(very negative) = 0
@@ -676,7 +674,7 @@ c_exp2: fld     st0
 ; ---- the coprocessor's functions --------------------------------------
 f_sqrt: fsqrt
         ret
-f_abs:  cmp     byte [c_fpu], 0
+f_abs:  call    c_isfpu
         je      .i
         fabs
         ret
@@ -691,9 +689,7 @@ f_ln:   fldln2
         jmp     short f_lg
 f_log:  fldlg2
 f_lg:   fxch                            ; x, log base 2 of e or 10
-        ftst
-        fstsw   ax
-        sahf
+        call    c_ftst
         jbe     .nan                    ; FYL2X wants x > 0
         fyl2x
         ret
@@ -735,9 +731,7 @@ c_trig: cmp     byte [c_deg], 0         ; degrees: c_trig287, which reduces
 c_trig287:
         call    c_check                 ; (FPREM: as in f_rem)
         mov     bh, 0
-        ftst
-        fstsw   ax
-        sahf
+        call    c_ftst
         jae     .p
         fabs
         inc     bh                      ; a negative x: sin and tan change sign
@@ -763,9 +757,7 @@ c_trig287:
 .b:     test    ah, 2
         jz      .c
         or      cl, 1
-.c:     ftst
-        fstsw   ax
-        sahf
+.c:     call    c_ftst
         jne     .t
         fld1                            ; r = 0: X = 1, Y = r = 0
         jmp     short .o
@@ -823,17 +815,14 @@ f_atan: cmp     byte [c_fpu], 2
         fpatan                          ; (287XL: any argument)
         jmp     short .deg
 .p:     mov     bh, 0                   ; 80287: 0 < Y < X only
-        ftst
-        fstsw   ax
-        sahf
+        call    c_ftst
         je      .x                      ; atan 0 = 0
         jae     .a
         fabs
         inc     bh
 .a:     fld1                            ; 1 v
         fcom    st1
-        fstsw   ax
-        sahf
+        call    c_sw
         je      .one
         ja      .lt
         fxch                            ; v 1: atan(1/v),
@@ -1013,7 +1002,7 @@ i_pow:  or      dx, dx
 ; 15 digits (corrected when log10 was off by one), FBSTP for the digits.
 ; e from -5 to 14 is written out (0.001, 1024), else 1.5E+20.
 calc_fmt:
-        cmp     byte [c_fpu], 0
+        call    c_isfpu
         jne     .f
         mov     ax, [c_ans]
         mov     dx, [c_ans+2]
@@ -1024,15 +1013,15 @@ calc_fmt:
         call    i_neg
 .u:     call    c_u32
         jmp     .end
+        RPAD 0
 .f:     fld     tword [c_ans]
-        ftst
-        fstsw   ax
-        sahf
+        call    c_ftst
         jne     .nz
 .tiny:  fstp    st0
         mov     al, '0'
         stosb
         jmp     .end
+        RPAD 0
 .nz:    jae     .pos
         mov     al, '-'
         stosb
@@ -1051,19 +1040,19 @@ calc_fmt:
         fild    word [c_k10]
         call    c_ipow                  ; v * 10^(14-e)
 .hi:    fcom    qword [c_e15]
-        fstsw   ax
-        sahf
+        call    c_sw
         jb      .lo
         fidiv   word [c_k10]
         inc     word [c_e]
         jmp     .hi
+        RPAD 0
 .lo:    fcom    qword [c_e14]
-        fstsw   ax
-        sahf
+        call    c_sw
         jae     .rnd
         fimul   word [c_k10]
         dec     word [c_e]
         jmp     .lo
+        RPAD 0
 .rnd:   frndint
         fcom    qword [c_e15]           ; (9.99...95 rounds up)
         fstsw   ax
@@ -1134,7 +1123,7 @@ calc_fmt:
 .e2:    xor     dx, dx
         call    c_u32
 .end:   mov     byte [di], 0
-        cmp     byte [c_fpu], 0         ; nothing left on the coprocessor (its
+        call    c_isfpu
         je      .x                      ;  sticky flags: a program after us
         fninit                          ;  may unmask them)
 .x:     ret
@@ -1150,6 +1139,15 @@ c_copy: cmp     si, bp
         jmp     c_copy
 .x:     ret
 
+; ZF: no coprocessor (CMP's flags)
+c_isfpu: cmp    byte [c_fpu], 0
+        ret
+; FTST's, or the last compare's, condition codes in the flags (AX changes)
+c_ftst: ftst
+c_sw:   fstsw   ax
+        sahf
+        ret
+
 ; DX:AX (unsigned) in decimal at DI
 %ifdef CALC_RUN
 c_u32:  mov     cx, dx                  ; (CALC.RUN: the core's, CX:AX; only
@@ -1161,7 +1159,7 @@ c_u32:  mov     bx, 10
         mov     ax, dx
         xor     dx, dx
         div     bx
-        mov     si, ax
+        xchg    si, ax                  ; (SI = the high word; AX popped)
         pop     ax
         div     bx
         push    dx

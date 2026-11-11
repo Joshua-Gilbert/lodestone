@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-LODE_VER    equ 0100h                   ; Lodestone 1.0.0 (BH.BL: major, minor<<4 | patch)
+LODE_VER    equ 0110h                   ; Lodestone 1.1.0 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -209,6 +209,9 @@ exec_main:
 ; ui_load put it there); nothing returns into it once ex_start runs
 section uiboot
 ui_boot:
+        mov     si, font_z              ; Lodefont, unpacked (LODE.ASM,
+        mov     di, font                ;  FONTPACK.INC)
+        FONT_UNPACK
         mov     byte [mstarted], 1
         mov     ax, UI_PARAS * 16       ; where .RUN programs load
         mov     [run_base], ax
@@ -385,11 +388,15 @@ font_boot:
         mov     di, font_path + 3       ; (the font is read once, after both)
         mov     cx, 12
 .c:     lodsb
-        cmp     al, ' '                 ; (CR, LF, the end, a space or tab)
-        jbe     .e
-        stosb
-        loop    .c
-.e:     mov     byte [di], 0            ; ("FONT=": Lodefont)
+        cmp     al, ' '                 ; (to CR, LF, the end or a tab: a
+        jb      .e                      ;  name may have a space inside, as
+        stosb                           ;  System's list can choose; the
+        loop    .c                      ;  trailing ones dropped)
+.e:     cmp     byte [es:di-1], ' '
+        jne     .e0
+        dec     di
+        jmp     .e
+.e0:    mov     byte [di], 0            ; ("FONT=": Lodefont)
         dec     si
 .next:  lodsb
         or      al, al
@@ -461,16 +468,73 @@ saver_set:
         pop     ax
         ret
 
-; INT 24h while the UI runs: fail the call, remember why (UI_CRITERR)
+; INT 24h while the UI runs: fail the call, remember why (UI_CRITERR).
+; But an invalid disk change (0Fh: the disk taken out with its files open
+; or changes to go) and a FAT's write (AH: 1Bh, another floppy's changes
+; that can't go out: its look, KDISK.INC fat_out) are asked about, as
+; MS-DOS does, the UI's screen in front: the disk put back, RETURN tries
+; again (Retry); ESC fails, the user's (the changes given up, rule 4).
+; Keys only, through the BIOS (no INT 21h, saver or switch meanwhile)
 ui_int24:
         push    ax
         mov     ax, di
         xor     ah, ah
         inc     ax
         mov     [cs:crit_err], ax
+        cmp     al, 0Fh + 1
         pop     ax
-        mov     al, 3                   ; Fail
+        je      .q
+        push    ax
+        and     ah, 7
+        cmp     ah, 3                   ; (a write, the FAT's)
+        pop     ax
+        jne     .f
+.q:
+        pusha
+        push    ds
+        push    es
+        push    cs
+        pop     ds
+        add     al, 'A'
+        mov     [s_dchg_d], al
+        xor     bx, bx                  ; (a text screen in front: a task's,
+        mov     es, bx                  ;  MULTITASK=1: nowhere to ask)
+        mov     al, [es:449h]
+        mov     bl, 83h                 ; (Fail with nobody asked: the
+        cmp     al, 7                   ;  kernel keeps the disk's changes,
+        je      .a                      ;  KDISK.INC rule 4)
+        cmp     al, 3
+        jbe     .a
+        push    cs
+        pop     es
+        mov     si, s_dchg
+        mov     di, s_confirm
+        call    band_up
+        mov     bl, 3                   ; (ESC: Fail, the user's)
+.dr:    mov     ah, 11h                 ; keys typed before it asked, and
+        int     16h                     ;  with another one, go (as
+        jz      .k                      ;  COMMAND's INT 21h 0C01h): an ESC
+        call    read_key                ;  typed for something else must not
+        jmp     .dr                     ;  give a disk's changes up unseen
+.k:     call    read_key
+        cmp     ax, K_ESC
+        je      .n
+        cmp     ax, K_ENTER
+        je      .y
+        cmp     ax, K_CODE_ENTER
+        jne     .dr
+.y:     mov     bl, 1                   ; Retry (asked again if it isn't
+        mov     [crit_err], bh          ;  back; BH 0)
+.n:     call    band_down
+.a:     mov     bp, sp
+        mov     [bp+18], bl             ; (AL: pusha's)
+        pop     es
+        pop     ds
+        popa
         iret
+.f:     mov     al, 83h                 ; Fail, nobody asked (rule 4)
+        iret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 set24:  push    ax
         push    dx
@@ -1938,9 +2002,11 @@ api_sberr:
         or      ax, ax
         jz      .chk
         mov     bx, ax
+        cmp     al, 16                  ; (0Fh, an invalid disk change: DOS's
+        je      .dc                     ;  34; AH is 0: INT 24h's DI + 1)
         cmp     ax, 13
         ja      .other                  ; (said as its own number, as before)
-        add     bl, 18
+.dc:    add     bl, 18
 .chk:   or      bh, bh                  ; (the tables hold codes under 256)
         jnz     .other
 .find:  mov     al, [si]
@@ -1953,7 +2019,15 @@ api_sberr:
         or      al, al
         jnz     .skip
         jmp     .find
-.hit:   call    sb_str
+.hit:   cmp     byte [si], '('          ; "(data)": "Disk error (data)"
+        jne     .s
+        push    si
+        mov     si, s_dskerr
+        call    sb_str
+        mov     al, ' '
+        stosb
+        pop     si
+.s:     call    sb_str
         jmp     .x
 .other: mov     si, s_err
         call    sb_str
@@ -3876,7 +3950,16 @@ ui_run: push    es
         mov     ax, 11
         stc
         jmp     short .x
-.dos:   call    hide_cursor
+.dos:   mov     dx, si                  ; the program's attributes first,
+        mov     ah, 43h                 ;  our INT 24h in and our screen in
+        mov     al, 0                   ;  (AH, AL: what follows even)
+        int     21h                     ;  front: another floppy's changes
+                                        ;  that can't go out asked about
+                                        ;  here (its drive's FAT wanted,
+                                        ;  whichever: A:, B:, M:, R:), not
+                                        ;  its load failed by the kernel's
+                                        ;  for nobody (KDISK.INC rule 4)
+        call    hide_cursor
         call    mouse_off
         mov     ax, 0003h
         int     10h
@@ -4473,6 +4556,8 @@ wait_ticks:
 s_pause     db 13, 10                   ; (then s_anykey's)
 s_anykey    db 'Press any key',0
 s_confirm   db 'Press RETURN to confirm or ESC to cancel',0
+s_dchg      db 'Put the disk back in drive '        ; (ui_int24's)
+s_dchg_d    db 'B:',0
 s_formhelp  db 'RETURN: next item    CODE-RETURN or click here: confirm    ESC: cancel',0
 s_am        db ' am',0
 s_pm        db ' pm',0
@@ -4493,7 +4578,8 @@ exec_fcb    db 0, '           ', 0, 0, 0, 0
 run_epb     dw 0, run_tail, 0, exec_fcb, 0, exec_fcb, 0 ; exec_raw's EXEC block:
                                 ;  our environment; the segments are CS's
 s_err       db 'error ',0
-; DOS errors (code, text); 19-31 are INT 24h's too (its code + 18)
+; DOS errors (code, text); 19-31 are INT 24h's too (its code + 18).  A
+; text in brackets is "Disk error (...)" (api_sberr)
 dos_msgs    db 2, 'File not found',0
             db 3, 'Path not found',0
             db 4, 'Too many files open',0
@@ -4505,16 +4591,18 @@ dos_msgs    db 2, 'File not found',0
             db 19, 'Disk is write-protected',0
             db 20, 'Unknown drive',0
             db 21, 'Drive not ready (no disk?)',0
-            db 22, 'Disk error (unknown command)',0
-            db 23, 'Disk error (data)',0
-            db 24, 'Disk error (bad request)',0
-            db 25, 'Disk error (seek)',0
+            db 22, '(unknown command)',0
+            db 23, '(data)',0
+            db 24, '(bad request)',0
+            db 25, '(seek)',0
             db 26, 'Not a DOS disk',0
-            db 27, 'Disk error (sector not found)',0
+            db 27, '(sector not found)',0
             db 28, 'Printer out of paper',0
-            db 29, 'Disk error (write)',0
-            db 30, 'Disk error (read)',0
-            db 31, 'Disk error',0
+            db 29, '(write)',0
+            db 30, '(read)',0
+            db 31
+s_dskerr    db 'Disk error',0         ; (and "Disk error (...)" for those above)
+            db 34, 'Invalid disk change',0
             db 39, 'Disk is full',0
             db 80, 'File already exists',0
             db 83, 'Disk error',0

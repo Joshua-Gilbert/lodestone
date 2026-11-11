@@ -252,7 +252,37 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '564.6', 88: '580.7'}   # (1.0, a menu's keys in their column: 16 bytes, 0.1 KB less with no EMS;
+MEM_044 = {0: '562.2', 88: '578.3'}   # (a Fail nobody was asked for kept apart (83h), a FAT's look a
+                                      #  write's and the user's Fail giving its changes up, a directory not
+                                      #  taken for the root when its disk can't be read, a close's slot by name:
+                                      #  64 bytes, 0.1 KB less, 2026-11-09; 562.3 / 578.4 before; F008h given the sector as read and as written, a failed root write's
+                                      #  two sums, a floppy's FAT written from another drive's call only after
+                                      #  a look at its drive: 192 bytes, 0.2 KB less, 2026-11-09; 562.5 / 578.6
+                                      #  before; INT 21h F008h, a floppy its program wrote through INT 13h taken as
+                                      #  it is (LABEL), an Abort at a close leaving its handle to terminate:
+                                      #  80 bytes, 0.1 KB less, 2026-11-09; 562.6 / 578.7 before;
+                                      #  a disk changed on another machine told apart by its root's first
+                                      #  sector: 160 bytes, 0.1 KB less, 2026-11-09; 562.7 / 578.8 before;
+                                      #  a disk changed under a transfer asked about there and then
+                                      #  (Retry, Fail), each task's directories with their mount, MS-DOS's
+                                      #  2-second rule for a drive without a change line, the Executive's
+                                      #  question for it: 400 bytes, 0.4 KB less, 2026-11-08;
+                                      #  a floppy's mount rules: a file's mount number, "Invalid disk change"
+                                      #  while files are open, the current directory found again by name, broken
+                                      #  links past the disk's end: 576 bytes, 0.6 KB less, 2026-11-08;
+                                      #  a failed write's rules: each disk's FAT its own, the clusters a failed
+                                      #  write took given back, chain walks that stop on a free entry, "Invalid disk
+                                      #  change": 496 bytes, 0.5 KB less, 0.4 KB with EMS, 2026-11-08;
+                                      #  fat_drop and SF_LOST out, the writes in order (an entry before the frees
+                                      #  it lets go of), a failed buffer read again at Abort, terminate's Abort as
+                                      #  Fail: 16 bytes more, 0.1 KB less with EMS, 2026-11-08;
+                                      #  ROM 1's room: Lodefont packed, the UI block 64 bytes less: 0.1 KB more,
+                                      #  2026-11-07;
+                                      #  a failed write's FAT changes dropped: fat_drop, SF_LOST, 96 bytes, 0.1 KB less,
+                                      #  2026-11-07;
+                                      #  MS-DOS's FCB search for the label, its names and its CHDIR, the
+                                      #  Executive's whole names: 0.4 KB less, 2026-11-07;
+                                      #  1.0, a menu's keys in their column: 16 bytes, 0.1 KB less with no EMS;
                                       #  a program's modes on the Executive's menu: 0.2 / 0.3 KB less;
                                       #  the Executive's right-click menu: 0.6 / 0.5 KB less;
                                       #  M12: 0.1 KB less with EMS, INT 21h F007h (the hard disk's name for System);

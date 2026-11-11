@@ -169,6 +169,7 @@ start:  cld
         cmp     ax, 4F47h
         jne     .ro
         mov     byte [lodestone], 1
+        mov     byte [crit_a], 83h              ; (its kernel's nobody-asked)
 .ro:    push    ds
         xor     ax, ax
         mov     ds, ax
@@ -190,8 +191,9 @@ start:  cld
         int     21h                             ; one): fail, no prompt
         mov     [sp0], sp
         jmp     main
-crit:   mov     al, 3
-        iret
+crit:   mov     al, [cs:crit_a]         ; Fail: 83h, nobody asked, on
+        iret                            ;  Lodestone (its kernel drops
+crit_a  db      3                       ;  nothing, its rule 4); else 3
 
 nomem:  mov     dx, s_nomem
         jmp     short txtfail
@@ -2824,22 +2826,26 @@ sb_count:
 
 ; the 11-byte name at SI as NAME.EXT, at DI
 sb_name:
-        mov     cx, 8
-.n:     lodsb
-        cmp     al, ' '
-        je      .ns
-        stosb
-.ns:    loop    .n
-        cmp     byte [si], ' '
+        mov     cx, 8                   ; (as the kernel's, MS-DOS's: each
+        rep     movsb                   ;  part's trailing spaces dropped,
+.nt:    cmp     byte [di-1], ' '        ;  not those inside)
+        jne     .e0
+        dec     di
+        inc     cx
+        cmp     cx, 8
+        jb      .nt
+.e0:    cmp     word [si], '  '
+        jne     .e
+        cmp     byte [si+2], ' '
         je      .x
-        mov     al, '.'
+.e:     mov     al, '.'
         stosb
         mov     cx, 3
-.e:     lodsb
-        cmp     al, ' '
-        je      .es
-        stosb
-.es:    loop    .e
+        rep     movsb
+.et:    cmp     byte [di-1], ' '
+        jne     .x
+        dec     di
+        jmp     .et
 .x:     ret
 
 sb_str: lodsb

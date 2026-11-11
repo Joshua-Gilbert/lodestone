@@ -73,6 +73,49 @@ def check(name, cond, detail=''):
     results.append((name, bool(cond)))
     print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:600]) if detail and not cond else ''))
 
+def t_spacenames():
+    print('== the Executive: names with a space inside (another system\'s, or one Rename makes)')
+    def mkf(n, b):
+        t = os.path.join(OUT, n); open(t, 'wb').write(b); return t
+    p = image('spn.img', 'AB.TXT=' + mkf('sp_ab', b'precious'), 'ABXCD.TXT=' + mkf('sp_abcd', b'abcd'), 'D\\',
+              'D\\KEEP.TXT=' + mkf('sp_k', b'keep'), 'DXE\\', 'DXE\\IN.TXT=' + mkf('sp_in', b'in'),
+              'X.TXT=' + mkf('sp_x', b'x'), 'MY.TXT=' + mkf('sp_my', b'mine'))
+    img = bytearray(open(p, 'rb').read())
+    for n in (b'ABXCD   TXT', b'DXE        '):
+        i = img.find(n); img[i + n.index(b'X')] = 0x20
+    open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    k.select('AB CD.TXT'); k.key(CODE['D']); k.key(ktest.ENTER)
+    check('Delete on "AB CD.TXT": that file gone, AB.TXT kept (it took the name to its first space)',
+          'A:\\AB CD.TXT' not in A() and A().get('A:\\AB.TXT') == b'precious', (k.band(), sorted(A())))
+    k.select('X.TXT'); k.key(CODE['R']); k.key('my file.txt', ktest.ENTER)
+    k.select('MY FILE.TXT'); k.key(CODE['D']); k.key(ktest.ENTER)
+    check('Rename to "my file.txt", then Delete on it: MY FILE.TXT made and gone, MY.TXT kept',
+          'A:\\MY FILE.TXT' not in A() and 'A:\\X.TXT' not in A() and A().get('A:\\MY.TXT') == b'mine', (k.band(), sorted(A())))
+    to_subject(k, 'D E')
+    check('the subject "D E": its titles (IN.TXT), not D\'s', k.exec_list() == ['IN.TXT'], (k.exec_list(), k.band()))
+
+def t_syslabel():
+    print('== System: a label with spaces in it')
+    p = image('syslab.img', SYSTEM)
+    img = bytearray(open(p, 'rb').read())
+    at = next(19 * 512 + i for i in range(0, 224 * 32, 32) if img[19 * 512 + i + 11] == 8)
+    img[at:at + 11] = b'ABC     DEF'
+    open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    k.key(CODE['U']); k.key(ktest.DOWN)
+    check('Disks: a label whose 8.3 split falls among spaces ("ABC     DEF") shown as on the disk',
+          has(k, 'ABC     DEF'), screen(k))
+    k.key(ktest.ESC)
+    # on a LODE.SYS before 1.1 (no FCB calls: INT 21h 11h answers FFh), its label by 4Eh as before
+    p = mkimg.build(os.path.join(OUT, 'syslab10.img'), [os.path.join(GOS, 'releases', '1.0', 'LODE.SYS'), SYSTEM])
+    k = ktest.KPC(p); k.start()
+    k.key(CODE['U']); k.key(ktest.DOWN)
+    check('Disks on 1.0\'s LODE.SYS (no FCB calls): the label by 4Eh, LODESTONE, not "(no label)"',
+          any('Drive A:' in l and 'LODESTONE' in l for l in lines(k)), screen(k))
+    k.key(ktest.ESC)
+
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [SYS] + list(files))
 
@@ -180,7 +223,7 @@ def t_core():
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
     # INT 16h AH=10h; pcemu now models that
     k.key(K_CODE_HELP)
-    check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 1.0 Help'), screen(k))
+    check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 1.1 Help'), screen(k))
     check('... its lines (HT, 25 in place of the spaces, API 10) as they were, and its window as wide (57: its longest line, '
           '51, and 6)', has(k, 'CODE-D                   Delete (a file or subject)') and has(k, 'Return or click again    open it / next item')
           and has(k, 'CODE is the Alt key.  Any key closes.') and geo[0][2] == 57, (geo, screen(k)))
@@ -256,9 +299,9 @@ def t_core():
             (83, 4): 'Disk error (unknown command)', (83, 5): 'Disk error (data)', (83, 6): 'Disk error (bad request)',
             (83, 7): 'Disk error (seek)', (83, 8): 'Not a DOS disk', (83, 9): 'Disk error (sector not found)',
             (83, 10): 'Printer out of paper', (83, 11): 'Disk error (write)', (83, 12): 'Disk error (read)',
-            (83, 13): 'Disk error', (83, 14): 'error 14', (83, 0): 'Disk error', (20, 0): 'Unknown drive',
+            (83, 13): 'Disk error', (83, 14): 'error 14', (83, 16): 'Invalid disk change', (83, 0): 'Disk error', (20, 0): 'Unknown drive',
             (22, 0): 'Disk error (unknown command)', (24, 0): 'Disk error (bad request)', (28, 0): 'Printer out of paper',
-            (32, 0): 'error 32'}
+            (32, 0): 'error 32', (34, 0): 'Invalid disk change'}
     got = {}
     for c in want:
         case.append(c); k.key(CODE['E'])
@@ -401,7 +444,7 @@ def t_system():
     shot(k, 'system_gpib')
     check('GPIB scan finds the instruments on the simulated bus (6, 14, 29)', re.search(r'Instruments at\s+6, 14, 29', screen(k)), screen(k))
     k.key('A')
-    check('About', has(k, 'Lodestone 1.0') and has(k, '3.30 compatible'), screen(k))
+    check('About', has(k, 'Lodestone 1.1') and has(k, '3.30 compatible'), screen(k))
     k.key(ktest.F1)
     check('help', has(k, 'System Help') and has(k, 'back to the Executive'), screen(k))
     check('... its lines with HT, 29 as they were with the spaces', has(k, 'ESC  or  CODE-Q              back to the Executive')
@@ -965,8 +1008,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it): the directory buffer is lent while it runs' % kb,
-          kb >= 564.6, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it; 0.4 KB, MS-DOS\'s FCB search (11h, 12h: a label\'s 11 bytes, as COMMAND\'s VOL reads it; its pattern as DOS 3 takes it), names (a space inside, a first E5h; the Executive\'s whole) and CHDIR (the whole path, 63 characters; no subject past it); 112 bytes, a failed write\'s changes in order (an entry before the frees it lets go of; a failed buffer read again at Abort; terminate\'s Abort as Fail); then 0.1 KB back, ROM 1\'s room: Lodefont packed, "Disk error (" shared; 496 bytes, a failed write\'s rules: each disk\'s FAT its own, the clusters a failed write took given back, chain walks that stop on a free entry, "Invalid disk change"; 576 bytes, a floppy\'s mount rules: a file\'s mount number, "Invalid disk change" while files are open, the current directory found again by name, broken links past the disk\'s end; 400 bytes, a disk changed under a transfer: asked about there and then (Retry, Fail), each task\'s current directories with their mount, MS-DOS\'s 2-second rule for a drive without a change line, and the Executive\'s question for it; 160 bytes, a disk changed on another machine told apart by its root\'s first sector; 80 bytes, INT 21h F008h, a floppy its program wrote itself through INT 13h taken as it is (LABEL), and an Abort at a close leaving its handle to terminate; 192 bytes, F008h given the sector as read and as written, a failed root write\'s two sums, a floppy\'s FAT written from another drive\'s call only after a look at its drive; 64 bytes, a Fail nobody was asked for kept apart, a FAT\'s look a write\'s and the user\'s Fail giving its changes up, a directory not taken for the root when its disk can\'t be read, a close\'s slot by name): the directory buffer is lent while it runs' % kb,
+          kb >= 562.2, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -1149,6 +1192,15 @@ def t_font():
         check('a LODE.INI longer than the 4,095 bytes read, FONT= in them, a font file of %d bytes: %s; the Executive comes up'
               % (n, 'taken' if n == 1536 else 'Lodefont stays'), (core_font(k) == data if n == 1536 else core_font(k) == LODEF)
               and not k.crashed and 'SYSTEM.RUN' in k.exec_list() and biosdate(k) == b'10/25/89', (k.where(), k.exec_list(), biosdate(k)))
+    # a font whose name has a space inside (System's list can choose one): FONT= read to the line's end, the
+    # trailing spaces dropped (it stopped at the space: AB.FNT, here a decoy)
+    f = os.path.join(OUT, 'ABXCD.FNT'); data = bytes((i * 5 + 3) & 0xFF for i in range(1536)); open(f, 'wb').write(data)
+    d = os.path.join(OUT, 'AB.FNT'); open(d, 'wb').write(bytes(1536))
+    open(ini, 'wb').write(b'FONT=AB CD.FNT  \r\n')
+    p = image('font6.img', SYSTEM, f, d, ini)
+    img = bytearray(open(p, 'rb').read()); i = img.find(b'ABXCD   FNT'); img[i + 2] = 0x20; open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    check('FONT=AB CD.FNT (a space inside, two after): that font, not AB.FNT', core_font(k) == data, k.where())
 
 # ---------------------------------------------------------------------
 def t_saver():
@@ -1317,6 +1369,12 @@ def t_prtsc_setting():
     k.key(ktest.ESC); k.settle()
     k = reboot(k, 'prs2.img')
     check('after a restart: the same driver (PRINTER= taken, found along PATH)', path() == names[0], (path(), names[0]))
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'PRINTER=PS A.PRN \r\n')
+    psx = os.path.join(OUT, 'PSXA.PRN'); shutil.copy(ps, psx)
+    p = image('prs3.img', SYSTEM, psx, ini)
+    img = bytearray(open(p, 'rb').read()); i = img.find(b'PSXA    PRN'); img[i + 2] = 0x20; open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    check('PRINTER=PS A.PRN (a space inside, one after): that driver, its whole name', path() == b'A:\\PS A.PRN', path())
 
 
 # ---------------------------------------------------------------------
@@ -1738,15 +1796,57 @@ def idle_saver(k):
     k.wr('lastact', struct.pack('<H', (t - 5462 + 18) & 0xFFFF))
     k.pc.run_for(4)
 
+def t_dchg():
+    print('== the Executive and an invalid disk change (INT 24h 0Fh)')
+    # Copy to B:, the disk swapped for another under a write (the BIOS's 06h): asked in the band, as MS-DOS asks
+    # for the volume, not failed quietly; the first disk back and Return: the copy goes on, every byte; ESC: "Can't
+    # copy BIG.DAT: Invalid disk change", the other disk untouched either way
+    import pcemu
+    BIG = bytes(range(256)) * 300
+    big = os.path.join(OUT, 'BIG.DAT'); open(big, 'wb').write(BIG)
+    a = image('dchga.img', big)
+    b = mkimg.build(os.path.join(OUT, 'dchgb.img'), ['DATA\\'])
+    c = bytearray(open(mkimg.build(os.path.join(OUT, 'dchgc.img'), ['OTHER.TXT=' + big]), 'rb').read())
+    c[0x27:0x2B] = b'\x12\x34\x56\x78'; c = bytes(c)                  # (another serial: another disk)
+    for ans in (ktest.ENTER, ktest.ESC):
+        k = ktest.KPC(a, b=b); k.start()
+        pc = k.pc; first = pc.drives[1]; other = pcemu.Floppy(bytearray(c)); other.change_err = True
+        orig = pc.int13; st = {'n': 0}
+        def int13():
+            if pc.r('ah') == 3 and pc.r('dl') == 1 and pc.drives[1] is first:
+                st['n'] += 1
+                if st['n'] == 3: other.changed = True; pc.drives[1] = other
+            return orig()
+        pc.int13 = int13
+        k.select('BIG.DAT'); k.key(CODE['C'])
+        k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\data', K_CODE_ENTER)
+        q = k.band()
+        if ans == ktest.ENTER:
+            first.changed = True; first.change_err = True; pc.drives[1] = first
+        k.key(ans)
+        pc.int13 = orig
+        f1 = fatcheck.read_files(bytes(first.img)); p1 = fatcheck.check(bytes(first.img))[0]
+        if ans == ktest.ENTER:
+            check('Copy to B:\\DATA, another disk in B: under it: "Put the disk back in drive B:" asked in the band; '
+                  'the disk back, Return: "Copied to B:\\DATA\\BIG.DAT", every byte, the disks sound, the other untouched',
+                  q == ['Put the disk back in drive B:', 'Press RETURN to confirm or ESC to cancel']
+                  and k.band()[0] == 'Copied to B:\\DATA\\BIG.DAT' and f1.get('A:\\DATA\\BIG.DAT') == BIG and not p1
+                  and bytes(other.img) == c, (q, k.band(), sorted(f1), p1))
+        else:
+            check('... ESC: "Can\'t copy BIG.DAT: Invalid disk change"; nothing of it on the first disk but an empty '
+                  'temporary file, the disk sound; the other untouched', k.band()[0] == "Can't copy BIG.DAT: Invalid disk change"
+                  and 'A:\\DATA\\BIG.DAT' not in f1 and not p1 and bytes(other.img) == c, (q, k.band(), sorted(f1), p1))
+        k.key(ktest.ENTER)
+
 def t_file_safety():
     print('== the file commands: the review\'s cases (one file however spelled, the saver, long subjects ...)')
     notes = os.path.join(OUT, 'NOTES.TXT'); open(notes, 'wb').write(TEXT)
     BIG = bytes(range(256)) * 100
     big = os.path.join(OUT, 'BIG.DAT'); open(big, 'wb').write(BIG)
-    deep = ['AAAAAAAA.AAA', 'BBBBBBBB.BBB', 'CCCCCCCC.CCC', 'DDDDDDDD.DDD', 'EEEEEEEE.EEE']
+    deep = ['AAAAAAAA.AAA', 'BBBBBBBB.BBB', 'CCCCCCCC.CCC', 'DDDDDDDD.DDD', 'EEEEEEE.EEE']
     dirs = ['\\'.join(deep[:i + 1]) + '\\' for i in range(5)]
     a = image('safea.img', DEFRAG, 'LONGNAME\\', 'LONGNAME\\NOTES.TXT=' + notes, 'WORK\\', *dirs,
-              '\\'.join(deep) + '\\NAMENAME.EXT=' + notes, big)
+              '\\'.join(deep) + '\\NAMENAME.EXT=' + notes, big, '\\'.join(deep[:4]) + '\\EEEEEEEE.EEE\\')
     b = mkimg.build(os.path.join(OUT, 'safeb.img'), ['COPY.TXT=' + notes])
     k = ktest.KPC(a, b=b); k.start()
     A = lambda: fatcheck.read_files(k.pc.drives[0].img)
@@ -1803,10 +1903,12 @@ def t_file_safety():
         check('%s with %r: refused' % ({'R': 'Rename', 'C': 'Copy', 'M': 'Move'}[cmd], ''.join(x for x in keys if isinstance(x, str))),
               k.band()[0] == want and A().get(LN) == TEXT and k.exec_list() == ['NOTES.TXT'], (k.band(), sorted(A())))
         k.key(ktest.ENTER)
-    # 3. a long subject: five levels of 8.3 names (as deep as the Subject list goes), 65 characters
-    to_subject(k, 'EEEEEEEE.EEE')
+    # 3. a long subject: five levels of 8.3 names (as deep as the Subject list goes), 64 characters
+    to_subject(k, 'EEEEEEE.EEE')
     D = 'A:\\' + '\\'.join(deep)
-    check('the deepest subject: 65 characters (Copy\'s field held 63)', len(D) - 2 == 65 and k.exec_list() == ['NAMENAME.EXT'], k.exec_list())
+    check('the deepest subject: 64 characters ("\\" and 63, MS-DOS\'s longest current directory)', len(D) - 2 == 64 and k.exec_list() == ['NAMENAME.EXT'], k.exec_list())
+    check('... and its sibling of 65 (EEEEEEEE.EEE, past CHDIR\'s) is not a subject in the list',
+          [s.strip() for s in subjects(k)].count('EEEEEEE.EEE') == 1 and 'EEEEEEEE.EEE' not in [s.strip() for s in subjects(k)], subjects(k))
     k.key(CODE['C'])
     check('... the Copy form holds all of it, and the title field is intact', bytes(k.rd('c_sub', 67)).split(b'\0')[0].decode() == D[2:]
           and bytes(k.rd('c_tit', 13)).split(b'\0')[0] == b'NAMENAME.EXT', (k.rd('c_sub', 67), k.rd('c_tit', 13)))
@@ -3846,7 +3948,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
+    for t in (t_core, t_system, t_syslabel, t_spacenames, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_dchg, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
               t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]

@@ -825,7 +825,7 @@ The checks:
 - **A new task starts with its spawner's vectors** (`mt_vnew`), but INT 22h-24h are MT's:
   - 22h is its stub's end;
   - 23h is the kernel's ^C (end the program);
-  - 24h is `mt_i24`, a prompt like a shell's: "Not ready reading drive A: Abort, Retry, Fail?", through INT 10h and 16h. It goes on the screen in front (M4a).
+  - 24h is `mt_i24`, a prompt like a shell's: "Not ready reading drive A: Abort, Retry, Fail?", through INT 10h and 16h ("Invalid disk change writing drive B" for code 0Fh, as COMMAND says it). It goes on the screen in front (M4a). A task's error behind a graphics screen is failed at once with 83h, a Fail nobody was asked for: the kernel drops no floppy's changes for it (KDISK.INC rule 4).
 
   So a shell that starts a task (LCMD, through MTLAUNCH or, since M7a, START) doesn't hand it its own ^C and critical-error handlers. Those would run the shell's code in the task (LCMD's ^C goes back to its prompt, on the task's stack), and point into freed memory once the shell ends. Its stub's PSP gets the same three, so its programs do too.
 - **A TSR loaded from the Executive before a task starts** is in that task's vectors too; one loaded after isn't.
@@ -1006,6 +1006,8 @@ The checks:
   - `mt_safe` and `mt_can` test `mt_crit`.
   - INT 10h, 16h and 33h now treat `mt_crit` as a prompt running whether INT 21h is under way or not, so the prompt goes on the real screen and reads the real keys. Before, they took it outside INT 21h for a count left over.
   - A count left by a handler that ended its program instead of answering is cleared at that program's end (`mt_pgend`). `mt_c24` doesn't take it below 0.
+- **A background task's critical error behind a graphics screen is still Fail at once**, "Invalid disk change" (0Fh) too: its floppy's old disk dropped, its files there refused. Holding the task at the question while the others run isn't done: the question is asked from inside the kernel's transfer, whose state (the transfer, the buffers, the FAT cache, the drive's mount) is everyone's, so nothing else could use a disk meanwhile, and nobody could see it to answer. The Executive in front asks for its own (`ui_int24`: "Put the disk back in drive B:", RETURN tries again, ESC fails).
+- **Each task's current directories go with their floppy's mount** (`TX_MG`, `mt_vsave` and `mt_vload`): a task run again after another disk was mounted in its drive (by another task) finds them again by name at its next access there (D_CHK 2), else the root, as the kernel does for itself, so a relative name never lands in the old disk's cluster on the new one. So does a look since that took the disk for the same one (`TX_ML`, a 16-bit count, `mlook`: the disk may have changed elsewhere). RMDIR refuses another task's current directory on A:, B: or C: (16, as MS-DOS checks every CDS: `mt_rd`, at `f_3A.mt`, parked tasks' TX read through window 0; M: and R: have one current directory for all tasks, the kernel's own test); another mount's or an unknown one is found again by name, and a directory gone is the root then.
 
 **How a task is ended:**
 - **The address the task would resume at is replaced with `mt_kdie`.**

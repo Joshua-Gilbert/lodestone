@@ -286,6 +286,15 @@ snap_free:
         ret
 
 vec_ours:
+        xor     dx, dx                  ; (DL 0: under NetWare's shell F000h
+        mov     ax, 0F000h              ;  sets the preferred server, 0 none)
+        int     21h                     ; Lodestone?  (its kernel takes 83h,
+                                        ;  a Fail nobody was asked for;
+        cmp     ax, 4F47h               ;  MS-DOS's answers are 0-3)
+        mov     al, 3
+        jne     .a
+        mov     al, 83h
+.a:     mov     [i24_fail], al
         mov     dx, int23
         mov     ax, 2523h
         int     21h
@@ -315,8 +324,9 @@ int24:  test    ah, 08h                 ; critical error: fail if allowed,
         jz      .fail
         xor     al, al
         iret
-.fail:  mov     al, 3
-        iret
+.fail:  mov     al, [cs:i24_fail]       ; (nobody asked: Lodestone's kernel
+        iret                            ;  drops nothing, its KDISK rule 4)
+i24_fail db     3                       ; (83h on Lodestone: vec_ours)
 
 ; =====================================================================
 ;  screen

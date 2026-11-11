@@ -483,8 +483,12 @@ hd_fget:                                ; fat_get: C:'s FAT16
         pop     si
         pop     cx
         pop     bx
-        ret
-.end:   mov     ax, 0FFFFh
+        cmp     ax, [C_DT + D_NCL]      ; (a link past the end, reserved,
+        jb      .v                      ;  bad: broken, as fat_get's)
+        cmp     ax, 0FFF8h
+        jb      .end
+.v:     ret
+.end:   mov     ax, 1                   ; (past the end: broken)
         ret
 .t:     times fat_get.hk - fat_get db 90h
         jmp     fat_get.hk

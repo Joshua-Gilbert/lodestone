@@ -54,8 +54,11 @@ section .text
 ; a handler's nested call, C:'s errors, MT's slices; a nested call is on
 ; astack); a screen capture and the PrtSc driver use the bottom 1 KB at
 ; INT 21h's entry, before any call runs; MT switches tasks inside INT 21h
-; only at a key wait (mt_can), where none of these is in use.
-KL_P2       equ kstack_end              ; path2_buf, 130 (rename, CHDIR's)
+; at a key wait (mt_can) and a floppy's wait (mt_dcan), and holds other
+; tasks' INT 21h calls (mt_i21) until the owner's is done.  CHDIR uses P2,
+; REN and EXN's first 44 bytes (none of their calls is under way then); the FCB
+; search (11h, 12h) P2's first 43 bytes, its DTA for find_next.
+KL_P2       equ kstack_end              ; path2_buf, 130 (rename; CHDIR's)
 KL_REN      equ kstack_end + 130        ; rename's d_lba, d_off, de and drive, 37
 KL_EXN      equ kstack_end + 168        ; EXEC's ex_name, 132
 KL_REL      equ kstack_end + 300        ; EXEC's ex_rel, 256
@@ -136,8 +139,10 @@ int29:  push    ax                      ; fast console output
 int23:  stc                             ; default ^C handler: end the program
         retf
 
-int24:  mov     al, 3                   ; default critical error: fail the call
-        iret
+int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
+        mov     al, 3                   ;  nobody asked (KDISK.INC rule 4: said
+        iret                            ;  in the kernel's byte, not AL, so a
+                                        ;  handler that chains here sees 3)
 
 int25:  mov     ax, 0207h               ; absolute disk I/O: not supported
         stc
@@ -344,14 +349,13 @@ ret_cf: jc      fail
 ; return to the caller with CF clear
 ok:     and     byte [bp+F_FL], 0FEh
 ; return to the caller (frame as it is)
-done:   push    cs
-        pop     ds
-        mov     es, [bp+F_USS]
-        mov     di, [bp+F_USP]
+done:   push    cs                      ; (inline, no CALL: every INT 21h
+        pop     ds                      ;  call leaves this way)
+        les     di, [bp+F_USP]          ; (ES:DI: the caller's SS:SP)
         mov     si, bp
-        mov     cx, 13
+        mov     cx, 13                  ; (a word each: the frame)
         rep     movsw
-        mov     ax, [bp+F_USS]
+        mov     ax, es
         mov     bx, [bp+F_USP]
         cli
         dec     byte [indos]
@@ -380,7 +384,7 @@ ret_al: mov     [bp+F_AX], al
 
 f_bad:  mov     ax, 1
         jmp     fail
-f_fcb:  mov     al, 0FFh                ; FCB calls: not supported
+f_fcb:  mov     al, 0FFh                ; FCB calls: not supported (but 11h, 12h)
         jmp     ret_al
 f_nul0: xor     al, al
         jmp     ret_al
@@ -388,7 +392,7 @@ f_nul0: xor     al, al
 NFUNC   equ 6Dh
 ftab:   dw f_00, f_01, f_02, f_03, f_04, f_05, f_06, f_07              ; 00
         dw f_08, f_09, f_0A, f_0B, f_0C, f_0D, f_0E, f_fcb             ; 08
-        dw f_fcb, f_fcb, f_fcb, f_fcb, f_fcb, f_fcb, f_fcb, f_fcb      ; 10
+        dw f_fcb, f_11, f_12, f_fcb, f_fcb, f_fcb, f_fcb, f_fcb        ; 10
         dw f_nul0, f_19, f_1A, f_fcb, f_fcb, f_nul0, f_nul0, f_fcb     ; 18
         dw f_nul0, f_fcb, f_fcb, f_fcb, f_fcb, f_25, f_nul0, f_fcb     ; 20
         dw f_fcb, f_29, f_2A, f_2B, f_2C, f_2D, f_2E, f_2F             ; 28
@@ -411,12 +415,11 @@ ctrlc:  push    cs
         call    con_puts
         push    cs
         pop     ds
-        mov     es, [bp+F_USS]
-        mov     di, [bp+F_USP]
+        les     di, [bp+F_USP]          ; (ES:DI: the caller's SS:SP)
         mov     si, bp
         mov     cx, 13
         rep     movsw                   ; the caller's registers as they came
-        mov     ax, [bp+F_USS]
+        mov     ax, es
         mov     bx, [bp+F_USP]
         cli
         dec     byte [indos]
@@ -441,6 +444,9 @@ ctrlc:  push    cs
         mov     ax, 4C00h
 .again: jmp     int21                   ; the INT 21h frame is still there
 s_ctrlc db '^C', 13, 10, 0
+%if F_USS != F_USP + 2
+%error "done, ctrlc: LES wants F_USS after F_USP"
+%endif
 
 ; =====================================================================
 ;  console
@@ -1112,6 +1118,11 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
 ;   AL = 6: PrtSc's printer driver -> ES:BX = its path ("": files), CX =
 ;           its room (the caller changes it there)
+;   AL = 8: DL = a floppy (0 = A:) whose sector CX (0: the boot sector;
+;           the root's first) the caller has just written itself through
+;           INT 13h, ES:BX = 1,024 bytes: the sector as it read it, then as
+;           it wrote it: the disk taken as written (CF, 5: what was read
+;           isn't the kernel's disk, or more than a label changed)
 f_F0:   mov     al, [bp+F_AX]
         or      al, al
         jnz     .1
@@ -1130,9 +1141,23 @@ f_F0:   mov     al, [bp+F_AX]
         je      .saver
         cmp     al, 7
         je      .hdn
+        cmp     al, 8
+        je      .own
         cmp     al, 1
-        jne     f_bad
-        jmp     .open
+        je      .op
+.bad:   jmp     f_bad                   ; (.hdn's too)
+.op:    jmp     .open
+; AL=8: floppy DL's sector CX (0: the boot sector; the root's first)
+; written by the caller through INT 13h (LABEL), ES:BX: the sector as it
+; read it, then as it wrote it; the disk taken as written, so the next look
+; doesn't call it another disk (dsk_own).  CF, 5: refused
+.own:   mov     al, [bp+F_DX]
+        call    dsk_own
+        jmp     ret_cf
+; AL=4: the UI segment has moved to BX (where the root process restarts)
+.useg:  mov     ax, [bp+F_BX]
+        mov     [ui_seg], ax
+        jmp     ok
 ; AL=2: lend the disk cache's memory to the caller (windows' save-under):
 ; ES = its segment, CX = bytes.  CF if there is no cache or it is lent.
 ; (KEMS.INC: with the cache in EMS, ems_lend and ems_back instead)
@@ -1167,14 +1192,9 @@ f_F0:   mov     al, [bp+F_AX]
 ; AL=7: the internal hard disk's own name (IDENTIFY's words 27-46: 40
 ; characters, blanks after it) -> ES:BX.  CF: AX = 1 (no C:, KHD.INC)
 .hdn:   cmp     byte [C_DT + D_PRES], 0
-        je      f_bad
+        je      .bad
         mov     [bp+F_ES], cs
         mov     word [bp+F_BX], hd_idn
-        jmp     ok
-        db      90h                     ; (what follows keeps its parity)
-; AL=4: the UI segment has moved to BX (where the root process restarts)
-.useg:  mov     ax, [bp+F_BX]
-        mov     [ui_seg], ax
         jmp     ok
 .open:  mov     dl, [bp+F_DX]
         xor     cx, cx
@@ -1413,12 +1433,8 @@ f_29:   mov     ds, [bp+F_DS]
         inc     si
         cmp     al, '*'
         je      .star
-        cmp     al, 'a'
-        jb      .up
-        cmp     al, 'z'
-        ja      .up
-        sub     al, 20h
-.up:    cmp     al, '?'
+        call    up_al
+        cmp     al, '?'
         jne     .put
         or      dl, 1
 .put:   jcxz    .fl
