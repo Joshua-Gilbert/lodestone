@@ -22,7 +22,7 @@ MT_LIST     equ 12h                     ; the tasks: ES:DI = room for CX records
                                         ;  AH = the caller's
 MT_FRONT    equ 13h                     ; BL = a task: it comes to the front at
                                         ;  the next key wait.  CF: AX = 1 (none),
-                                        ;  5 (parked; T5b: its window is its
+                                        ;  5 (parked; its window is its
                                         ;  screen, MT_PUB).
                                         ;  (When the front task ends, task 0
                                         ;  comes to the front.)
@@ -87,7 +87,7 @@ MT_UI       equ 19h                     ; (the Executive's, at its start: its
                                         ;  a task and a task's end is its
                                         ;  event, mt_ui)
 MT_TSR      equ 1Ah                     ; (Resident Claude's, at CLAUDE /R and
-                                        ;  /U: M7c) ES:BX = the instruction
+                                        ;  /U) ES:BX = the instruction
                                         ;  after its key wait's HLT, where the
                                         ;  tick may switch from it in the task
                                         ;  whose call it is (0:0: none any
@@ -96,7 +96,7 @@ MT_TSR      equ 1Ah                     ; (Resident Claude's, at CLAUDE /R and
                                         ;  one's, and 1 while its pop-up waits
                                         ;  for the front task (the stub's to
                                         ;  set and clear)
-MT_WIN      equ 1Dh                     ; (a window .RUN's, at its start: M8b)
+MT_WIN      equ 1Dh                     ; (a window .RUN's, at its start)
                                         ;  CF clear if the UI code running is a
                                         ;  window .RUN's session, beside others:
                                         ;  it is a window then.  CF: AX = 1
@@ -105,8 +105,8 @@ MT_SCREEN   equ 1Ch                    ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back
                                         ;  after a screen saver): not counted
                                         ;  against it as writing the screen
-                                        ;  itself (M4a; only the front task's)
-MT_TOPEN    equ 1Eh                     ; (T2: TERM.RUN, at its start) BL = a
+                                        ;  itself (only the front task's)
+MT_TOPEN    equ 1Eh                     ; (TERM.RUN, at its start) BL = a
                                         ;  task, CL = its count (TE_GEN: MT_EXIT's
                                         ;  AH): shown by the window .RUN that
                                         ;  calls, whose UI_EVENT gives EV_TICK
@@ -115,7 +115,7 @@ MT_TOPEN    equ 1Eh                     ; (T2: TERM.RUN, at its start) BL = a
                                         ;  went by.  CF: AX = 1 (no such task,
                                         ;  another count, not a window .RUN's
                                         ;  call), 5 (task 0; parked)
-MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
+MT_TROWS    equ 1Fh                     ; (a terminal window's look) BL = a
                                         ;  task, ES:DI = room, DX = a row, CX =
                                         ;  rows (to row 24): those rows of its
                                         ;  screen as MT keeps it (its pages; the
@@ -127,7 +127,7 @@ MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
                                         ;  published, MT_PUB's and its PB_CHG
                                         ;  too), BX = its cursor there (row,
                                         ;  column), CL = columns, CH = its
-                                        ;  mode.  T5b: with DH bit 7 set (the
+                                        ;  mode.  With DH bit 7 set (the
                                         ;  row in DL), a screen published
                                         ;  (MT_PUB) and shown (PBF_SHOWN), the
                                         ;  task behind in a text mode: the rows
@@ -135,7 +135,7 @@ MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
                                         ;  rows past PB_ROWS blank, 0020h), DL
                                         ;  32 (1 and 16 too, as below), CH =
                                         ;  its rows, BX = PB_CUR (with
-                                        ;  PBF_NOCUR its row's bit 7 set, T5d:
+                                        ;  PBF_NOCUR its row's bit 7 set:
                                         ;  where it is, not shown; FFFFh then
                                         ;  none).  DL = MTF_DIRECT, 2 if
                                         ;  nothing was copied (not a text mode
@@ -143,14 +143,14 @@ MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
                                         ;  its 32 KB), 4 its pages gone (2 too),
                                         ;  8 in front (its screen the real one,
                                         ;  not its pages), 16 its program took
-                                        ;  the mouse (INT 33h AX=0 or 21h: T4,
+                                        ;  the mouse (INT 33h AX=0 or 21h:
                                         ;  MT_TMOUSE), DH = its state (TS_*;
                                         ;  TS_FROZEN as MT_LIST).  CF: AX = 1
                                         ;  (no such task, rows past 24 or none,
                                         ;  room in the EMS frame's windows 0-1
                                         ;  or past its segment's end), 5 (task
                                         ;  0, the Executive; parked)
-MT_TKEY     equ 20h                     ; (T1) BL = a task, CX = a key (as INT
+MT_TKEY     equ 20h                     ; BL = a task, CX = a key (as INT
                                         ;  16h gives them): typed to it, for its
                                         ;  INT 16h and DOS's key reads (before
                                         ;  the keyboard's; for AH=00h and 01h,
@@ -163,7 +163,7 @@ MT_TKEY     equ 20h                     ; (T1) BL = a task, CX = a key (as INT
                                         ;  keyboard's then.  CF: AX = 1 (no such
                                         ;  task), 5 (task 0; parked), 8 (32
                                         ;  waiting already)
-MT_TMOUSE   equ 21h                     ; (T4: TERM.RUN's, a click in its
+MT_TMOUSE   equ 21h                     ; (TERM.RUN's, a click in its
                                         ;  window) BL = a task, BH = buttons
                                         ;  (bit 0 left, 1 right), CX = x, DX = y
                                         ;  (INT 33h's units): its own mouse
@@ -172,14 +172,14 @@ MT_TMOUSE   equ 21h                     ; (T4: TERM.RUN's, a click in its
                                         ;  ranges, presses and releases counted);
                                         ;  a release before its program has
                                         ;  read the press (AX=3, 5, 6) held till it
-                                        ;  has.  T5e: SI = A5h << 8 + the rows
+                                        ;  has.  SI = A5h << 8 + the rows
                                         ;  the window shows (other values: not
                                         ;  said), written to a
                                         ;  published PB_VER 2 descriptor's
                                         ;  PB_VIEW.  CF: AX = 1 (no such task,
                                         ;  not the Executive's call), 5 (task
                                         ;  0; parked)
-MT_PUB      equ 22h                     ; (T5b) a screen published for a
+MT_PUB      equ 22h                     ; a screen published for a
                                         ;  terminal window: drawn there from
                                         ;  its cells with its own font, not
                                         ;  from MT's pages.  CL = 0, a task's
@@ -202,8 +202,8 @@ MT_PUB      equ 22h                     ; (T5b) a screen published for a
                                         ;  and a window showing it, CODE-Tab
                                         ;  passes over the task and MT_FRONT
                                         ;  refuses it: its window is its screen
-                                        ;  (a graphics mode's goes full screen,
-                                        ;  T3).  Publish again after setting
+                                        ;  (a graphics mode's goes full
+                                        ;  screen).  Publish again after setting
                                         ;  PBF_SHOWN and after an EXEC: if the
                                         ;  task was brought to the front while
                                         ;  its pages were shown, it goes back
@@ -217,7 +217,7 @@ MT_PUB      equ 22h                     ; (T5b) a screen published for a
                                         ;  all in the task's memory, or its
                                         ;  cells, font or table; a field out
                                         ;  of range)
-MT_WAKE     equ 23h                     ; (T5c) BL bit 0: the calling program
+MT_WAKE     equ 23h                     ; BL bit 0: the calling program
                                         ;  woken by the GPIB driver's SRQ
                                         ;  interrupt (IRQ 5, any device's
                                         ;  SRQ): its task runs next, at once
@@ -262,13 +262,13 @@ SP_SIZE     equ 17
 SPF_FRONT   equ 1                       ; it comes to the front
 SPF_BG      equ 2                       ; it runs in the background whatever it
                                         ;  does, its output on the screen in
-                                        ;  front (as before M4a)
+                                        ;  front
 SPF_FREEZE  equ 4                       ; it never runs in the background
 MTF_DIRECT  equ 1                       ; (MT_FLAGS: found writing the screen
                                         ;  itself, so frozen behind without
                                         ;  SPF_BG)
 
-; ---- a published screen's descriptor (MT_PUB, T5b) -------------------
+; ---- a published screen's descriptor (MT_PUB) ------------------------
 PB_VER      equ 0                       ; byte: 1 (or more)
 PB_FLAGS    equ 1                       ; byte: PBF_*
 PB_COLS     equ 2                       ; byte: columns, 1-80
@@ -296,7 +296,7 @@ PB_VIEW     equ 22                      ; (PB_VER 2) byte: the rows a window
                                         ;  shows of it, written by MT at each
                                         ;  MT_TROWS from a window that says
                                         ;  (CH), 0 till then: a program may
-                                        ;  lay its screen out to fit (T5e)
+                                        ;  lay its screen out to fit
 PB_SIZE2    equ 23                      ; (PB_VER 2's size)
 PBF_SHOWN   equ 1                       ; its cells shown (else MT's pages, as
                                         ;  any task's: a program it runs)
@@ -324,6 +324,6 @@ TS_FROZEN   equ 4                       ; (MT_LIST only) ready, but frozen in th
                                         ;  background: it writes the screen
                                         ;  itself, or SPF_FREEZE
 TS_PARKED   equ 5                       ; parked in EMS (MT_PARK): it doesn't run
-TS_WAITD    equ 6                       ; (M10, MT's own: MT_LIST says TS_RUN)
+TS_WAITD    equ 6                       ; (MT's own: MT_LIST says TS_RUN)
                                         ;  waiting on the floppy, or for the
                                         ;  task that does to run again

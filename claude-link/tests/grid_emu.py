@@ -939,15 +939,15 @@ def symbols(mapfile):
 
 
 class FakeMT:
-    """Lodestone's multitasking as CLAUDE.COM 1.13 sees it (T5d, a terminal
+    """Lodestone's multitasking as CLAUDE.COM 1.13 sees it (a terminal
     window): CLAUDE in task 1, behind with a window (window) or in front
     (front).  MT_PUB (F0h 22h) keeps the descriptor's address, MT_WAKE (23h)
     the program's BL, MT_LIST (12h) gives the front task and the tasks'
     records (the Executive, CLAUDE.COM, and others: (task, name)).  A graphics mode
-    set behind brings a window's task to the front (T3's mt_wfront; with no
+    set behind brings a window's task to the front (mt_wfront; with no
     window it would wait for the front: 'waitf'), a text mode set in front
     after that sends it back (mt_wback).  A screen published and shown,
-    published again in front in a text mode, goes back too (T5b).  The
+    published again in front in a text mode, goes back too.  The
     program's own writes to B800h while behind are counted: the Executive's
     screen is there."""
     def __init__(s, window=True, front=False):
@@ -1062,7 +1062,7 @@ class EmuHarness:
         """The bridge model at GPIB address 7 on the machine's bus (`devices`), and gridlink on its Pi end: the
         router with a program in a pty (term: Term, no API key), else chat.  s.m and s.tmp come first.  bridge:
         'ar488' (the patched Nano or, patched=False, the stock one), 'pico', 'pico-hold' (fw 2026-10-23c's held
-        replies) or 'pico-quiet' (fw 2026-10-24's quiet SRQ, resident Claude's M4).  (EmuHarness's and
+        replies) or 'pico-quiet' (fw 2026-10-24's quiet SRQ, resident Claude's background).  (EmuHarness's and
         claude_kernel's KernelHarness's)"""
         m = s.m
         s.pending = []

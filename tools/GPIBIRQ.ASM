@@ -78,7 +78,7 @@ start:  cld
         int     21h
         mov     [oldvec], bx
         mov     [oldvec+2], es
-        mov     dx, brk                 ; (X56: ^C puts IRQ 5 back first;
+        mov     dx, brk                 ; (^C puts IRQ 5 back first;
         mov     ax, 2523h               ;  DOS takes INT 23h back from the
         int     21h                     ;  PSP at our end)
         push    ds
@@ -198,14 +198,14 @@ start:  cld
         call    cleanup
         mov     dx, s_done
         call    out_str
-        call    d_rearm                 ; (X55: the driver's IMR2, IFC, REN)
+        call    d_rearm                 ; (the driver's IMR2, IFC, REN)
         call    save_log
         mov     ax, 4C00h
         int     21h
 
 ; IRQ 5 off again, its old vector, the PIT and the bus as they were
 ; ^C (INT 23h, at any DOS call: the prints): ended as at the end, but no
-; log, so INT 0Dh never points into this program's freed memory (X56)
+; log, so INT 0Dh never points into this program's freed memory
 brk:    push    cs
         pop     ds
         call    cleanup

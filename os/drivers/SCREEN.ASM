@@ -4,8 +4,8 @@
 ;  Shift-PrtSc (and PrtSc with no printer driver set) runs this, as PrtSc
 ;  runs a printer driver (PS.ASM says how one is read and called), from
 ;  the root of the drive Lodestone started from (R: from the ROM).  It
-;  was the kernel's own code until the 2026-10-20 audit's KC-2 moved it
-;  here, so no DOS program pays for it in memory.  Unlike a printer
+;  was the kernel's own code until 2026-11-03, when it moved here,
+;  so no DOS program pays for it in memory.  Unlike a printer
 ;  driver it uses DOS, for its file: the kernel calls it at the start of
 ;  an INT 21h call that no other is inside, so its own are nested ones
 ;  (on the kernel's second stack), and a disk error in them fails at once

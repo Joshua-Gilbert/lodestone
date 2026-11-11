@@ -305,7 +305,7 @@ def screen_sum(cells, cursor, fl=True):
     """The Fletcher sum (the frames', glp.fletcher16) of a GRiD screen as
     resident Claude's console keeps it (RCON.ASM screen_sum): glyph and
     attribute of each cell, row by row, then the cursor's row, column and
-    hidden flag.  fl=False: the CRC-16 a console before audit3 R56 sent
+    hidden flag.  fl=False: the CRC-16 a console before 2026-10-29 sent
     (its HELLO came with the CRC too)."""
     bc, ba = cells
     data = bytearray()

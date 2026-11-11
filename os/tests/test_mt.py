@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Multitasking (KMT.INC): the switch and the skeleton (M1), tasks switched
-when one waits for a key (M2a), the front one chosen with CODE-Tab, each with
-its own screen (M2b), preempted at the timer's tick where it is safe (M3), each
-with its own coprocessor (M3b), a background task's output in its own screen and a
-task that writes the screen itself frozen there (M4a), keys for the front task
-only and CODE-Tab wherever it is typed (M4b), each task's own mouse (M4c).
+"""Multitasking (KMT.INC): the switch and the skeleton, tasks switched
+when one waits for a key, the front one chosen with CODE-Tab, each with
+its own screen, preempted at the timer's tick where it is safe, each
+with its own coprocessor, a background task's output in its own screen and a
+task that writes the screen itself frozen there, keys for the front task
+only and CODE-Tab wherever it is typed, each task's own mouse.
 
 (pcemu's INT 16h AH=00h with no key blocks at the caller's own INT 16h, so a
-program waiting there could be preempted even before M4b; on the 1520 it waited
-inside the BIOS, where it can't be.  Since M4b a program's read with nothing
+program waiting there could be preempted even before MT took INT 16h; on the 1520 it waited
+inside the BIOS, where it can't be.  Since then a program's read with nothing
 typed waits in MT, not the BIOS.)
 
 MULTITASK=1 in LODE.INI (with EMS, enough for the disk cache to be in it)
@@ -46,7 +46,7 @@ MTSYS = os.path.join(GOS, 'src', 'LODEMT.SYS')
 MAP = os.path.join(GOS, 'src', 'LODE.MAP')
 import mkmt
 INT08 = (STUB, 0x1000)                  # pcemu's BIOS timer handler
-# KMT.INC's layout, from LODE.MAP's EQUs (H6): an entry in mt_tab and its fields (its stub's PSP, its region, its
+# KMT.INC's layout, from LODE.MAP's EQUs: an entry in mt_tab and its fields (its stub's PSP, its region, its
 # TX's segment, its last exit code, its name, its screen's EMS handle, VF_DIRECT and the SPF_ overrides, MT_KILL's
 # mark, parked: the EMS handle its region is in and the region's paragraphs, its count); a TX's BIOS video data
 (MT_ENT, TE_PSP, TE_REG, TE_TX, TE_EXIT, TE_NAME, TE_SH, TE_VF, TE_KILL, TE_PH, TE_PSZ, TE_GEN, TX_VID, VF_DIRECT,
@@ -61,8 +61,8 @@ MTM = os.path.join(HERE, 'MTM33.COM')
 MTV = os.path.join(HERE, 'MTVEC.COM')
 MTKL = os.path.join(HERE, 'MTKILL.COM')
 
-# With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
-# and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
+# With the switch off these must not move (main with UI API 6, PrtSc's printing and the 2026-10-20 kernel
+# and UI batches, then the medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
 # before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 485Dh on
 # 2026-11-09, with the 2 s timed from a floppy's last transfer), and a change past it moves image_end and bss_end.
@@ -131,8 +131,8 @@ OFF_MAP ={'image_end': 0x4870, 'bss_end': 0x7CD0, 'ui_keep_end': 0x6894}  # (486
                                         #  changes dropped (fat_drop, SF_LOST), 2026-11-07;
                                         #  40E0h/74E0h before the FCB search's checks of
                                         #  MS-DOS 3 (separators, the attribute) and LCMD's names cut to 8.3, 2026-11-07;
-                                        #  3F80h/7380h/6816h before MS-DOS's FCB search for the label, its names and its CHDIR, and the Executive's whole names, 2026-11-07; 6806h before a menu's TAB lined its keys up, 1.0; 6714h before a program's modes on its right-click menu, 242 bytes; 64D0h before the Executive's right-click menu, 580 bytes; 3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
-                                        #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
+                                        #  3F80h/7380h/6816h before MS-DOS's FCB search for the label, its names and its CHDIR, and the Executive's whole names, 2026-11-07; 6806h before a menu's TAB lined its keys up, 1.0; 6714h before a program's modes on its right-click menu, 242 bytes; 64D0h before the Executive's right-click menu, 580 bytes; 3F60h/7360h before INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the screen capture's file writer as SCREEN.PRN; 75E0h before EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before HT in help lines; 40D0h/7600h before the kernel and UI cuts of 2026-11-02 (64E2h, the UI's); 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX; 40F0h/7620h before ex_busy went; 64F6h before the Executive's MULTITASK-only code moved to KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the UI cuts of 2026-10-27; 4190h/76C0h before the kernel cuts of 2026-10-27; 6526h before the clipboard's file named at start-up; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before FIND FIRST with no match answered 18;
+                                        #  6154h before the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
 
@@ -144,8 +144,8 @@ def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chi
     MTPROBE, `more`, and LODE.INI holding `text`.  nofpu: INT 11h says no
     coprocessor, and the 286's EM bit is set, so any coprocessor instruction
     traps (INT 7, counted in pc.ints).  mouse: a serial mouse on COM1.  irq_exact: pcemu's (an IRQ held
-    under CLI taken when IF is set again, as the 1520's PIC gives it; on by default, H10).  kw: pcemu's
-    (fd_wait: a floppy's transfer waits for its IRQ 6, M10; disk_model)."""
+    under CLI taken when IF is set again, as the 1520's PIC gives it; on by default).  kw: pcemu's
+    (fd_wait: a floppy's transfer waits for its IRQ 6; disk_model)."""
     files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
         + ([ini(text)] if text is not None else [])
     k = ktest.KPC(A.image(name, *files), ems_pages=ems, chip=chip, irq_exact=irq_exact, **kw)
@@ -268,12 +268,12 @@ def t_on():
           bytes(k.pc.rd(0x60, Y['ctrlc.sw'], 5)).hex())
     gb = [bytes(k.pc.rd(0x60, Y[s], 5)) for s in ('f_48', 'mem_largest', 'f_4B.xe')]
     check('48h, EXEC\'s largest block and its environment\'s go through mt_48, mt_largest and mt_xenv (JMP FAR over '
-          'f_48\'s, mem_largest\'s and f_4B.xe\'s first 5 bytes: a task\'s region grows, T5a)',
+          'f_48\'s, mem_largest\'s and f_4B.xe\'s first 5 bytes: a task\'s region grows)',
           [(b[0], b[1] | b[2] << 8, b[3] | b[4] << 8) for b in gb]
           == [(0xEA, Y['mt_48'], seg), (0xEA, Y['mt_largest'], seg), (0xEA, Y['mt_xenv'], seg)], [b.hex() for b in gb])
     gb = bytes(k.pc.rd(0x60, Y['gp_isr.e'], 5))
     check('the GPIB driver\'s SRQ interrupt goes through mt_srqi at its EOI (JMP FAR over gp_isr.e\'s MOV AL,20h / OUT 20h,AL / '
-          'POP DS: T5c)', (gb[0], gb[1] | gb[2] << 8, gb[3] | gb[4] << 8) == (0xEA, Y['mt_srqi'], seg), gb.hex())
+          'POP DS)', (gb[0], gb[1] | gb[2] << 8, gb[3] | gb[4] << 8) == (0xEA, Y['mt_srqi'], seg), gb.hex())
     check('task 0 is the Executive: its PSP the root process\'s',
           k.pc.u16(seg, Y['mt_tab'] + 2) == k.u16('root_psp'), (hex(k.pc.u16(seg, Y['mt_tab'] + 2)), hex(k.u16('root_psp'))))
     t0, b0 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
@@ -295,22 +295,22 @@ def t_on():
     got, out = probe(k)
     k.pc.watch = prev
     check('MT_END not from a stub (MTPROBE\'s, task 0\'s), MT\'s guards set as it comes in (mt_crit, mt_in13, mt_inb): '
-          'refused before it touches them (%s; audit3 X39)' % (guards[1:],), guards[1:] == [(1, 1, 1)], guards)
+          'refused before it touches them (%s)' % (guards[1:],), guards[1:] == [(1, 1, 1)], guards)
     check('F0h through mt_f0: AL=00h still answers (4F47h, 0201h: its OR AL,AL redone); 11h (not from a stub), 14h, 1Bh, FFh fail '
           'with AX = 1; 13h with task 0 works, and 1Ch (MT_SCREEN; alone, nothing to do)', got.get(0) == (0, 0x4F47, 0x0201, 0x1234)
           and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x14, 0x1B, 0xFF)) and got.get(0x13, (1,))[0] == 0
           and got.get(0x1C, (1,))[0] == 0, out[-400:])
     check('F0h AL=13h with BL = 8 (no such task) and BL = 7 (a free one): CF, AX = 1',
           bad(got.get(0x113, (0, 0))) and bad(got.get(0x213, (0, 0))), out[-400:])
-    check('F0h AL=1Eh (MT_TOPEN, T2), 1Fh (MT_TROWS), 20h (MT_TKEY), T1, and 21h (MT_TMOUSE, T4): task 0 refused (AX = 5); '
+    check('F0h AL=1Eh (MT_TOPEN), 1Fh (MT_TROWS), 20h (MT_TKEY), and 21h (MT_TMOUSE): task 0 refused (AX = 5); '
           '7 (a free one) and 8 (none such): AX = 1', all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x1E, 0x1F, 0x20, 0x21))
           and all(bad(got.get(a, (0, 0))) for a in (0x11E, 0x21E, 0x31E, 0x11F, 0x21F, 0x120, 0x220, 0x121, 0x221, 0x321)),
           out[-500:])
-    check('F0h AL=22h (MT_PUB, T5b): CL = 0 from task 0 and CL = 1 for task 0 refused (AX = 5); CL = 1 for 7 (a free one) '
+    check('F0h AL=22h (MT_PUB): CL = 0 from task 0 and CL = 1 for task 0 refused (AX = 5); CL = 1 for 7 (a free one) '
           'and CL = 2: AX = 1', all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x22, 0x122))
           and all(bad(got.get(a, (0, 0))) for a in (0x222, 0x322)), out[-500:])
     gi = k.pc.rd(0x60, Y['gp_irq'], 1)[0]
-    check('F0h AL=23h (MT_WAKE, T5c) from task 0: BL = 1, then 0, both CF clear, AX = the driver\'s IRQ (%d); none '
+    check('F0h AL=23h (MT_WAKE) from task 0: BL = 1, then 0, both CF clear, AX = the driver\'s IRQ (%d); none '
           'left afterwards (mt_wkt FFh)' % gi, got.get(0x23, (1,))[:2] == (0, gi) and got.get(0x123, (1,))[:2] == (0, gi)
           and k.pc.rd(seg, Y['mt_wkt'], 1)[0] == 0xFF, out[-300:])
     check('F0h AL=18h (MT_FLAGS): BL = 0 (the Executive) refused, AX = 5; BL = 8 (none such: mt_targ\'s own failure) '
@@ -331,7 +331,7 @@ def t_on():
         k.key(ktest.ESC)
         su.append((k.u16('wseg'), k.rd('ems_su', 2), A.has(k, 'Help')))
     check('the other F0h calls go on to the kernel: the help window\'s save-under is lent (AL=2) and given back (AL=3), '
-          'twice (M8a: as before while no window .RUN runs)', [s[2] for s in su] == [True, False] * 2
+          'twice (as before while no window .RUN runs)', [s[2] for s in su] == [True, False] * 2
           and all(su[i][0] != 0 and su[i][1] != b'\0\0' for i in (0, 2)) and all(su[i][:2] == (0, b'\0\0') for i in (1, 3)),
           [(hex(w), bytes(e).hex(), h) for w, e, h in su])
     for text in (b'MULTITASK=Yes\r\n', b'multitask=on\r\n', b'MULTITASK=1', b'MULTITASK=yes \r\n',
@@ -362,7 +362,7 @@ def line(k, text):
 
 def run_wait(k, name, sim_s=60.0):
     """Shift-Return on a program in the Executive: in the Executive's own task, which waits for it, as with
-    multitasking off (Return starts it as a task, M7b)."""
+    multitasking off (Return starts it as a task)."""
     return k.run_file(name, sim_s, shift=True)
 
 def t_tasks():
@@ -587,7 +587,7 @@ def t_front():
     line(k, '')
     k.key(HOT); k.run_for(0.4)
     st = tstate(k)
-    check('CODE-Tab at the command prompt, a task waiting: it comes to the front (M4b: LCMD asks with INT 21h AH=0Bh, '
+    check('CODE-Tab at the command prompt, a task waiting: it comes to the front (LCMD asks with INT 21h AH=0Bh, '
           'whose INT 16h call finds CODE-Tab first; the switch is made at the next safe point), the key not left behind',
           st[0] == [(0, 1, 'Executive'), (1, 2, 'MTLINE.COM')] and st[1] == 1 and no_hot(k), (st, k.pc.kbd_ring()))
     line(k, 'late'); line(k, '')
@@ -681,7 +681,7 @@ def typ(k, s, t=0.5):
     k.key(s, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
 
 class Baseline:
-    """The machine with the Executive alone (H5): the arena (merged), the SFT entries in use and the EMS pages
+    """The machine with the Executive alone: the arena (merged), the SFT entries in use and the EMS pages
     as they are now.  back(): all three as they were, nothing crashed; now(): what to show when not.  A test
     that takes them again sets m0, s0, e0."""
     def __init__(s, k):
@@ -694,7 +694,7 @@ class Baseline:
     def now(s): return (tstate(s.k), show(mcbs(s.k)), sft_used(s.k), s.s0, ems_used(s.k), s.e0)
 
 class TermView:
-    """A terminal window's test helpers (H5): MT's bytes, the first session's TERM.RUN (its variables, its window
+    """A terminal window's test helpers: MT's bytes, the first session's TERM.RUN (its variables, its window
     record), the screen, keys typed into the window, the clipboard's EMS page."""
     def __init__(s, k):
         s.k, s.seg, s.Y = k, mt_seg(k), k.Y
@@ -746,7 +746,7 @@ class TermView:
 
 def tclick(k, x, y, settle=True):
     """A.click with the button held 60 ms, over a tick: with tasks computing behind, the Executive idle gives its
-    turn away (T5d) and the mouse brings it back at the next tick (mt_mwant); the UI reads the buttons' state, so a
+    turn away and the mouse brings it back at the next tick (mt_mwant); the UI reads the buttons' state, so a
     shorter click between two ticks is missed.  settle=False: no wait after the release (see bclick)."""
     dx, dy = x - k.u16('mx'), y - k.u16('my')
     while dx or dy:
@@ -767,7 +767,7 @@ def took(k, what, mouse=False, within=1.0):
 
 def bkey(k, *keys, t=0.5):
     """k.key with a task computing behind: the machine never waits then, so a default settle would run to its 6 s
-    timeout.  Each key (a string: all of it) given alone and taken (took), then t s for what it does (audit3 H2)."""
+    timeout.  Each key (a string: all of it) given alone and taken (took), then t s for what it does."""
     for x in keys:
         k.key(x, settle=False); took(k, 'the key %r' % (x,))
     k.run_for(t)
@@ -795,7 +795,7 @@ class Audit:
         s.seg = seg = mt_seg(k)
         s.at, s.sa, s.swa, s.ex = (seg * 16 + k.Y[n] for n in ('mt_preempt', 'mt_safe', 'mt_switch', 'mt_exit'))
         s.srqi, s.tick, s.srq = seg * 16 + k.Y['mt_srqi'], seg * 16 + k.Y['mt_tick'], False
-        s.i0e = seg * 16 + k.Y['mt_i0e']     # (M10: mt_tick's tail from IRQ 6, the floppy's)
+        s.i0e = seg * 16 + k.Y['mt_i0e']     # (mt_tick's tail from IRQ 6, the floppy's)
         s.wf = seg * 16 + k.Y['mt_wfront']   # (a background task waiting at INT 10h to be in front)
         s.wk = seg * 16 + k.Y['mt_wkey']     # (a task waiting at INT 16h for a key)
         s.pss = None
@@ -865,7 +865,7 @@ class Audit:
             if s.force and pc.rd(s.seg, k.Y['mt_pend'], 1)[0] == 0: pc.wr(s.seg, k.Y['mt_pend'], b'\1')
         elif a in (s.srqi, s.tick, s.i0e):
             s.srq = {s.srqi: 'srq', s.i0e: 'fd'}.get(a)       # (mt_tick's tail reached from the SRQ's interrupt, or
-                                                            #  M10's IRQ 6)
+                                                            #  the floppy's IRQ 6)
         elif a == s.sa:
             r, cur = s.rules(pc.r('ax'), pc.r('bx'), pc.r('dx'), pc.r('ss'))
             no = [n for n, ok in r.items() if not ok]
@@ -922,7 +922,7 @@ def t_preempt():
     sw, dx, dt = len(au.switches(n)), len(au.switches(n, 'exit')), len(au.switches(n, 'tick'))
     # (each turn ends with a switch, at the tick or on INT 21h's way out; which of the two depends on where the
     #  ticks land in the spinners' loop, and that moves with the code's layout and what ran before: on one build,
-    #  e.g., the split reversed between this group and the step run alone, the total the same; on M7b's first build, its
+    #  e.g., the split reversed between this group and the step run alone, the total the same; on the first build with Return as a task, its
     #  MT block 72 paragraphs lower, all 20 on the way out.  The tick's are the first group's, with no INT 21h)
     check('the same with an INT 21h call on every count (AH=2Ch): about half each (alone %d; %d and %d); a switch at '
           'each turn\'s end, %d in all: %d at the tick, %d on INT 21h\'s way out' % (d0, d1, d2, sw, dt, dx),
@@ -1141,7 +1141,7 @@ def t_ends():
     a = mcbs(k)
     v = sh.run('ver')
     check('a program that stays resident in a task (TSR.COM, AH=31h): the task ends as if it had exited, its region '
-          'freed (its hooks, in its own vectors, gone with them: M5a); the prompt goes on', not k.crashed
+          'freed (its hooks, in its own vectors, gone with them); the prompt goes on', not k.crashed
           and tstate(k)[0] == [(0, 1, 'Executive')] and merged(a) == m0 and 'Lodestone version' in v
           and ems_used(k) == e0, (show(a), v, ems_used(k), e0))
     o = sh.run('mtlaunch mtline.com t.txt')
@@ -1355,7 +1355,7 @@ def t_screens():
         if m == 'p':
             check('... all ended, the prompt alone again: nothing shadowed (mt_shd 0)', shd(k) == 0 and len(tstate(k)[0]) == 1,
                   (shd(k), tstate(k)))
-    # the page shown's start as the BIOS keeps it (40:4Eh), which KMT's scrolls and mt_vfast trust (O23, O25): MTSCR E,
+    # the page shown's start as the BIOS keeps it (40:4Eh), which KMT's scrolls and mt_vfast trust: MTSCR E,
     # the 1520's check, in the model
     typ(k, 'mtscr e e.txt', 3.0)
     e_, et = A.disk_file(k, 'E.TXT'), k.pc.text_screen()
@@ -1394,7 +1394,7 @@ def t_screens():
     front(k, 2); line(k, '')
     front(k, 1); line(k, 'x'); line(k, '')
     # a page across the 32 KB's end (MTSCR B: page 7 from 7A80h), shadowed in front: whole-page scrolls that mt_vscr's
-    # bound test sends the BIOS's way (O23: AL, BX, CX, DX kept to that test, no frame), one inside at once, the
+    # bound test sends the BIOS's way (AL, BX, CX, DX kept to that test, no frame), one inside at once, the
     # teletype; its pages read before the switch (which copies the screen into them)
     typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com b b.txt', 3.0)
     f1, b_ = tstate(k)[1], A.disk_file(k, 'B.TXT')
@@ -1666,7 +1666,7 @@ def t_screens():
               'found not to write the screen itself' if s_e else 'not known to write the screen itself, so not frozen'),
               st[1] == 2 and r.startswith(b'OK ') and s_o == s_e and v_o & VF_DIRECT == 0 and not k.crashed,
               (st, r, s_o, v_o))
-    # audit3 X36: MTNEST E behind (its 13h string from its own page in window 0, where its screen's pages are mapped
+    # MTNEST E behind (its 13h string from its own page in window 0, where its screen's pages are mapped
     # for the call): not done, and nothing reached the real screen, so the front one's shadow is kept
     typ(k, 'mtlaunch mtline.com x.txt;mtnest.com rb.txt e', 1.0)
     s_b0 = shd(k)
@@ -1738,7 +1738,7 @@ def t_screens():
           'character (in pcemu\'s time)' % ((u1 - u0) / (120 * 54)), u0 and u1 and s_ == 1 and u1 > u0, (u0, u1, s_))
 
 def t_kslice():
-    print('== audit3 S1: a task\'s slice of the kernel stack (switched from inside INT 21h) saved and put back in words')
+    print('== a task\'s slice of the kernel stack (switched from inside INT 21h) saved and put back in words')
     from unicorn import UC_HOOK_CODE
     k = boot('mt_ks.img', b'MULTITASK=1\r\n', 88)
     seg, Y, pc = mt_seg(k), k.Y, k.pc
@@ -1802,7 +1802,7 @@ class IfOff:
             s.tp = None
 
 def t_vruns():
-    print('== audit3 S2, S3: long runs in a background task\'s screen (09h at once inside the 32 KB; rows of a run-on '
+    print('== long runs in a background task\'s screen (09h at once inside the 32 KB; rows of a run-on '
           'scroll wholly past it skipped), as the BIOS does them, and the time they keep interrupts off')
     k = boot('mt_vr.img', b'MULTITASK=1\r\n', 88, MTSC, irq_exact=True)
     sh = Shell(k)
@@ -1869,7 +1869,7 @@ def kclear(k):
 MTIK = os.path.join(HERE, 'MTIRQK.COM')
 
 def t_irqk():
-    print('== M9b: a key read through DOS from an interrupt\'s handler, its IRQ still in service')
+    print('== a key read through DOS from an interrupt\'s handler, its IRQ still in service')
     k = boot('mt_ik.img', b'MULTITASK=1\r\n', 88, MTIK)
     Y, seg = k.Y, mt_seg(k)
     sh = Shell(k)
@@ -1906,7 +1906,7 @@ def t_irqk():
           % (got['front'],), got['front'][0] == b'x' and got['front'][1] and not got['front'][2]
           and got['front'][4] == [0], got['front'])
     check('... raised while a task behind runs (MTSPIN), so the handler\'s read is that task\'s: read as it is (no '
-          'park, no switch while IRQ 7 is in service, M5b\'s forced front not taken), the key typed reaching it (%s)'
+          'park, no switch while IRQ 7 is in service, MT_KILL\'s forced front not taken), the key typed reaching it (%s)'
           % (got['behind'],), got['behind'][0] == b'y' and got['behind'][1] and not got['behind'][2]
           and got['behind'][4] and got['behind'][4][0] != 0, got['behind'])
     waitfile(k, 'SB.TXT', 30.0)
@@ -1930,7 +1930,7 @@ def wait_pit(k, n, s=3.0):
     return k.pc.pit_n
 
 def t_pitfast():
-    print('== M9b: a program that runs the timer fast (counter 0 four times, its own INT 08h hook)')
+    print('== a program that runs the timer fast (counter 0 four times, its own INT 08h hook)')
     k = boot('mt_pf.img', b'MULTITASK=1\r\n', 88, MTFS)
     Y, seg = k.Y, mt_seg(k)
     sh = Shell(k)
@@ -1970,7 +1970,7 @@ def t_pitfast():
           (own, calls, k.pc.pit_n))
 
 def t_pitcli():
-    print('== M9b: the timer\'s interrupt held late under CLI, by a different time each tick: not a fast counter')
+    print('== the timer\'s interrupt held late under CLI, by a different time each tick: not a fast counter')
     k = boot('mt_pc.img', b'MULTITASK=1\r\n', 88, MTCL)
     Y, seg = k.Y, mt_seg(k)
     sh = Shell(k)
@@ -2045,7 +2045,7 @@ def t_keys():
           got['p'] and got['p'][0] > 10 and got['p'][1] == 0 and got['q'] and got['q'][0] > 10 and got['q'][1] == 0
           and got['d'] == (0, 0) and all(r == (1, [0x61, 0x62, 0x63]) for r in rings), (got, rings))
     check('... as it is from an INT 1Ch handler (T %s: the timer\'s interrupt in service, a TSR\'s peek, the machine\'s): '
-          'every one finds them; INT 1Ch being each task\'s own (M5a), MTKEY T\'s handler is called in its own turns '
+          'every one finds them; INT 1Ch being each task\'s own, MTKEY T\'s handler is called in its own turns '
           'only, of 18 ticks (%d there)' % (got['t'], len(own)),
           got['t'] and 2 < got['t'][0] < 15 and got['t'][1] == got['t'][0] and len(own) == got['t'][0],
           (got['t'], len(own)))
@@ -2053,7 +2053,7 @@ def t_keys():
     # point), which on the 1520 a tick, landing in MT or the BIOS, seldom can; here (MTKEY Y) the tick can't at all,
     # its own INT 08h hook being ahead of MT's
     # Y's turn is made due: pcemu takes ticks only where its run loop restarts with interrupts on, and Y's
-    # loop is nearly all in mt_i16 with them off (not X21's case; that check is at MTKEY R's wait below)
+    # loop is nearly all in mt_i16 with them off (not the case of a tick at mt_i16's HLT; that check is at MTKEY R's wait below)
     n0 = len(au.ev)
     typ(k, 'mtlaunch /f mtkey.com y pp.txt;mtspin.com 15 sp.txt', 0.3)
     k.pc.run_until(lambda: vec(k, 8) != (seg, Y['mt_tick']), 3)
@@ -2105,13 +2105,13 @@ def t_keys():
     r2 = A.disk_file(k, 'R1.TXT')
     sw = au.switches(n0, 'i16')
     check('MTKEY R in the background: its INT 16h read waits (TS_WAITK) while MTLAUNCH, in front, gets its line; brought '
-          'to the front at the command prompt (M4b: at the next safe point, not only at a DOS key wait), it gets the '
+          'to the front at the command prompt (at the next safe point, not only at a DOS key wait), it gets the '
           'next key ("q": 0071h, as pcemu gives a typed character); %d switches from INT 16h, each at a safe point' % len(sw),
           st0[0][1:] == [(1, TS_WAITK, 'MTKEY.COM')] and st0[1] == 0 and r1 is None
           and st2[1] == 1 and r2 == b'0071' and sw and not au.bad(), (st0, st1, r1, st2, r2, len(sw), au.bad()[:2]))
     line(k, '')
     # a read in front with nothing typed: it waits in MT, not the BIOS, the others running meanwhile
-    # (X21: a tick in MT's own code, at mt_i16's HLT, counts against the turn)
+    # (a tick in MT's own code, at mt_i16's HLT, counts against the turn)
     n0 = len(au.ev)
     tk, prev = [], k.pc.watch
     def w(a):
@@ -2126,7 +2126,7 @@ def t_keys():
     k.pc.watch = prev
     inmt = [p for c, p in tk if c]
     check('ticks landing in MT\'s own code (%d of %d: MTKEY R\'s wait in front at mt_i16\'s HLT) counted: its turn over '
-          '(%d of them; audit3 X21)' % (len(inmt), len(tk), sum(inmt)), sum(inmt) >= 3, tk)
+          '(%d of them)' % (len(inmt), len(tk), sum(inmt)), sum(inmt) >= 3, tk)
     s2, r2 = spun(k, 'S2.TXT'), A.disk_file(k, 'R2.TXT')
     k.key('q', settle=False); k.run_for(0.3)
     r3 = A.disk_file(k, 'R2.TXT')
@@ -2340,7 +2340,7 @@ def t_keys():
           'key left to MTLAUNCH; brought to the front, it gets "z"; the machine goes on', st[0][1:] == [(1, TS_WAITK,
           'MTKEY.COM')] and rh is None and rh2 == b'007A' and 'Lodestone version' in v and not k.crashed,
           (st, rh, rh2, v[-60:]))
-    # T5d: a program's own INT 16h hook (KEYIN with an argument hooks it, then reads a key through DOS) behind: MT's
+    # a program's own INT 16h hook (KEYIN with an argument hooks it, then reads a key through DOS) behind: MT's
     # wait there asks the hook at each of its turns, the task staying ready (TS_RUN, not TS_WAITK); the prompt in
     # front waiting for keys, nothing else ready, still gets them (switched to when one is typed for it)
     typ(k, 'mtlaunch keyin.com h', 1.0); line(k, '')
@@ -2358,7 +2358,7 @@ def t_keys():
           'it waited 24 in the run recorded); brought to the front, "x" ends it' % dt,
           nk is not None and (nk, 1, 'KEYIN.COM') in st[0] and 'Lodestone version' in v and dt < 3
           and not any(n == 'KEYIN.COM' for i, s_, n in st2[0]) and not k.crashed, (st, v[-80:], st2))
-    # X40: CODE-Tab with a tail the ring never reaches (40:1Ch odd, past 40:82h): mt_hot's compaction
+    # CODE-Tab with a tail the ring never reaches (40:1Ch odd, past 40:82h): mt_hot's compaction
     # stops after 16 words instead of looping with interrupts off
     k.run_for(0.5)
     st0 = tstate(k)
@@ -2615,7 +2615,7 @@ def t_mouse():
           and hz is not None and not k.crashed, (hit, hex(md0), hex(k.pc.mode()), hz))
 
 def t_vectors():
-    print('== vectors: each task its own (M5a)')
+    print('== vectors: each task its own')
     k = boot('mt_v.img', b'MULTITASK=1\r\n', 88, MTV)
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
@@ -2804,7 +2804,7 @@ def t_vectors():
           and not k.crashed, (early, r0, t1c, r1, r2, v1c))
 
 def t_kill():
-    print('== tasks ended with MT_KILL, whatever runs in them (M5b)')
+    print('== tasks ended with MT_KILL, whatever runs in them')
     k = boot('mt_kl.img', b'MULTITASK=1\r\n', 88, MTKL, MTK)
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
@@ -2922,7 +2922,7 @@ def t_kill():
           o.count('MTLAUNCH: error 1') == 1 and A.disk_file(k, 'KD.TXT') == ks(10) and 'MTLAUNCH: error 5' in o0
           and 'MTLAUNCH: error 1' in o3 and 'MTLAUNCH: error 1' in o9 and back(), (o, o0, o3, o9, now()))
     # CODE-Tab coming in after mt_hot looked, inside the front task's DOS key status call, before the BIOS's AH=01h
-    # would look (and drop it, as a key AH=01h can't give): MT drops what that would itself, CODE-Tab taken (M5b)
+    # would look (and drop it, as a key AH=01h can't give): MT drops what that would itself, CODE-Tab taken
     typ(k, 'mtlaunch /f mtkey.com d d9.txt;mtline.com l9.txt', 0.2)
     for i in range(60):
         st = tstate(k)
@@ -3060,7 +3060,7 @@ def t_kill():
           and merged(mcbs(k)) == m0 and ems_used(k) == e0 and not k.crashed, (isr, st, seen))
 
 def t_park():
-    print('== tasks parked in EMS and brought back (M6)')
+    print('== tasks parked in EMS and brought back')
     k = boot('mt_pk.img', b'MULTITASK=1\r\n', 128, MTKL, MTV)      # (2 MB of EMS: room for two parked)
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
@@ -3252,7 +3252,7 @@ def t_park():
           'is the other\'s own): pinned (error 5); both end, INT 62h as before', r2 <= va[0] < r2 + k.pc.u16(r2 - 1, 3)
           and r1 <= gv[1] < r1 + k.pc.u16(r1 - 1, 3) and 'MTLAUNCH: error 5' in o1 and s1 == TS_WAITK
           and vec(k, 0x62) == v62 and back(), (r1, r2, va, gv, o1, s1, now()))
-    # X35: a parked task whose pages are gone (FREEH frees MT's handle; or its size changed) can't come
+    # a parked task whose pages are gone (FREEH frees MT's handle; or its size changed) can't come
     # back (error 8), but MT_KILL ends it: its programs' EMS (incl. a 47h context), its wake, its screen's
     # and MT's handles if still MT's freed, the shadow off, MT_EXIT ^C's.  Shared: a screen handle given
     # to another program is left alone
@@ -3313,7 +3313,7 @@ def t_park():
 MTGR = os.path.join(HERE, 'MTGROW.COM')
 
 def t_grow():
-    print('== a task\'s region grows on demand (T5a)')
+    print('== a task\'s region grows on demand')
     k = boot('mt_grow.img', b'MULTITASK=1\r\n', 88, MTGR)
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
@@ -3423,7 +3423,7 @@ def t_grow():
     cp = lines[-2].split() if len(lines) > 1 else []
     cp = (int(cp[1], 16), int(cp[2], 16)) if len(cp) == 3 and cp[0] == 'C' else (0, 0)
     check('every free block taken (%s), then EXEC of a child (MTGROW C): its region grown for it (%Xh lower), it ran '
-          '(its line "%s": a .COM grown for its whole segment, 64 KB, under the TX at %04X: T5d) and ended (%s)'
+          '(its line "%s": a .COM grown for its whole segment, 64 KB, under the TX at %04X) and ended (%s)'
           % (ms, regm - ent(n, TE_REG), lines[-2] if len(lines) > 1 else '', tx0, lx), ans(ms[-1])[:2] == (8, 1)
           and cp[1] >= 0x1000 and cp[0] + cp[1] < tx0 and lines[-1][:3] == 'X 0' and ent(n, TE_REG) < regm,
           (ms, lines[-3:], hex(regm), hex(ent(n, TE_REG))))
@@ -3511,7 +3511,7 @@ def t_grow():
     check('... every switch at a safe point (the audit)', not au.bad(), au.bad()[:3])
 
 def t_lcmd():
-    print('== LCMD\'s START, FG, KILL, PARK, UNPARK and WAIT (M7a)')
+    print('== LCMD\'s START, FG, KILL, PARK, UNPARK and WAIT')
     cmds = ('start mtline.com x.txt', 'fg 1', 'kill 1', 'park 1', 'unpark 1', 'wait 1')
     k = boot('mt_lc0.img', None)
     sh = Shell(k)
@@ -3660,7 +3660,7 @@ def t_lcmd():
     o2 = sh.run('kill 1 && kill 2 && kill 3 && kill 4 && kill 5 && kill 6 && kill 7 && echo KILLED')
     check('seven tasks and the Executive\'s: the next START says "Too many tasks" and fails',
           n == 8 and 'Too many tasks' in o1 and 'FAILED' in o1 and 'KILLED' in o2 and back(), (n, o1, o2))
-    # a program that can't be started (HUGE.EXE in 1 KB, asking 640 KB: not even a region that grows, T5a, has room
+    # a program that can't be started (HUGE.EXE in 1 KB, asking 640 KB: not even a region that grows has room
     # for it): the task ends at once, its code FF08h; WAIT says so
     sh.run('set task=1')                # (both environments copied alike: the next one in the same place)
     o1 = sh.run('start /w /m:1 huge.exe')
@@ -3763,11 +3763,11 @@ MKFILE = bytes([0xB4, 0x3C, 0x31, 0xC9, 0xBA, 0x18, 0x01, 0xCD, 0x21, 0x89, 0xC3
 
 def ret(k, name, wait=1.0):
     """Return on a program in the Executive (with multitasking on: it starts as a task, in front: with no
-    TERM.RUN on these floppies, by T2's fallback, mt_uwin's mt_swreq)."""
+    TERM.RUN on these floppies, by the terminal window's fallback, mt_uwin's mt_swreq)."""
     k.select(name); k.key(ktest.ENTER, settle=False); k.run_for(wait)
 
 def t_exec():
-    print('== the Executive: Return starts a program as a task (M7b)')
+    print('== the Executive: Return starts a program as a task')
     # off: Return runs it and waits, as before; no entry
     k = boot('mt_ex0.img', None)
     k.select('MTLINE.COM'); k.key(ktest.ENTER, settle=False); k.pc.run_until(lambda: k.pc.mode() != 0x40, 5)
@@ -3939,7 +3939,7 @@ def t_exec():
           and tstate(k)[:2] == ([(0, 1, 'Executive')], 0) and k.pc.mode() == 0x40 and not k.crashed, (v33, s3, b9))
 
 def t_lists():
-    print('== LODE.INI\'s BG=, FREEZE= and MTMEM= (M7b)')
+    print('== LODE.INI\'s BG=, FREEZE= and MTMEM=')
     k = boot('mt_li.img', b'MULTITASK=1\r\nbg=mtspin, upper;X MTLIN\r\nFREEZE=MTLINE.EXE MTCWD.COM\r\n'
              b'MTMEM=MTLINE:100;HUGE.EXE:1 BAD BIG:5000 MTCWD:0 ,\r\n', 88, os.path.join(HERE, 'UPPER.COM'),
              mz(os.path.join(A.OUT, 'HUGE.EXE'), 0xA000, 0xA000))
@@ -3983,7 +3983,7 @@ def t_lists():
           and b2[:1] == ['HUGE.EXE could not be started: error 8'] and tstate(k)[0] == [(0, 1, 'Executive')], (a1, b1, b2))
 
 def t_tasksrun():
-    print('== TASKS.RUN: the tasks, CODE-T (M7b)')
+    print('== TASKS.RUN: the tasks, CODE-T')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
     k = boot('mt_tr0.img', None, 88, TR)
     k.key(A.CODE['T']); k.run_for(0.3)
@@ -4052,10 +4052,10 @@ def t_tasksrun():
           and b2[:1] == ['MTLINE.COM ended, exit code 2'] and tstate(k)[0] == [(0, 1, 'Executive')], (b1, r2, pz, st, rr, b2))
 
 SE_SIZE, SE_BASE, SE_END, SE_SP, MW_STK = map(equ, ('SE_SIZE', 'SE_BASE', 'SE_END', 'SE_SP', 'MW_STK'))  # KMW.INC
-SE_TASK = equ('SE_TASK')                                         # (a terminal window's task: T2)
+SE_TASK = equ('SE_TASK')                                         # (a terminal window's task)
 
 def t_windows():
-    print('== several window .RUNs at once: the calculator and the tasks (M8a)')
+    print('== several window .RUNs at once: the calculator and the tasks')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
     k = boot('mt_win.img', b'MULTITASK=1\r\n', 88, TR, A.CALCRUN, mouse=True)
     seg, Y = mt_seg(k), k.Y
@@ -4178,9 +4178,9 @@ def t_windows():
     n10, c10, ub = mb('mw_n'), mb('mw_cur'), uip()[1]
     bkey(k, 0x6D00, t=0.5)
     c10b = mb('mw_cur')
-    check('the tasks in front (CODE-F6), ESC: they close, the one in front before them next: the Executive (M8c: '
+    check('the tasks in front (CODE-F6), ESC: they close, the one in front before them next: the Executive ('
           'CODE-F6 put the calculator last), the calculator still open; CODE-F6: the calculator in front; the UI block the '
-          'whole segment still while one runs (%s paragraphs, and %s with both: M8b)' % (ub, hi0), ts and n10 == 1
+          'whole segment still while one runs (%s paragraphs, and %s with both)' % (ub, hi0), ts and n10 == 1
           and c10 == 0 and c10b == 1 and hi0 == 4096 and ub == 4096 and A.has(k, 'Calculator')
           and not A.has(k, 'Tasks'), (ts, n10, c10, c10b, hi0, ub, hex(rec(1, SE_END))))
     bkey(k, ktest.ESC, t=0.5); k.run_for(0.5)
@@ -4189,7 +4189,7 @@ def t_windows():
     ss = [e for e in sw if e['task'] == 0 and e['ss'] == k.useg and e['csp'] >= k.u16('run_base')]
     check('ESC, ESC: both closed (%d, then %d), the Executive back: its list, nothing loaded (run_active 0), the UI block '
           'as before; every switch meanwhile by the rules (%d, %d of them from a session\'s own stack, at the UI\'s idle HLTs: its loop\'s or the saver\'s'
-          ', or a move\'s or resize\'s wait, mwait: audit3 X32; each of the three)' % (n10, mb('mw_n'), len(sw), len(ss)),
+          ', or a move\'s or resize\'s wait, mwait; each of the three)' % (n10, mb('mw_n'), len(sw), len(ss)),
           n10 == 1 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and uip()[1] == free0[1]
           and A.has(k, 'Select a file and confirm') and not au.bad() and ss and not k.crashed
           and set(e['ip'] for e in ss) == {Y['..@ui_idle'], Y['..@ui_sidle'], Y['..@ui_midle']}, (n10, uip(), free0, au.bad()[:3], len(sw), len(ss), k.crashed, k.band(), sorted(set(hex(e['ip']) for e in ss if e['ip'] != Y['..@ui_idle']))))
@@ -4250,7 +4250,7 @@ def t_windows():
           (be, re0, n0, f0, f1, bt, n1, up, A.free_paras(k)))
 
 def t_base():
-    print('== the Executive live under the windows (M8c): in front by a click or CODE-F6, its drawing clipped')
+    print('== the Executive live under the windows: in front by a click or CODE-F6, its drawing clipped')
     p = os.path.join(A.OUT, 'NOTES.TXT'); open(p, 'wb').write(A.TEXT)
     q = os.path.join(A.OUT, 'OTHER.TXT'); open(q, 'wb').write(b'Other file\r\nsecond line')
     sq = os.path.join(A.OUT, 'SUBOTHER.TXT'); open(sq, 'wb').write(b'was in SUB\r\n')
@@ -4725,7 +4725,7 @@ def t_clip():
           and seen and not k.crashed, (cf, ses, h, g and len(g), rec, e0, e1, e2, seen, op[-80:], ou[-80:], ok_[-80:], k.band()))
 
 def t_write():
-    print('== Write as a window (M8b): beside the calculator and another Write, moved and resized')
+    print('== Write as a window: beside the calculator and another Write, moved and resized')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
     p = os.path.join(A.OUT, 'NOTES.TXT'); open(p, 'wb').write(A.TEXT)
     k = boot('mt_wr.img', b'MULTITASK=1\r\n', 88, TR, A.CALCRUN, A.WRITE, p, mouse=True)
@@ -4784,7 +4784,7 @@ def t_write():
     k.key(0x6F00, *([ktest.LEFT] * 70), ktest.ENTER); k.run_for(0.5)
     wm = win(1)
     k.key(0x6F00, *([ktest.RIGHT] * 50), ktest.ENTER); k.run_for(0.5)
-    check('a click left of it, on the Executive: the Executive in front (M8c), its band (%s), no cursor moved (%s); a '
+    check('a click left of it, on the Executive: the Executive in front, its band (%s), no cursor moved (%s); a '
           'click on Write\'s status line: Write in front; CODE-F8, Left, Up, ESC: as it was (%s); CODE-F8, Left x70: no '
           'narrower than 24 columns (%s); Right x50: back (%s)' % (be[:1], sc, we, wm, win(1)), sc == (4, 292) and ce == 0
           and be[:1] == ['Select a file and confirm'] and cw == 1 and we == (2, 32, 74, 280) and wm == (2, 32, 24, 280)
@@ -4883,7 +4883,7 @@ def t_write():
     c7b = mb('mw_cur')
     k.key(ktest.ESC); k.run_for(0.5); k.settle()
     check('CODE-Q, Return in it: NOTES.TXT saved (%r...), the calculator still open (%d running), the Executive in front '
-          '(%d: CODE-F6 put the calculator last, M8c); CODE-F6: the calculator (%d); ESC: the Executive, nothing loaded, '
+          '(%d: CODE-F6 put the calculator last); CODE-F6: the calculator (%d); ESC: the Executive, nothing loaded, '
           'the UI block as before' % (d7[:16], n7, c7, c7b), d7.startswith(b'Hello. Hi The quick brown fox\r\n')
           and n7 == 1 and c7 == 0 and c7b == 2 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and A.free_paras(k) == free0
           and A.has(k, 'Select a file and confirm') and not k.crashed, (d7, n7, A.free_paras(k), free0, A.screen(k)))
@@ -4894,13 +4894,13 @@ def t_write():
           and any(y == 340 and 'Line 1 of 1' in l for y, l in k.ocr()), A.screen(k))
 
 def t_paintw():
-    """Paint as a window (W1): with MULTITASK=1 a window .RUN (RF_WIN), its
+    """Paint as a window: with MULTITASK=1 a window .RUN (RF_WIN), its
     canvas a 1:1 view of the 640 x 400 picture (centred at first), moved by
     the arrows, PgUp/PgDn and Ctrl-Left/Right; strokes clamped to the canvas,
     fills following the picture's lines; C as the model has it, outside the
-    view too; W_DRAW after another window, a move, a resize; CODE-X.  W2: a
+    view too; W_DRAW after another window, a move, a resize; CODE-X.  A
     drag on the frame moves the view; CODE-F the whole screen, and back."""
-    print('== Paint as a window (W1): a view of the picture')
+    print('== Paint as a window: a view of the picture')
     PAINT = os.path.join(GOS, 'apps', 'PAINT.RUN')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
     rows = [bytes(((x * 7 + y * 3) ^ (y >> 2)) & 0xFF for x in range(80)) for y in range(400)]
@@ -5102,7 +5102,7 @@ def t_paintw():
     check('CODE-X, "drawn": DRAWN.BMP, the model\'s picture in Shift-PrtSc\'s format; the title "Paint: DRAWN.BMP"',
           A.disk_file(k, 'DRAWN.BMP') == m.bmp() and A.has(k, 'Paint: DRAWN.BMP') and not view_bad(),
           (len(A.disk_file(k, 'DRAWN.BMP') or b''), A.screen(k)))
-    # W2: CODE-F, the whole screen (the window itself made so), and back
+    # CODE-F, the whole screen (the window itself made so), and back
     def scr_bad():
         """The screen's lines, all 400, against C (but under the pointer)."""
         A.point(k, 639, 0); k.run_for(0.2)
@@ -5211,7 +5211,7 @@ def t_paintw():
     check('a stroke in the window after the zoom, U: the picture before it, all of it (U as C where the zoom changed '
           'them: D)', C() == zp and not view_bad(), (A.diff(zp, C()), view_bad()))
     k.key('U'); k.run_for(0.3)
-    # CODE-Tab away to a full-screen task and back (paint.md §8's planned check, as it is since W1: Paint's strokes
+    # CODE-Tab away to a full-screen task and back (paint.md §8's planned check, as it is since Paint became a window: its strokes
     # come by UI_MOUSE, so the UI's own INT 33h state is task 0's, saved and put back by MT).  Task 0's hot spot,
     # masks made its own (after the first task's start, which saves it too); LCMD's (a copy, its pointer hidden) changed while it is in front: back
     # in task 0, task 0's again, not LCMD's.
@@ -5296,7 +5296,7 @@ def t_paintw():
 
 
 def t_system():
-    print('== System: the Multitasking topic (M7b)')
+    print('== System: the Multitasking topic')
     k = boot('mt_sy.img', b'MULTITASK=1\r\nSAVER=10\r\n', 88, A.SYSTEM)
     k.key(A.CODE['U'])
     for _ in range(9): k.key(ktest.DOWN)
@@ -5326,7 +5326,7 @@ def t_system():
           and 'Asked for' not in t4, t4[-900:])
 
 def t_rclaude():
-    print('== Resident Claude with tasks: MT_TSR, its key wait, its pop-up the front task\'s (M7c)')
+    print('== Resident Claude with tasks: MT_TSR, its key wait, its pop-up the front task\'s')
     import test_resident as R
     cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
     k = boot('mt_rc.img', b'MULTITASK=1\r\n', 88, cl, MTK, 'ZZ.COM=' + MTLN)
@@ -5554,7 +5554,7 @@ def t_rpoll():
     while us() < t0 + 500000 and tstate(k)[1] == f0: k.pc.run(300)
     dt = (us() - t0) / 1000.0
     check('CODE-Tab under KEYPK (task %d in front), MTSPIN behind: the front task changes %.1f ms later' % (f0, dt),
-          tstate(k)[1] != f0 and dt < 100, (f0, tstate(k), dt))     # (44 ms with ticks on time, H10; 21 when a tick held
+          tstate(k)[1] != f0 and dt < 100, (f0, tstate(k), dt))     # (44 ms with ticks on time; 21 when a tick held
                                                                     #  under CLI waited for pcemu's next run; none in 500 when MT took
                                                                     #  the peeks for the stub's)
     # KEYPK's peeks through a TSR's INT 16h hook loaded after CLAUDE /R (MTKEY H, on with PUSHF / CALL FAR: the frame
@@ -5574,7 +5574,7 @@ TERMRUN = os.path.join(GOS, 'apps', 'TERM.RUN')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERM.FNT')
 
 def t_term():
-    print('== terminal windows (T2): a text program started as a task behind, shown in TERM.RUN\'s window')
+    print('== terminal windows: a text program started as a task behind, shown in TERM.RUN\'s window')
     box = os.path.join(A.OUT, 'BOX.TXT'); open(box, 'wb').write(b'\xc9\xcd\xbb\r\n')
     k = boot('mt_tw.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, box, A.CALCRUN)
     seg, Y = mt_seg(k), k.Y
@@ -5756,7 +5756,7 @@ def t_term():
 
 def t_wait_bg():
     print('== LCMD\'s WAIT behind, in a terminal window: a ^C typed into its window ends it, and one typed to the front '
-          'task stays that task\'s (X34)')
+          'task stays that task\'s')
     k = boot('mt_wb.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT)
     T = TermView(k)
     scr, typ2 = T.scr, T.typ2
@@ -5781,7 +5781,7 @@ def t_wait_bg():
     k.run_for(10.0)                                                     # MTSPIN ends: WAIT does, at the window
 
 def t_tgfx():
-    print('== terminal windows (T3): a windowed program\'s graphics full screen, and back to its window with a text mode')
+    print('== terminal windows: a windowed program\'s graphics full screen, and back to its window with a text mode')
     k = boot('mt_tg.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTSC)
     seg, Y, WG = mt_seg(k), k.Y, equ('TX_WGFX')
     T = TermView(k)
@@ -5900,7 +5900,7 @@ def t_tgfx():
           and f1 == n3 and tstate(k)[1] == n3 and A.disk_file(k, 'Y.TXT') == b'ok', (w1, gone, n3, t1, t3, w3, f1, tstate(k)))
 
 def t_tclip():
-    print('== terminal windows (T4): select, copy and paste, the menu, and the mouse for the program in it')
+    print('== terminal windows: select, copy and paste, the menu, and the mouse for the program in it')
     import ctypes
     sel = os.path.join(A.OUT, 'SEL.TXT'); open(sel, 'wb').write(b'alpha beta   \r\ngamma\r\ndelta epsilon\r\n')
     big = os.path.join(A.OUT, 'BIG.TXT')
@@ -6183,8 +6183,8 @@ def t_tclip():
 MTTM = os.path.join(HERE, 'MTTERM.COM')
 
 def t_wwait():
-    print('== a window moved or resized with a task computing behind (audit3 X32); a window .RUN\'s message in the '
-          'band through the saver (X38)')
+    print('== a window moved or resized with a task computing behind; a window .RUN\'s message in the '
+          'band through the saver')
     k = boot('mt_ww.img', b'MULTITASK=1\r\nTIDY=0\r\n', 88, TERMRUN, TERMFNT, mouse=True)
     seg, Y = mt_seg(k), k.Y
     cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
@@ -6218,7 +6218,7 @@ def t_wwait():
           'mouse still, MTSPIN runs on (%s of 100), every switch at a safe point; ESC or the release: as it was'
           % (n, r0, got), n != 7 and r0 > 50 and all(v > 30 for v in got.values()) and w1 == w0 and not au.bad(),
           (n, r0, got, w0, w1, au.bad()[:3]))
-    # X38: a window .RUN that can't start (CODE-K, no CALC.RUN): the band keeps its message through the saver
+    # a window .RUN that can't start (CODE-K, no CALC.RUN): the band keeps its message through the saver
     k.key(A.CODE['K'], settle=False); k.run_for(1.0)
     b1 = k.band()
     st0 = k.u16('saver_t')
@@ -6234,7 +6234,7 @@ def t_wwait():
           and not k.crashed, (b1, tm, b2))
 
 def t_wxor():
-    print('== the Executive\'s XOR outlines cut around a window .RUN\'s window (M8c: mw_span\'s top, bottom and side rows)')
+    print('== the Executive\'s XOR outlines cut around a window .RUN\'s window (mw_span\'s top, bottom and side rows)')
     k = boot('mt_wx.img', b'MULTITASK=1\r\n', 88, A.CALCRUN, mouse=True)
     seg, Y = mt_seg(k), k.Y
     CS = A.run_syms('apps/CALC.ASM')
@@ -6284,7 +6284,7 @@ def t_wxor():
           ([(len(g), len(v), len(g - v), len(v - g)) for g, v in zip(got, want)], rows, k.crashed))
 
 def t_peek():
-    print('== a window .RUN\'s file read from one open (R43): every way it can\'t start closes it')
+    print('== a window .RUN\'s file read from one open: every way it can\'t start closes it')
     hdr = lambda api, img, bss, na, nr, fl: b'GRUN' + struct.pack('<6H', api, img, bss, na, nr, fl)
     fakes = (('NOWIN.RUN', hdr(5, 0x100, 0, 0, 0, 0)),          # not a window .RUN (cut short: run_app says so)
              ('WBAD.RUN', hdr(6, 0x10, 0, 0x2000, 0x2000, 1)),  # its fixups past 4000h words: mw_start's .bad
@@ -6333,7 +6333,7 @@ def t_peek():
           [n for n, f, s in nn] == [2, 3, 4, 4, 4] and all(f == 0 and s for n, f, s in nn) and not k.crashed, (nn, A.screen(k)))
 
 def t_tname():
-    print('== a terminal window\'s title: its program\'s name in TERM.RUN\'s argument, from MT (R65)')
+    print('== a terminal window\'s title: its program\'s name in TERM.RUN\'s argument, from MT')
     k = boot('mt_tn.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, 'X.COM=' + MTLN, 'ABCDEFGH.EXE=' + MTLN, 'SUB\\',
              'SUB\\INSUB.COM=' + MTLN, mouse=True)
     seg, Y = mt_seg(k), k.Y
@@ -6381,7 +6381,7 @@ def t_tname():
     check('a task with no name: its window opens untitled (%r; the argument %r ends with the blank), the close box asks '
           '"%s"; it ends, the window with it' % (rn[0], rn[1], rn[4]), rn[0] == '' and rn[1] == rn[2] and rn[1].endswith(' ')
           and rn[4].rstrip() == 'Close: Confirm to end' and rn[5] == 0 and not k.crashed, rn)
-    # TERM.RUN started by hand (X52): no task to show, so it says how it is opened, in the band till a key
+    # TERM.RUN started by hand: no task to show, so it says how it is opened, in the band till a key
     if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)
     k.select('TERM.RUN'); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
     b = k.band() or ['']
@@ -6424,7 +6424,7 @@ def t_wroot():
 MTPB = os.path.join(HERE, 'MTPUB.COM')
 
 def t_tpub():
-    print('== terminal windows (T5b): a screen a program publishes (MT_PUB), drawn in its window with its own font')
+    print('== terminal windows: a screen a program publishes (MT_PUB), drawn in its window with its own font')
     import ctypes
     k = boot('mt_t5b.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTPB, MTTM, mouse=True)
     seg, Y = mt_seg(k), k.Y
@@ -6506,7 +6506,7 @@ def t_tpub():
     c2 = (drawn(5, 3) == glyph(*cellc(5, 3), mark=True), tv('top'))
     key('d')
     check('"k": PBF_NOCUR: no mark at (23, 0) (%s), the view as it was (%d); "u" (to row 5, column 3) while hidden: the view '
-          'following it all the same, with no mark (T5d: MT_TROWS gives its row with bit 7; %d); "k": its mark at (5, 3), the view from its row (%d); "d": back to row 23, the view rows %d on'
+          'following it all the same, with no mark (MT_TROWS gives its row with bit 7; %d); "k": its mark at (5, 3), the view from its row (%d); "d": back to row 23, the view rows %d on'
           % (c1[0], c1[2], t1[0], c2[1], tv('top')), c1 == (True, 1, 6) and t1 == (5, True) and c2 == (True, 5) and tv('top') == 6
           and drawn(23, 0) == glyph(*cellc(23, 0), mark=True) and lines()[-4:] == ['K 03', 'U', 'K 01', 'D'],
           (c1, t1, c2, tv('top'), lines()[-4:]))
@@ -6564,7 +6564,7 @@ def t_tpub():
     r0, r1, r2 = trows('t0.txt'), trows('t1.txt', 32768, 25), trows('t2.txt', 32768 + 5, 3)
     c1 = b''.join(struct.pack('<BB', *((g, 1) if (r, c) == (23, 10) else (t22, 0) if (r, c) == (22, 0) else cellc(r, c)))
                   for r in range(25) for c in range(80))
-    check('MTTERM R (MT_TROWS from that window) for its task, as before T5b (DX 0): its pages (DL %02Xh, CX %04Xh, LCMD\'s '
+    check('MTTERM R (MT_TROWS from that window) for its task, as before MT_PUB (DX 0): its pages (DL %02Xh, CX %04Xh, LCMD\'s '
           '"mtpub pb.txt" there); with DH 80h: its cells, all 2,000 as MTPUB has them (DL %02Xh, CL 80, CH its 25 rows: '
           '%04Xh, BX its cursor %04Xh); DX 8005h, 3 rows: its rows 5-7' % (r0[4] & 0xFF, r0[3], r1[4] & 0xFF, r1[3], r1[2]),
           r0[0] == 0 and r0[4] & 32 == 0 and r0[3] == 0x0350 and b'mtpub pb.txt' in r0[5][::2] and r1[0] == 0
@@ -6598,7 +6598,7 @@ def t_tpub():
           '(published again, shown, in a text mode): back to its window (front %d), its cells drawn there'
           % (fn, fs_, tstate(k)[1]), fn == n and fs_ == n and tstate(k)[1] == 0 and tb('tdl') & 32 and rowok(10)
           and lines()[-1] == ok1, (fn, fs_, tstate(k), tb('tdl'), lines()[-3:]))
-    # a picture: full screen (T3), CODE-Tab away from it and back, then back to its window
+    # a picture: full screen, CODE-Tab away from it and back, then back to its window
     key('g', 2.0)
     gf = (tstate(k)[1], k.pc.mode(), bytes(k.pc.rd(0xB800, 0, 256)) == bytes((((i_ * 5) ^ (i_ >> 8)) & 0xFF) for i_ in range(256)),
           k.pc.rd(tx(n), equ('TX_WGFX'), 1)[0])
@@ -6663,7 +6663,7 @@ def t_tpub():
           % (lines()[-5:-3], px == pd, lines()[-3:-2], py, dy), lines()[-5] == 'Y' and lines()[-4].startswith('X 0')
           and px == pd and lines()[-3] == 'Z 0 %02X01' % n and lines()[-2].startswith('X 0') and py == (0, 0, 0)
           and dy == 0 and lines()[-1] == ok1 and tb('tdl') & 32, (lines()[-7:], px, pd, py, dy))
-    # T5d: its rows scrolled, its status row (24) staying: TERM moves what is drawn (scrl), the rest as cells finds it
+    # its rows scrolled, its status row (24) staying: TERM moves what is drawn (scrl), the rest as cells finds it
     def allok():                        # the cells in view not drawn as its cells say (but the cursor's)
         co, cs_ = k.pc.u16(pd[1], pd[0] + 4), k.pc.u16(pd[1], pd[0] + 6)
         bad = []
@@ -6750,7 +6750,7 @@ def t_tpub():
           and lo[:1] == ['P 1 0001'], (l0, n2, lf, f2, f3, lo))
 
 def t_tcore():
-    print('== a terminal window\'s calls (T1): MT_TROWS, a task\'s screen as MT keeps it; MT_TKEY, keys typed to it')
+    print('== a terminal window\'s calls: MT_TROWS, a task\'s screen as MT keeps it; MT_TKEY, keys typed to it')
     k = boot('mt_tc.img', b'MULTITASK=1\r\n', 88, MTK, MTTM, MTSC)
     sh = Shell(k)
     sh.run('ver')
@@ -6867,7 +6867,7 @@ def srq_progs(k):
     return out
 
 def t_srq():
-    print('== T5c: a program woken by SRQ (MT_WAKE)')
+    print('== a program woken by SRQ (MT_WAKE)')
     k = boot('mt_srq.img', b'MULTITASK=1\r\n', 88, MTSQ, chip=A.sim7210.NEC7210(A.sim7210.bus()))
     Y, seg = k.Y, mt_seg(k)
     au = Audit(k)
@@ -6888,7 +6888,7 @@ def t_srq():
     def lat(psp, when, max_s=0.4, at=None):
         """IRQ 5 raised once when() holds (at the block `at`, if given: from the watch) -> (ms until MTSRQ at
         psp sees it, or None; the way MT went meanwhile: mt_srqi, out of it, mt_tick.v, INT 21h's way out,
-        mt_pick taking mt_want; T5d: the Executive giving way at its idle, mw_poll.y)."""
+        mt_pick taking mt_want; the Executive giving way at its idle, mw_poll.y)."""
         if psp is None: return 'no MTSRQ', []
         t1 = k.pc.us + 2e6                              # (short runs: run_for's are 20000 blocks at least)
         hit, prev, base, t0, ev = [], k.pc.watch, psp * 16 + 0x10D, [], []
@@ -6966,7 +6966,7 @@ def t_srq():
     line(k, ''); k.run_for(0.5)
     check('... (MTSRQ ended, MTSPIN D killed)', srq_progs(k) == [] and wkt() == 0xFF and nd
           and nd not in [i for i, s_, n in tstate(k)[0]], (o, srq_progs(k), wkt(), tstate(k)))
-    # X33: the task computing hooks INT 08h itself; the SRQ (IRQ 5, still the driver's) wakes at once
+    # the task computing hooks INT 08h itself; the SRQ (IRQ 5, still the driver's) wakes at once
     typ(k, 'mtlaunch mtsrq.com 1', 1.0); line(k, '')
     q = one()
     typ(k, 'mtlaunch mtspin.com 50 s4.txt t', 0.2)
@@ -7034,7 +7034,7 @@ def t_srq():
     k.pc.irq_pending.add(5); k.run_for(0.5)
     check('... it ends at its third: the wake ends with it (task 0\'s too)', srq_progs(k) == [] and wkt() == 0xFF,
           (srq_progs(k), wkt()))
-    # the Executive in front (a terminal window's case, T5d): idle, and busy drawing.  Another MTSPIN first: a task
+    # the Executive in front (a terminal window's case): idle, and busy drawing.  Another MTSPIN first: a task
     # ready ahead of MTSRQ in the round (so the woken one is taken because it was woken, not as the next in turn)
     typ(k, 'mtlaunch mtspin.com 600 s3.txt', 1.0); line(k, '')
     typ(k, 'mtlaunch mtsrq.com 2', 1.0); line(k, '')
@@ -7254,7 +7254,7 @@ def t_file():
     check('... and the file as built: on (no file left open either)', at_top(k) and sft_used(k) == used0, (show(mcbs(k)), sft_used(k)))
 
 def t_k2cap():
-    print('== K2: Shift-PrtSc at the prompt of an error inside EXEC, with MULTITASK=1 (a task behind keeps running)')
+    print('== Shift-PrtSc at the prompt of an error inside EXEC, with MULTITASK=1 (a task behind keeps running)')
     big = os.path.join(A.OUT, 'BIG.COM')
     open(big, 'wb').write(bytes([0xB4, 0x09, 0xBA, 0x08, 0x01, 0xCD, 0x21, 0xC3]) + b'HELLO$' + b'Q' * 4082)
     k = boot('mt_k2.img', b'MULTITASK=1\r\n', 88, big, os.path.join(A.GOS, 'drivers', 'SCREEN.PRN'))
@@ -7294,7 +7294,7 @@ def code_hooks(k, addrs, fn):
     k.pc.mu.ctl_flush_tb()
 
 class DWait:
-    """M10's points in MT, counted as they are passed (a hook at each label: code_hooks), and the kernel's stack
+    """The floppy wait's points in MT, counted as they are passed (a hook at each label: code_hooks), and the kernel's stack
     at each 9001h from inside INT 21h (its depth: kstack_top less SP, SS the kernel's).  A wait given away is
     mt_dwait.out less mt_dwait.u (none to run); a task made ready again, mt_dready.w."""
     LABELS = ('mt_dwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dready', 'mt_dready.w', 'mt_dtick', 'mt_i0e', 'mt_gate',
@@ -7313,7 +7313,7 @@ class DWait:
         if n == 'mt_dwait' and pc.r('ss') == 0x60:
             s.depth.append(s.top - pc.r('sp'))
     def m10(s, on):
-        """M10 on, or off: INT 15h straight to the BIOS (MT's gates then never hold anything)."""
+        """MT's INT 15h on, or off: INT 15h straight to the BIOS (MT's gates then never hold anything)."""
         k = s.k; seg = mt_seg(k)
         k.pc.wr(0, 0x15 * 4, struct.pack('<HH', k.Y['mt_i15'], seg) if on else k.pc.rd(seg, k.Y['mt_old15'], 4))
 
@@ -7337,7 +7337,7 @@ def dw_run(k, spin, cmd, done, sim=60):
     return tc, spun(k, f)
 
 def t_dfrz():
-    print('== M10: a task frozen behind while it waits on the floppy still runs when the floppy is done (no hang)')
+    print('== a task frozen behind while it waits on the floppy still runs when the floppy is done (no hang)')
     # A MTSPIN counts behind; then MTSPIN K (its own INT 13h read on each count, 1520 drive timing) in front, /Z:
     # frozen whenever behind.  CODE-Tab while K is out on the floppy: the other comes to the front, and K
     # is frozen behind.  Before the fix mt_pick skipped it (frozen) once its read was done, and the other's
@@ -7369,7 +7369,7 @@ def t_dfrz():
           and k.pc.fd_reentry == 0 and not k.crashed, (kc, tstate(k), k.pc.fd_reentry))
 
 # ---------------------------------------------------------------------
-#  M12: tasks run while one waits on the hard disk (C:, KHD.INC).  pcemu's
+#  Tasks run while one waits on the hard disk (C:, KHD.INC).  pcemu's
 #  Ata timed (seeks, rotation: the 1520's CP30104H's pace) and strict (a
 #  command written while one is in flight is a crash), INTRQ when the
 #  drive stops being busy, as IRQ 14
@@ -7393,7 +7393,7 @@ def hw_files(ata):
     return F.Volume(ata.disk, HW_GEOM[3]).files()
 
 class HWait:
-    """M12's points in MT, counted (a hook at each label); the kernel's stack at each 9000h from inside INT 21h;
+    """The hard disk wait's points in MT, counted (a hook at each label); the kernel's stack at each 9000h from inside INT 21h;
     the time each owner was out (from its switch to its IRQ 14 or tick: given to the others)."""
     LABELS = ('mt_hwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dwait.u', 'mt_dwait.out', 'mt_dready', 'mt_dready.w',
               'mt_dtick', 'mt_i76', 'mt_i77', 'mt_gate', 'mt_gate.no', 'mt_gate.h', 'mt_dwait.s')
@@ -7414,7 +7414,7 @@ class HWait:
         if n == 'mt_hwait' and pc.r('ss') == 0x60: s.depth.append(s.top - pc.r('sp'))
         if n == 'mt_dready.w' and s.out is not None: s.given += pc.us - s.out; s.out = None
     def m12(s, on):
-        """M12 (and M10) on, or off: INT 15h straight to the BIOS."""
+        """MT's INT 15h (the hard disk's waits and the floppy's) on, or off: INT 15h straight to the BIOS."""
         k = s.k; seg = mt_seg(k)
         k.pc.wr(0, 0x15 * 4, struct.pack('<HH', k.Y['mt_i15'], seg) if on else k.pc.rd(seg, k.Y['mt_old15'], 4))
 
@@ -7438,11 +7438,11 @@ def hw_copy(k, spin=None, sim=120):
     return tc, spun(k, f)
 
 def t_hwait():
-    """M12: tasks run while one waits on the hard disk.  A 1 MB copy on C: at the prompt, MTSPIN behind."""
-    print('== M12: tasks run while one waits on the hard disk')
+    """Tasks run while one waits on the hard disk.  A 1 MB copy on C: at the prompt, MTSPIN behind."""
+    print('== tasks run while one waits on the hard disk')
     data = hw_data()
     lim = equ('KSLICE') - 48
-    # 1. the copy alone: M12 off and on (nobody to take a wait: the same)
+    # 1. the copy alone: MT's INT 15h off and on (nobody to take a wait: the same)
     alone = []
     for on in (False, True):
         ata = hw_ata(data)
@@ -7452,7 +7452,7 @@ def t_hwait():
         fs, probs = hw_files(ata)
         alone.append((tc, hw.n['mt_dwait.out'], hw.n['mt_dwait.u'], fs.get('\\B2.BIN') == data and not probs))
     (a0, y0, u0, o0), (a1, y1, u1, o1) = alone
-    check('a 1 MB copy on C: alone (timed: the CP30104H\'s seeks and rotation): %.2f s with M12 off, %.2f s on (%d of '
+    check('a 1 MB copy on C: alone (timed: the CP30104H\'s seeks and rotation): %.2f s with MT\'s INT 15h off, %.2f s on (%d of '
           'its waits could have been given away, nobody to take them: no switch), both exact, the FAT consistent'
           % (a0, a1, y1), o0 and o1 and y0 == 0 and y1 > 0 and u1 == y1 and abs(a1 - a0) < 0.01 * a0, alone)
     # 2. MTSPIN behind: off, then on
@@ -7466,7 +7466,7 @@ def t_hwait():
         res[on] = (tc, c, fs.get('\\B2.BIN') == data and not probs, hw, ata, k)
     (t_off, c_off, ok0, hw0, _, _), (t_on, c_on, ok1, hw, ata, k) = res[False], res[True]
     sw = hw.sw()
-    check('... MTSPIN counting behind (40 ticks, within the copy): with M12 off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d '
+    check('... MTSPIN counting behind (40 ticks, within the copy): with MT\'s INT 15h off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d '
           '(%d switches at 9000h, %.2f s given to it, every one back by IRQ 14 through MT\'s INT 76h: %d of them, '
           '%d IRQ 14s in all): the copy no slower, MTSPIN more; both exact, the FAT consistent; no command written '
           'to the drive while one was in flight'
@@ -7499,7 +7499,7 @@ def t_hwait():
     fs, probs = hw_files(ata)
     htk = k.pc.rd(mt_seg(k), k.Y['mt_htk'], 1)[0]
     check('IRQ 14 dead: the first two waits given away come back by the tick (the drive\'s status: done), then no more '
-          'switches on the hard disk (%d declined); the copy exact (%.2f s against %.2f s with M12 off), MTSPIN counted %d'
+          'switches on the hard disk (%d declined); the copy exact (%.2f s against %.2f s with MT\'s INT 15h off), MTSPIN counted %d'
           % (hw.n['mt_dcan.no'], tc, t_off, c), htk == 2 and hw.sw() == 2 and hw.n['mt_dtick'] >= 2
           and hw.n['mt_dcan.no'] > 20 and fs.get('\\B2.BIN') == data and not probs and tc < 1.05 * t_off and c > 0
           and not k.crashed, (htk, dict(hw.n), tc, probs))
@@ -7574,9 +7574,9 @@ def t_hwait():
 
 def t_dmaems():
     """The 1520 restarts when an EMS page register changes while the floppy's DMA runs (found 2026-11-04 with
-    CRASHLOG: M10's switch at a floppy's wait, mt_load writing the next task's windows).  pcemu models it
+    CRASHLOG: MT's switch at a floppy's wait, mt_load writing the next task's windows).  pcemu models it
     (fd_ems_write; FD_STRICT: a crash), and its floppy controller's status (3F4h)."""
-    print('== M10 on the 1520: no EMS page register changed while a floppy transfer\'s DMA runs')
+    print('== floppy waits on the 1520: no EMS page register changed while a floppy transfer\'s DMA runs')
     CL = os.path.join(GOS, 'claude', 'CLAUDE.COM')
     strict = pcemu.FD_STRICT
     pcemu.FD_STRICT = True
@@ -7701,7 +7701,7 @@ def t_hdtools():
           (tstate(k), o3[-400:]))
 
 def t_sysreq():
-    print('== M11: SysReq to the next task, as CODE-Tab; Confm (CODE-SysReq) left alone; -dNOSYSREQ has none of it')
+    print('== SysReq to the next task, as CODE-Tab; Confm (CODE-SysReq) left alone; -dNOSYSREQ has none of it')
     k = boot('mt_sr.img', b'MULTITASK=1\r\n', 88)
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
@@ -7789,16 +7789,16 @@ def t_sysreq():
           (st1, st2, k.pc.srq_seen, A.disk_file(k, 'N.TXT')))
 
 def t_dwait():
-    """M10: tasks run while one waits on the floppy (pcemu's fd_wait: INT 15h 9001h, IRQ 6, 9101h, the DMA at
+    """Tasks run while one waits on the floppy (pcemu's fd_wait: INT 15h 9001h, IRQ 6, 9101h, the DMA at
     its end through the EMS windows as they are then).  The copy at the prompt, MTSPIN behind."""
-    print('== M10: tasks run while one waits on the floppy')
+    print('== tasks run while one waits on the floppy')
     pad = dw_pad(); want = open(pad, 'rb').read()
     scr = os.path.join(A.GOS, 'drivers', 'SCREEN.PRN')
     def fresh(name, disk='flat', b=None):
         k = boot(name, b'MULTITASK=1\r\n', 88, 'PAD.BIN=' + pad, scr, fd_wait=True, disk_model=disk)
         Shell(k).run('ver')
         return k, DWait(k)
-    # 1. the 1520's drive timing: the copy alone, M10 off and on (nobody else to run: the same); then with
+    # 1. the 1520's drive timing: the copy alone, MT's INT 15h off and on (nobody else to run: the same); then with
     #    MTSPIN behind, off and on
     alone = []
     for on in (False, True):
@@ -7808,7 +7808,7 @@ def t_dwait():
         k.pc.run_until(lambda: 'copied' in k.pc.text_screen() or k.pc.crash, 60)
         alone.append(((k.pc.us - t0) / 1e6, dw.n['mt_dwait.out'], A.disk_file(k, 'P.BIN') == want))
     (a0, s0, o0), (a1, s1, o1) = alone
-    check('the copy alone (the 1520\'s drive timing): %.2f s with M10 off, %.2f s on (%d of its waits could have been '
+    check('the copy alone (the 1520\'s drive timing): %.2f s with MT\'s INT 15h off, %.2f s on (%d of its waits could have been '
           'given away, nobody to take them: no switch), both exact' % (a0, a1, s1),
           o0 and o1 and s0 == 0 and s1 > 0 and abs(a1 - a0) < 0.01 * a0, alone)
     k, dw = fresh('mt_dw1.img', 'real')
@@ -7820,7 +7820,7 @@ def t_dwait():
     t_on, c_on = dw_run(k, '200 c1.txt', 'copy pad.bin p1.bin', 'copied')
     ok1 = A.disk_file(k, 'P1.BIN') == want
     pc = k.pc
-    check('a 300 KB copy at the prompt, MTSPIN counting behind (the 1520\'s drive timing: seeks, rotation): with M10 '
+    check('a 300 KB copy at the prompt, MTSPIN counting behind (the 1520\'s drive timing: seeks, rotation): with MT\'s INT 15h '
           'off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d (%d switches at 9001h, back in %d 9101h, %d IRQ 6s through '
           'MT\'s hook): the waits given to MTSPIN, the copy within 10%% (a switch back is ~1.5 ms); both copies '
           'exact; no INT 13h while one waited, no transfer whose EMS window '
@@ -7962,7 +7962,7 @@ def t_nodisk():
     check('... run from LCMD as a task (LCMD\'s INT 24h, which prompts), the Executive in front: the same, 3 at once, '
           'nothing waiting for an answer nobody can read', A.disk_file(k, 'RES.TXT') == b'03' and crit == 0
           and k.u16('sel') != sel0, (A.disk_file(k, 'RES.TXT'), crit, sel0, k.u16('sel')))
-    # in a terminal window (CODE-P's LCMD, T2): the same, and the window still takes keys
+    # in a terminal window (CODE-P's LCMD): the same, and the window still takes keys
     big = os.path.join(A.OUT, 'BIG.COM')
     open(big, 'wb').write(bytes([0xB4, 0x09, 0xBA, 0x08, 0x01, 0xCD, 0x21, 0xC3]) + b'HELLO$' + b'Q' * 4082)
     k = ktest.KPC(A.image('mt_nd3.img', *(files + [TERMRUN, TERMFNT, big])), bytes(1474560), ems_pages=88)

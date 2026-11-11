@@ -1,10 +1,10 @@
 ; MTPROBE.COM - INT 21h AH=F0h with AL = 00h, 11h (not from a task's
 ; stub), 12h (no room: CX = 0), 13h (BL = 0, the Executive; 8, none such;
-; 7, a free one), 14h, 1Bh, 1Ch, FFh, then 1Fh and 20h (T1) and 1Eh (T2:
-; BL = 0, 7, 8, then 1 with CL = 1, task 1's first count: from a task,
-; refused; CX = 1234h, ES:DI = buf), 21h (T4: BL = 0, 7, 8, 1) and 22h
-; (T5b: CL = 0 from here, then CL = 1 with BL = 0, 7, then CL = 2) and 23h
-; (T5c: BL = 1, then 0) and 18h (BL = 0, then 8), for
+; 7, a free one), 14h, 1Bh, 1Ch, FFh, then 1Fh and 20h and 1Eh (BL = 0,
+; 7, 8, then 1 with CL = 1, task 1's first count: from a task,
+; refused; CX = 1234h, ES:DI = buf), 21h (BL = 0, 7, 8, 1) and 22h
+; (CL = 0 from here, then CL = 1 with BL = 0, 7, then CL = 2) and 23h
+; (BL = 1, then 0) and 18h (BL = 0, then 8), for
 ; test_mt.py: one line each,
 ;   "F0xx CF=c AX=xxxx BX=xxxx CX=xxxx"
 ; (CF set and BX = CX = 1234h before each call, so what changed shows)

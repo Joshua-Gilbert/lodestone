@@ -1,5 +1,5 @@
-"""sim7210, the uPD7210 GPIB chip and bus model: one copy, tools/sim7210.py
-(P2 of the 2026-10-26 audit).  This file stands in for it on this
+"""sim7210, the uPD7210 GPIB chip and bus model: one copy, tools/sim7210.py.
+This file stands in for it on this
 directory's path: it loads that one by path and registers it as `sim7210`,
 so every importer, from os/, tools/ or claude-link/tests/, gets the same
 module (GHOSTDEV, KEYS and the bus shared by identity).  A plain

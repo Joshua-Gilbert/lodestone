@@ -37,7 +37,7 @@ DATA_AT = ROOT_AT + NROOT * 32 // SECT       # sector 4: cluster 2
 LAST_CLU = NSECT - 1 - DATA_AT + 2           # 253: the trailer's sector
 ROM_ID_BOOT = 0x4F4C                         # 'LO': Lodestone's boot ROM (ROM 1)
 ROM_ID_DATA = 0x4A4C                         # 'LJ': a Lodestone data ROM (ROM 2), joined
-ROM_ID_DATA_OLD = 0x324C                     # 'L2': ROM 2 before O10, a volume by itself
+ROM_ID_DATA_OLD = 0x324C                     # 'L2': ROM 2 before 2026-10-29, a volume by itself
 R_OFF = 340                                  # ROM 2's cluster n is R:'s n + 340 (KROM.INC)
 P1_AT = NSECT - 2                            # 254: ROM 2's spare, R:'s FAT sector 1 without ROM 1
 

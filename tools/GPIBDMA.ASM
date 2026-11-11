@@ -169,7 +169,7 @@ start:  cld
 .end:   call    d_recover
         mov     dx, s_reboot
         call    out_str
-        call    d_rearm                 ; (X55: the driver's IMR2, IFC, REN)
+        call    d_rearm                 ; (the driver's IMR2, IFC, REN)
         call    save_log
         mov     ax, 4C00h
         int     21h

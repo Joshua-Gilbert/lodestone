@@ -45,7 +45,7 @@ ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 LODESTONE_LINK = os.environ.get("LODESTONE_LINK", os.path.join(ROOT, "..", "claude-link"))   # gridlink, next door
 FW = os.path.join(ROOT, "firmware", "bridge")
 PI = os.path.join(ROOT, "pi")
-WORK = tempfile.mkdtemp(prefix="gpib_sim_")             # (H14: bus_sim, sockets, logs and results: this run's)
+WORK = tempfile.mkdtemp(prefix="gpib_sim_")             # (bus_sim, sockets, logs and results: this run's)
 SIM = os.path.join(WORK, "bus_sim")
 CTL = os.path.join(WORK, "ctl.sock")
 BENCH_ID = b"GPIB-Pico2,bench test,rev 1.2,addr 10\n"

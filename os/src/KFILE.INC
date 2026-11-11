@@ -1908,7 +1908,7 @@ f_4F:   call    find_next
 ; nothing more (or no such drive, or a separator or control character in
 ; the name: as MS-DOS 3's TransFCB, but for '.', which it would take into
 ; the path it makes and Lodestone counts out with the rest)
-FCB_D   equ path2_buf                   ; (K2: a DTA for find_next, 43)
+FCB_D   equ path2_buf                   ; (a DTA for find_next, 43)
 f_11:   call    fcb_ptr
         mov     al, [es:di]             ; its drive (0: the current one):
         push    cs                      ;  there, read, its current

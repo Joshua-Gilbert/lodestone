@@ -51,7 +51,7 @@ def run_lodestone(prog=BENCH, kernel=None, limit=600):
 
 def run_msdos(prog=BENCH, done='Total', limit=600):
     img = dosimg.build(os.path.join(TMP, 'msdos.img'), ROM, [prog])
-    pc = pcemu.PC(img, disk_model='real', irq_exact=True)  # (IRQs as ktest.KPC delivers Lodestone's: H10)
+    pc = pcemu.PC(img, disk_model='real', irq_exact=True)  # (IRQs as ktest.KPC delivers Lodestone's)
     raw = open(img, 'rb').read()
     pc.mu.mem_write(0x7C00, raw[:512])                 # the boot sector's BPB at 0:7C00
     data = 1 + 2 * 9 + 14                               # IO.SYS's first sectors (its own loader)

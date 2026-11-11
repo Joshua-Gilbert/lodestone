@@ -297,7 +297,7 @@ term_scroll:
 
 ; the screen's rows BP+BX.. up to row BP, CX of them, and BX blank rows
 ; below (in each bank, rows of 320 bytes): term_scroll's, and the chat's
-; (CL-16).  ES = VSEG.  Keeps BX, CX, BP
+; ES = VSEG.  Keeps BX, CX, BP
 scr_scroll:
         push    ds
         mov     ax, VSEG

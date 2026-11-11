@@ -1,8 +1,8 @@
 """Resident Claude (CLAUDE /R, os/claude): its console's code runs from
 EMS pages of its own over programs that use all four EMS windows, over
 graphics and text modes, DOS, the Executive and TM5000G while it polls
-the bus.  (The spike, RSPIKE.COM, and its four tests went in the
-2026-10-26 audit's step 8, H12: these mirror each of them.)
+the bus.  (The spike, RSPIKE.COM, and its four tests were removed on
+2026-10-29: these mirror each of them.)
 
     python3 tests/test_resident.py [name ...]
 """
@@ -28,7 +28,7 @@ def build():
     # another version's CLAUDE.COM, as far as the stub goes: laid out otherwise after its header
     subprocess.run(['nasm', '-f', 'bin', '-i', '../src/', '-DSTUB_PAD=5', '-o', os.path.join(OUT, 'CLAUDEP.COM'), 'CLAUDE.ASM'],
                    check=True, cwd=CL)
-    # and one whose stub is version 1 (PR #27's: no r_off, its r_pend at 10Eh)
+    # and one whose stub is version 1 (the first one: no r_off, its r_pend at 10Eh)
     subprocess.run(['nasm', '-f', 'bin', '-i', '../src/', '-DSTUB_VER=1', '-o', os.path.join(OUT, 'CLAUDEV1.COM'), 'CLAUDE.ASM'],
                    check=True, cwd=CL)
 
@@ -190,7 +190,7 @@ def run_el(k, cmd):
     lines = [l.strip() for l in o.split('\n')]                    # (not the typed line, which names both)
     return o, 0 if 'EL0' in lines else 2 if 'EL2' in lines else 1
 
-# ---- resident Claude, M1: CLAUDE /R and CLAUDE /U --------------------------
+# ---- resident Claude: CLAUDE /R and CLAUDE /U --------------------------
 SEMI = 0x2700                                   # CODE-; : enhanced-only, as CODE-\ (raw 27F0h)
 
 def t_rload():
@@ -206,7 +206,7 @@ def t_rload():
         try: real[p[2]] = int(p[0], 16)
         except ValueError: pass
     check('CLAUDE.COM: what only /R and /U use (the loader, the console, the stub) is where BSS goes, below '
-          'the stack /R runs on (from bss_end: audit3 O17 put the link buffers past stack_top)',
+          'the stack /R runs on (from bss_end: the link buffers past stack_top)',
           real['bss'] <= real['res_load'] < real['rcon_img'] < real['r_code_end'] < csym('bss_end') - 2048,
           [(n, hex(real[n])) for n in ('bss', 'res_load', 'rcon_img', 'r_code_end', 'bss_end')])
     k = ktest.KPC(image('rl.img', 'HOOK16.COM=' + os.path.join(CL, 'HOOK16.COM')), ems_pages=88); k.start()
@@ -216,7 +216,7 @@ def t_rload():
     m1 = memsz(k)
     check('CLAUDE /R: resident, exit code 0', 'Claude is resident: CODE-\\' in o and el == 0, (el, o))
     blk = [b[2] for b in mcbs(k) if b[1] == 8 and b[3] == 'CLAUDE']
-    check('... the stub\'s block: 61 paragraphs and its MCB, 992 bytes (63 till the 2026-10-26 audit\'s R44 and R45)',
+    check('... the stub\'s block: 61 paragraphs and its MCB, 992 bytes (63 till 2026-10-28)',
           blk == [61] == [(csym('r_stack_top') - 0x100 + 15) // 16], blk)
     check('... its EMS handle kept after CLAUDE.COM ended (asked for from the stub: no program\'s)', handles() == h0 + 1,
           (h0, handles()))

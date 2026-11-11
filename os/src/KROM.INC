@@ -56,7 +56,7 @@ R_NCL   equ R_SECS - R_DATA + 2         ; (the highest cluster + 1: 254)
 ; bad), ROM 2's as 342-593.  mkrom writes ROM 2 as that second half, so
 ; all but ROM 1's root (its empties made deleted, .fix) are plain copies.
 ; ROM 2 alone: R:'s FAT sector 1 is ROM 2's spare R2_P1, its root 5-6.
-R_ID2   equ 4A4Ch                       ; 'LJ' (an 'L2' ROM 2, before O10: none)
+R_ID2   equ 4A4Ch                       ; 'LJ' (an 'L2' ROM 2, from before 2026-10-29: none)
 R_OFF   equ 340                         ; ROM 2's cluster n is R:'s n + 340:
         times -((R_OFF + 2) * 3 / 2 < 512) db 0  ;  its entries all in sector 2
 R2_ROOT equ 3

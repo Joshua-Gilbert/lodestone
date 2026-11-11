@@ -3,7 +3,7 @@
 ; hidden and system files.  Each line: fn, the name(s), ok or the error.
 ; test_kernel holds the answers GRiD MS-DOS 3.30 gives
 %include "PROBE.INC"
-; X15: a second dot (A.TXT, B.TXT, A.B\X.TXT and E.F empty are there)
+; a second dot (A.TXT, B.TXT, A.B\X.TXT and E.F empty are there)
 tests   dw 3D00h, a_x, 0, 0
         dw 3C00h, n_ab, 0, 0
         dw 3900h, d_ef, 0, 0
@@ -19,7 +19,7 @@ tests   dw 3D00h, a_x, 0, 0
         dw 5600h, a_x, z_txt, 0
         dw 4100h, b_x, 0, 0
         dw 3A00h, ef_g, 0, 0
-; X16: devices, hidden, system and read-only files
+; devices, hidden, system and read-only files
         dw 3900h, s_con, 0, 0
         dw 3900h, s_nul, 0, 0
         dw 3D00h, hid, 0, 0

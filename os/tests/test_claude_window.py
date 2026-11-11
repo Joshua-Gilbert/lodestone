@@ -1,4 +1,4 @@
-"""CLAUDE.COM 1.13 in a terminal window (T5d), on the Lodestone kernel with
+"""CLAUDE.COM 1.13 in a terminal window, on the Lodestone kernel with
 its multitasking (LODEMT.SYS, MULTITASK=1, EMS), TERM.RUN and TERM.FNT:
 CODE-A starts CLAUDE as a task behind, in a window, its screen published
 (MT_PUB) and drawn there with its own font, the bridge's SRQ waking it
@@ -77,7 +77,7 @@ class Win(CK.KernelHarness):
         s.claude_psp = s.find_psp()
         assert s.claude_psp, ('CLAUDE never started', s.m.crash, s.k.where())
         return s.run_until(lambda: s.var('connected') == 1 and s.var('term') == 1, sim_s)  # (== 1: found before
-                                                    #  its start-up clears BSS, they may be anything; O17 moved them)
+                                                    #  its start-up clears BSS, they may be anything)
 
     # MT's own (its block, LODE.MAP's offsets in it)
     def mt_seg(s):
@@ -227,7 +227,7 @@ def t_window():
               '32 KB its pattern), not a blank text screen; then back in its window', res.get('r', {}).get('exit') == 0
               and s[:1] == b'\x40' and s[9:] == want and ok,
               (res, s[:9], len(s), [i for i in range(min(len(s) - 9, 0x8000)) if s[9 + i] != want[i]][:8], ok, h.mb('mt_front')))
-        # audit3 O17: a RUN of a program that stays resident where CLAUDE's tail was: CLAUDE moves, whole, to a
+        # a RUN of a program that stays resident where CLAUDE's tail was: CLAUDE moves, whole, to a
         # block of its own (run_back) and publishes its descriptor from there; with the memory it left scribbled
         # over, its window is still drawn (its font, its cells) and goes on
         from unicorn import UC_HOOK_CODE
@@ -325,7 +325,7 @@ def t_size():
               h.run_until(lambda: said() and in_step(h), 20), h.text()[-400:])
     finally:
         h.close()
-    from gridlink import glp                    # (an older Pi: the window as Joshua's 1520 showed it)
+    from gridlink import glp                    # (an older Pi: the window as the author's 1520 showed it)
     keep, glp.HF_SIZE = glp.HF_SIZE, 0
     h = Win(term=FAKE + ' --full')
     try:
@@ -484,7 +484,7 @@ def measure(shift=False, spin=False, wake=True, scroll=False, sim_s=6.0):
         flood(t, scroll)
         h.run_until(lambda: False, 1.0)                 # (under way)
         b0, f0, us0 = t.enc.stats['bytes'], t.enc.stats['frames'], h.m.us
-        moves, watch = [0], h.m.watch                   # (TERM's scrl moving what scrolled: T5d)
+        moves, watch = [0], h.m.watch                   # (TERM's scrl moving what scrolled)
         if not shift:
             import test_apps as A
             Y = h.m.Y

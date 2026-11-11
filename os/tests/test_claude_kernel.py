@@ -141,9 +141,9 @@ def test_driver_frame_check():
                  T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\BIG.TXT',
                                                                    'view_range': [395, 400]})),
                  T.reply(('text', 'Written and checked.'))], mode='edits', bridge='pico')
-    assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 2, (h.var('ksum', 1), h.var('use_fl', 1))   # (1 before audit3 R55)
+    assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 2, (h.var('ksum', 1), h.var('use_fl', 1))   # (1 before 2026-10-28)
     assert h.link.grid_req == 16700, h.link.grid_req     # (CLAUDE 1.6's HELLO: req=, so 16 KB write requests)
-    st = h.link.stats                                    # (audit3 R56: the HELLO too, and its answer)
+    st = h.link.stats                                    # (the HELLO too, and its answer)
     assert st['rx_fletcher'] == st['rx_frames'] >= 2 and h.var('n_bad', 2) == 0, (dict(st), h.var('n_bad', 2))
     k0, st0 = h.var('n_kok', 2), dict(h.link.stats)
     assert h.turn('write a big file', sim_s=120)
@@ -207,7 +207,7 @@ def test_executive_saver():
 def test_driver_frame_check_slow_start():
     """A listener slow to take the first byte of a write (DO later than the fast loop polls for, 256 x 64): the
     whole frame goes through the careful loop, and the check the driver adds (02h AL=3) is still good at the Pi
-    (audit3 X30: the fast loop kept its start for the first byte's add, the careful loop left that byte out too,
+    (before 2026-10-26 the fast loop kept its start for the first byte's add, the careful loop left that byte out too,
     so every such frame went out with a bad check)."""
     h = T.start([T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\NOTES.TXT'})),
                  T.reply(('text', 'Read it.'))], mode='edits', bridge='pico',
@@ -235,7 +235,7 @@ T.test_run_tm5000g_from_claude = test_run_tm5000g_from_claude
 
 
 def test_key_script_peeks():
-    """audit3 (X42's panel): a TSR's INT 16h peek from its INT 1Ch while CLAUDE's ks_ready moves a RUN's
+    """A TSR's INT 16h peek from its INT 1Ch while CLAUDE's ks_ready moves a RUN's
     {WAIT} on (test_resident_term's t_type_peek, for CLAUDE.COM's own feeder): the waits and keys play as
     typed.  ks_ready runs with interrupts off (the peek comes after it)."""
     import test_resident_term as RT
@@ -309,8 +309,8 @@ T.test_run_exec_block = test_run_exec_block
 
 
 def test_run_memory_and_reconnect():
-    """audit3 O11: a RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  O17: while MEMSZ
-    runs, CLAUDE's block is cut back to reqbuf's start (the key script's end; 2,844 paragraphs before O17),
+    """A RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  While MEMSZ
+    runs, CLAUDE's block is cut back to reqbuf's start (the key script's end; 2,844 paragraphs before 2026-10-29),
     and MEMSZ, loaded in what was CLAUDE's tail (the conversation and the replies at the top: alloc_top),
     gets all the rest; after it CLAUDE's block is whole again (run_back).  Then the link is lost and comes
     back: the HELLO built over the RUN's buffers says what the first one said, and a second RUN gets the
@@ -383,7 +383,7 @@ def mcbs(h):
 
 
 def test_run_tsr_moves_claude():
-    """audit3 O17: a RUN's program that stays resident (TSRK: 64 paragraphs and its environment) where CLAUDE's
+    """A RUN's program that stays resident (TSRK: 64 paragraphs and its environment) where CLAUDE's
     tail was: CLAUDE's block can't grow back, so CLAUDE moves, whole, to a block of its own (run_back), its
     PSP's block keeping the PSP alone.  The memory it left is scribbled over at once (as the next program would
     do): the RUN is answered; a message queued before the RUN from CLAUDE's own memory still arrives whole;
@@ -476,7 +476,7 @@ def test_run_tsr_moves_claude():
 
 
 def test_run_tsr_no_room():
-    """audit3 O17: a RUN's program that stays resident with all it got but 160 paragraphs: no block for CLAUDE
+    """A RUN's program that stays resident with all it got but 160 paragraphs: no block for CLAUDE
     to move to, so CLAUDE ends, as CODE-Q does, saying so; the Executive is back, the vectors CLAUDE took
     given back, and none of its blocks left.  Captured too (CLAUDE 1.18): the message on the screen, not
     in CLAUDE.OUT (handle 1 put back before it)."""
@@ -504,7 +504,7 @@ T.test_run_tsr_no_room = test_run_tsr_no_room
 
 
 def test_run_script_length_checked():
-    """audit3 O17's panel: a RUN whose key script length runs past the request (the script and the command's
+    """A RUN whose key script length runs past the request (the script and the command's
     NUL must be in it) is refused with F0h before anything is cut (do_exec cuts CLAUDE's block at the script's
     end); one that fits runs, and CLAUDE's block is whole after each."""
     import threading
@@ -527,7 +527,7 @@ def test_run_script_length_checked():
 
 
 def test_in_place_ask():
-    """audit3 P7's panel: an ASK in fragments (Pi frames of 448 bytes; gridlink's own ASKs are one frame), its
+    """An ASK in fragments (Pi frames of 448 bytes; gridlink's own ASKs are one frame), its
     last read in place after the first: the 6 bytes its header went over are put back before open_ask copies
     the ASK (they lie within the 896 bytes it keeps)."""
     from gridlink import glp
@@ -545,7 +545,7 @@ T.test_in_place_ask = test_in_place_ask
 
 
 def test_key_script_snap_peek():
-    """audit3 (X42's panel): a tick, and a TSR's INT 16h peek from its INT 1Ch, as ks_ready's {SNAP} copies the
+    """A tick, and a TSR's INT 16h peek from its INT 1Ch, as ks_ready's {SNAP} copies the
     screen on the read path (interrupts on): the peek finds ks_pos past the mark, so one snapshot, and every
     key typed.  With the copy first and ks_pos moved after, the peek took the snapshot again and ks_pos went
     on by 6, into the middle of the next key."""
@@ -581,7 +581,7 @@ T.test_key_script_snap_peek = test_key_script_snap_peek
 
 
 def test_ops_codes():
-    """audit3 R51: OPS.INC's file and GPIB requests, each one's status and reply (DOS's error codes, the
+    """OPS.INC's file and GPIB requests, each one's status and reply (DOS's error codes, the
     driver's) as claude_kernel's OPS_PROBE has them: the table test_resident_term's t_ops_codes holds RCON to (the same
     source in both binaries)."""
     h = T.start([], bridge='pico')
@@ -596,7 +596,7 @@ T.test_ops_codes = test_ops_codes
 
 
 def test_nak_resend_keeps_the_check():
-    """audit3 R55: driver 1.23 (use_fl 2): the Pi's answer to the prompt's frame damaged, and the GRiD's NAK
+    """Driver 1.23 (use_fl 2): the Pi's answer to the prompt's frame damaged, and the GRiD's NAK
     for it lost too, so the Pi NAKs and the GRiD sends its frame again: byte for byte as the first time,
     the driver's check after it (02h AL=3); the NAK's own mode (AL=1) doesn't stick.  The turn goes on."""
     from gridlink import glp
@@ -694,7 +694,7 @@ def p7_check(h, st, again=(0, 0)):
 
 
 def test_frames_in_place():
-    """audit3 P7 (driver 1.23, use_fl 2): a 16 KB write's REQUEST comes in five frames, the four after the first
+    """Driver 1.23 (use_fl 2): a 16 KB write's REQUEST comes in five frames, the four after the first
     read straight into reqbuf after what it holds, the 6 bytes under each header put back; a 16 KB read's REPLY
     goes in five, the four after the first sent from ioseg where they lie, a header swapped in over the 6 bytes
     before each and back after.  Only the first of each is copied (pf_reasm's, frame_next's REP MOVSW).  Pi
@@ -726,7 +726,7 @@ def test_frames_in_place():
 
 
 def test_in_place_resend():
-    """audit3 P7: the Pi's answer to a REPLY fragment sent in place damaged, and the GRiD's NAK lost too: the
+    """The Pi's answer to a REPLY fragment sent in place damaged, and the GRiD's NAK lost too: the
     GRiD sends that fragment again, byte for byte (its header swapped in again: the 6 bytes there were put back
     after the first)."""
     from gridlink import glp
@@ -754,7 +754,7 @@ def test_in_place_resend():
 
 
 def test_in_place_read_damaged():
-    """audit3 P7: a REQUEST fragment read in place into reqbuf damaged: CLAUDE NAKs it and puts back the 6 bytes
+    """A REQUEST fragment read in place into reqbuf damaged: CLAUDE NAKs it and puts back the 6 bytes
     its header went over; the Pi sends it again, read in place again, and the file is written whole.  With
     CLAUDE's own sum (use_fl 1) too: find_frame's scan of the damaged read stops at the read's end."""
     from unicorn import UC_HOOK_CODE
@@ -784,7 +784,7 @@ def test_in_place_read_damaged():
 
 
 def test_in_place_new_message():
-    """audit3 P7: a REQUEST's first fragment that comes as an ASK's (the Pi never sends that: a type changed in
+    """A REQUEST's first fragment that comes as an ASK's (the Pi never sends that: a type changed in
     flight), then the REQUEST's second, read in place after it: pf_reasm starts a new message with it, copied
     to reqbuf's start over the 6 bytes its header went over, which then stay as copied (not put back).  (The
     rest of that request is garbage: the test ends there.)"""

@@ -141,7 +141,7 @@ def test_damaged_frames():
 
 
 def test_either_check():
-    """audit3 R56: every frame of a CLAUDE carries the Fletcher sum, its HELLO too; an older one's HELLO (and all
+    """From 2026-10-29 every frame of a CLAUDE carries the Fletcher sum, its HELLO too; an older one's HELLO (and all
     of gridsim's frames, here above) the CRC.  gridlink tries the sum first and answers each frame with its
     check.  A frame both pass (1 in 65,536) is taken as the sum's; if it was the CRC's, the GRiD's NAK, in the
     check it reads, has the answer sent again in that one."""

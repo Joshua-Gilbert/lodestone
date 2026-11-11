@@ -1,4 +1,4 @@
-; MTTERM.COM - for test_mt.py: a terminal window's calls (T1), from the
+; MTTERM.COM - for test_mt.py: a terminal window's calls, from the
 ; Executive's task (CODE-P's prompt):
 ;   MTTERM R n FILE [row rows]   MT_TROWS of task n (rows 0-24 unless
 ;      given, decimal): FILE gets CF (a byte), AX, BX, CX, DX after it

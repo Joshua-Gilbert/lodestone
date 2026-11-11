@@ -569,7 +569,7 @@ def t_hd_big():
     st = status(k)
     chains = {nm: v.chain(c)[0] for nm, a, c, s2 in v.entries(0) if c}
     pieces = [nm for nm, ch in chains.items() if any(b != a + 1 for a, b in zip(ch, ch[1:]))]
-    check('121 MB C: (Joshua\'s layout): exit 0, the file in pieces joined, the far ones brought forward, byte for byte',
+    check('121 MB C: (the author\'s layout): exit 0, the file in pieces joined, the far ones brought forward, byte for byte',
           code == 0 and not probs and not pieces and max(ch[-1] for ch in chains.values()) < 200 and
           all(got.get('\\' + nm) == b for nm, b in files.items()), (code, probs, pieces, {k2: (c[0], c[-1]) for k2, c in chains.items()}))
     check('... "%d KB free in one piece" (past 65,535 KB)' % ((v.free() + 1) * 2),

@@ -207,7 +207,7 @@ def t_mt():
           'other tasks are running' in o and bytes(k.pc.drives[1].img) == raw, o)
 
 def t_review():
-    # the review panel's findings, each held to
+    # regression cases, each held to
     img = mkimg.build(os.path.join(OUT, 'cap.img'), [os.path.join(SRC, f) for f in ('LODE.SYS', 'LCMD.COM', 'LABEL.COM')]
                       + [os.path.join(GOS, 'drivers', 'SCREEN.PRN')])
     k = ktest.KPC(img); k.start(); k.code_p()

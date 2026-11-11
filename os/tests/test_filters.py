@@ -176,7 +176,7 @@ def t_comp():
           and 'Enter 2nd file name' in o and 'Files compare OK' in o and said(o, 'E0'), o)
 
 def t_review():
-    # the review panel's findings, each held to
+    # regression cases, each held to
     k = boot(f('NL.TXT', b'zz\r\nab\0cd\r\naa\r\n'), f('ST.TXT', b'1b\r\n2a\r\n3a\r\n4a\r\n5a\r\n'),
              f('L1023.TXT', b'a' * 1023 + b'\r\nnext\r\n'), f('LF.TXT', b'xa1\nxa2\n'))
     run(k, 'sort < nl.txt > s1.txt')

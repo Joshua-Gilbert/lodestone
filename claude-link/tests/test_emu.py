@@ -256,7 +256,7 @@ def test_run_tmp_only():
 
 
 def test_run_capture_unwritable():
-    """X51: the capture file made before the program: TEMP naming a directory that is not there answers
+    """The capture file made before the program: TEMP naming a directory that is not there answers
     'path not found', and nothing runs (the shell's redirection would have failed the command, or from a
     protected floppy waited for a key)."""
     h = EmuHarness([reply(('tool', 'grid_command', {'command': 'DIR'})), reply(('text', 'Done.'))], mode='auto',
@@ -319,7 +319,7 @@ def test_damaged_frames():
 
 
 def test_damaged_answers_fail_the_link():
-    # T5c: a NAK keeps link_wait's ~2 s from the frame the answer is for, so a Pi whose every answer comes
+    # A NAK keeps link_wait's ~2 s from the frame the answer is for, so a Pi whose every answer comes
     # damaged fails the link (a HELLO again) within about 2 s, not NAK after NAK for ever; good answers again,
     # it goes on
     h = start([reply(('text', 'Back after the noise.'))])
@@ -387,7 +387,7 @@ def test_queued_prompt():
 
 
 def test_chat_scroll():
-    """CL-16: with the window full and at its end, a TEXT frame's new lines
+    """With the window full and at its end, a TEXT frame's new lines
     scroll rows 1-20 and draw only the lines they reach, not all 20 rows
     (1,600 cells) a frame; the screen then is what a whole redraw draws."""
     from unicorn import UC_HOOK_CODE
@@ -408,7 +408,7 @@ def test_chat_scroll():
     v1 = h.m.rd(0xB800, 0, 0x8000)
     rows = lambda v: b''.join(v[b * 0x2000 + 320: b * 0x2000 + 21 * 320] for b in range(4))
     assert rows(v0) == rows(v1), 'rows 1-20 differ from a whole redraw'
-    # (a whole window a frame, as before CL-16: 37,533 cells here, the frames ~5 lines each)
+    # (a whole window a frame, as before 2026-11-03: 37,533 cells here, the frames ~5 lines each)
     assert cells < 24000, cells
     print('   %d cells drawn for 120 lines (%.0f a line)' % (cells, cells / 120))
     check(h)

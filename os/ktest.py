@@ -272,7 +272,7 @@ class KPC:
     def run_file(s, name, sim_s=60.0, shift=False):
         """Select a program, confirm, and run until the Executive is back.  shift: Shift held at 40:17h till it
         runs (Shift-Return: with multitasking on, in the Executive's own task, which waits for it, as with it off;
-        Return alone starts it as a task, M7b)."""
+        Return alone starts it as a task)."""
         s.select(name)
         s.pc.tty.clear()
         if shift: s.pc.wr(0x40, 0x17, b'\x02')

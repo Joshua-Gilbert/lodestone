@@ -26,7 +26,7 @@ File layout (all words little-endian):
   10 absolute fixups      12 relative fixups
   14 RUN_FLAGS (RUN_FLAGS equ n after the include; 0 without one): bit 0,
      RF_WIN, a window .RUN, which runs as a session beside others with
-     MULTITASK=1 (M8).  The core with the switch off ignores the word
+     MULTITASK=1.  The core with the switch off ignores the word
   16 the image, then the absolute fixups, then the relative ones (offsets
      into the image)
 """

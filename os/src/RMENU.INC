@@ -1,5 +1,5 @@
 ; RMENU.INC - a right click's menu (UI_MENU) of the items that apply now:
-; Write's and TERM's (T4).  SI = the items, a record each (dw its text,
+; Write's and TERM's.  SI = the items, a record each (dw its text,
 ; its key, what it needs: RM_SEL a selection, RM_CLIP something to
 ; paste; a 0 word after the last); AL = RM_SEL with a selection; BX, CX =
 ; where (EV_RCLICK's).  -> AX = the key of the item chosen, for the

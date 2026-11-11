@@ -21,7 +21,7 @@ DOS_ERRORS = {
            '(CODE-\\) and brings the console up again at another of its key waits'),
     0xFF: 'unknown request',
 }
-# what resident Claude's console serves in the background (M4): files and GPIB (SCREEN too where its HELLO
+# what resident Claude's console serves in the background: files and GPIB (SCREEN too where its HELLO
 # says bgscreen, CLAUDE 1.11: Term adds it); never TYPE
 OPS_BG = frozenset(range(glp.OP_DIR, glp.OP_FREE + 1)) | {glp.OP_GPIB}
 
@@ -82,7 +82,7 @@ class Grid:
     def end_calls(s, why, restart=False, keep=()):
         """The calls waiting now fail with this: the GRiD restarted the link,
         or the user went back from resident Claude's console to the program
-        (keep: the ops the console goes on with in the background, M4)."""
+        (keep: the ops the console goes on with in the background)."""
         with s.cv:
             if restart: s.generation += 1; s.type_out = False
             s.ended += 1; s.why = why
@@ -106,7 +106,7 @@ class Grid:
                         raise GridError(s.dead[rid])
                     if left <= 0:
                         # (not yet on its way: taken back, so it can't run later, after we have said it failed;
-                        # resident Claude's background waits for its program's key calls, M4)
+                        # resident Claude's background waits for its program's key calls)
                         if s.link.withdraw(glp.P_REQUEST, msg):
                             raise GridError('the GRiD did not take the request in %d s (it was withdrawn: '
                                             'nothing was done)' % timeout)

@@ -14,7 +14,7 @@ G_HELLO, G_POLL, G_PROMPT, G_EVENT, G_REPLY, G_NAK, G_KEYS = 0x01, 0x02, 0x03, 0
 P_HELLO, P_NOP, P_TEXT, P_STATUS, P_REQUEST, P_ASK, P_READY, P_NAK, P_TITLE, P_CLEAR, P_CELLS = range(0x41, 0x4C)
 
 EV_INTERRUPT, EV_ANSWER, EV_REPAINT, EV_AWAY = 0x01, 0x02, 0x03, 0x04
-EV_CLICK = 0x05            # Term: a left click on a cell: column, row (bytes; CLAUDE /W of PR #32)
+EV_CLICK = 0x05            # Term: a left click on a cell: column, row (bytes; CLAUDE /W)
 EV_PIXCLICK = 0x06         # Term: a left click at a pixel: x, y (words; CLAUDE 1.2)
 EV_SAVER = 0x07            # the Executive's screen saver comes on; the GRiD sends nothing till it ends,
                            #  which a ring does (CLAUDE 1.14, to a Pi that says HF_SAVER)
@@ -29,7 +29,7 @@ GF_WAKE = 0x08             # GRiD: an SRQ while it is idle makes it POLL at once
 GF_QUAD = 0x10             # GRiD: it draws the 2x2 block elements GL_QUADS (A1h-AEh); CLAUDE 1.8,
                            #  resident Claude's console from 1.12
 GF_BG = 0x20               # GRiD: resident Claude's console works in the background at its program's key
-                           #  calls, serial-polling the bridge (CLAUDE 1.10, M4)
+                           #  calls, serial-polling the bridge (CLAUDE 1.10)
 HF_TERM = 0x01             # Pi: Term: the GRiD is Claude Code's screen and keyboard
 HF_FCS = 0x04              # Pi: frames after this HELLO carry the Fletcher sum, both ways
 HF_BG = 0x08               # Pi: it works with that console in the background (its bridge can be quiet)
@@ -120,7 +120,7 @@ class Frame:
 
 def decode(buf, max_len=4096, fl_first=False):
     """Find the first complete frame with a good check (the Fletcher sum,
-    Frame.fl, or the CRC-16 of a CLAUDE before audit3 R56's HELLO and of
+    Frame.fl, or the CRC-16 of the HELLO of a CLAUDE before 2026-10-29 and of
     one before 1.3) at any sync position; fl_first tries the Fletcher sum
     first (one check fewer a frame, and the one taken if both pass).
     Returns (frame, end) or (None, keep) where keep is the index of the first
@@ -148,7 +148,7 @@ class StreamParser:
     before a good frame is dropped.  When the line goes quiet with bytes
     still pending, call idle(): they can never become a frame, so the
     caller should NAK.  The Fletcher sum is tried first till a frame comes
-    with the CRC (every frame of a CLAUDE from audit3 R56 has the sum)."""
+    with the CRC (every frame of a CLAUDE from 2026-10-29 has the sum)."""
     def __init__(s, max_len=4096): s.buf = bytearray(); s.max_len = max_len; s.fl = True
     def pending(s): return len(s.buf)
     def idle(s):

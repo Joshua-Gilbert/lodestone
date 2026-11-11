@@ -15,7 +15,7 @@
 ;  UART's received-data interrupt fills a 2 KB ring (the 1520's 16450
 ;  holds one byte, so polling alone loses them past 2400 baud), but 0Eh
 ;  says no IRQ: CLAUDE.COM polls (0Bh, the serial poll) instead of sleeping
-;  on a count, and multitasking's SRQ wake (T5c) isn't hooked.
+;  on a count, and multitasking's SRQ wake isn't hooked.
 ;
 ;  The port is taken at the link's first call, not at start-up: the UI's
 ;  mouse probe (COM2, then COM1) comes after, and would reprogram it.  Each
@@ -34,7 +34,7 @@ gp_RING    equ 2048                    ; the receive ring (a power of two)
 gp_RMASK   equ gp_RING - 1
 gp_T_DEF   equ 36                      ; ticks: a byte's timeout (2 s)
 gp_FMAX    equ 8192                    ; a longer length is no frame
-gp_IRQVEC  equ 0Bh                     ; (for KMT.INC's T5c code, never used
+gp_IRQVEC  equ 0Bh                     ; (for KMT.INC's SRQ wake, never used
 gp_isr     equ sl_isr                  ;  in this build: its hook is left out)
 
 section .bss

@@ -491,7 +491,7 @@ def test_app_late_content_and_help():
         r.close()
 
 
-# ---- what the review found (2026-10-17) ------------------------------------
+# ---- regression cases (2026-10-17) -----------------------------------------
 def test_session_shape_and_real_clicks():
     r = Run(U + 'index')
     try:
@@ -630,7 +630,7 @@ def test_lost_firefox_ends_gridfox():
         time.sleep(0.2)                                          # (the stand-in sees the session go)
 
 
-# ---- Joshua's review (2026-10-17) -------------------------------------------
+# ---- more regression cases (2026-10-17) ------------------------------------
 def test_anchor_links_keep_the_page():
     r = Run(U + 'anchors')
     try:

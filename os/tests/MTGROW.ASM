@@ -1,4 +1,4 @@
-; MTGROW.COM - for test_mt.py: a task's region growing on demand (T5a).
+; MTGROW.COM - for test_mt.py: a task's region growing on demand.
 ;   MTGROW MODE KB FILE
 ;   MODE S: shrinks itself to its own size first (4Ah), as most .COMs do;
 ;   K: keeps all it was given; C: a child (EXEC'd by "x"): its line, "C

@@ -230,7 +230,7 @@ def test_held_nop_bookkeeping():
 
 
 def test_bridge_not_found_said_once():
-    # X66: with no bridge, or a busy port, PicoBridge says so once and that it retries (not every 2 s, and not
+    # With no bridge, or a busy port, PicoBridge says so once and that it retries (not every 2 s, and not
     # nothing); once up, a later failure is said again. A [bridge] kind that is neither pico nor ar488 is refused.
     import tempfile, types
     from gridlink import pico
@@ -266,7 +266,7 @@ def test_bridge_not_found_said_once():
 
 
 def test_held_reply_used_on_a_lost_frame():
-    # X64: the bridge used the hold on POLL 6, but POLL 6's DATA never made a frame here (an overrun inside
+    # The bridge used the hold on POLL 6, but POLL 6's DATA never made a frame here (an overrun inside
     # it).  The GRiD, holding fragment 2, POLLs 7: that is answered with fragment 3, the hold committed;
     # before, POLL 7 was taken for the hold's and answered with nothing.  A held NOP used on a fragment that
     # never arrived drops that message.
@@ -310,7 +310,7 @@ def test_old_claude_gets_246():
     assert glp.hello_rx(body) == 246
     assert glp.hello_rx(bytes(6) + b'rx=100000\n') == glp.GRID_RX_MAX
     assert glp.hello_rx(bytes(6) + b'rx=12\n') == 246
-    # (P3: req= and rd= through the same hello_int, each with its own floor and ceiling; the first line wins)
+    # (req= and rd= through the same hello_int, each with its own floor and ceiling; the first line wins)
     B = lambda t: bytes(6) + t
     assert glp.hello_rx(B(b'rx=600\nrx=1000\n')) == 600 and glp.hello_rx(B(b'rx=x\n')) == 246
     assert glp.hello_req(B(b'req=10\n')) == glp.GRID_REQ_DEFAULT and glp.hello_req(B(b'req=99999\n')) == 65000

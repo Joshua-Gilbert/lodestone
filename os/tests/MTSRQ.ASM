@@ -1,4 +1,4 @@
-; MTSRQ.COM - for test_mt.py (T5c): a program woken by the GPIB driver's
+; MTSRQ.COM - for test_mt.py: a program woken by the GPIB driver's
 ; SRQ interrupt.
 ;   MTSRQ N [O | K | F | G | T]
 ; Asks MT_WAKE (INT 21h F0h AL=23h, BL=1; its AX kept at wres), takes the

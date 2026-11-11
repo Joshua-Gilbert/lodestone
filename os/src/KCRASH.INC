@@ -24,7 +24,7 @@
 ;  too: its high nibble the stage (CRB_*: armed, in the catch, the report
 ;  kept, on the screen, a restart passed on), its low nibble the last
 ;  window operation (its tag's place in cr_wtags; KMW's CREC).  NOT 3Ch:
-;  the labelled BIOS source calls 3Ch and 3Dh unused, but Joshua's
+;  the labelled BIOS source calls 3Ch and 3Dh unused, but the author's
 ;  10/25/89 ROM keeps the boot password's checksum in 3Ch (F000:F104:
 ;  the sum of 34h-3Bh and 3Fh & FEh; POST, F000:8D20 -> F1B6, asks for
 ;  the password when it matches and 3Fh bit 1 is set, and his 3Fh is

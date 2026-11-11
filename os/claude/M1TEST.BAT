@@ -1,5 +1,5 @@
 @echo off
-rem M1TEST.BAT - resident Claude M1 (CLAUDE /R and /U), step by step, on the
+rem M1TEST.BAT - resident Claude (CLAUDE /R and /U), step by step, on the
 rem 1520.  Needs CLAUDE.COM, MEMSZ.COM, EMSUSE.COM and GFXUSE.COM here (and
 rem TM5000G.EXE for step 6).  Every answer goes to M1TEST.TXT.
 if "%1"=="GFX" goto gfx

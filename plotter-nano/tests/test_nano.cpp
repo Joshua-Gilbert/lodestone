@@ -146,7 +146,7 @@ static void check(const char* name, bool ok) {
     printf("%s %s\n", ok ? "ok  " : "FAIL", name);
 }
 
-// X62: a serial poll. The byte goes on DIO in one gpibService() pass and DAV
+// A serial poll. The byte goes on DIO in one gpibService() pass and DAV
 // only in a later one, so the byte has settled for T1 (2 us) before DAV.
 static void testPoll() {
     resetSketch();
@@ -167,7 +167,7 @@ static void testPoll() {
     busIdle();
 }
 
-// X63: the page follows the 4662's COPY MODE switch (status bit 14), at IN
+// The page follows the 4662's COPY MODE switch (status bit 14), at IN
 // only; !m forces it; PLOTTER ON goes at every IN.
 static void testPage() {
     run("IN;");
@@ -231,7 +231,7 @@ static void expectCmds(const char* name, const char* hpgl, const char* want, Evs
     if (!ok) printf("     want %s\n     got  %s\n", want, c.c_str());
 }
 
-// X64: HP-GL's label size, direction and character sets as the 4662's alpha
+// HP-GL's label size, direction and character sets as the 4662's alpha
 // commands, sent before the label that needs them, only when they change.
 static void testAlpha() {
     // SI 0.5,1 cm: 0.5*400*1.5*4095/10365 = 118.5 -> 119; 1*400*18/11*3123/7962 = 256.7 -> 257
@@ -263,7 +263,7 @@ static void testAlpha() {
     expectCmds("DF resets it too", "DI0,1;LBx\x03" "DF;LBy\x03", "AJ90 AV");
 }
 
-// X65: the 4662's own commands, from an ESC, as they are.
+// The 4662's own commands, from an ESC, as they are.
 static void testNative() {
     expectCmds("a command with numbers, to ';'", "\x1b" "AJ30;", "AJ30");
     expectCmds("... to SUB", "\x1b" "AJ30\x1a", "AJ30");
@@ -296,7 +296,7 @@ static void testNative() {
 int main() {
     std::string home = pt('U', 0, 0);   // (the first draw goes back into graph mode with a move to the pen)
 
-    // X61: ';' is optional, a letter after a mnemonic's arguments starts the next one
+    // ';' is optional, a letter after a mnemonic's arguments starts the next one
     expect("PD..PU without ';'", "PD100,200PU300,400;",
            {home, D(100, 200), U(300, 400)});
     expect("lower case", "pd100,200pu300,400;",

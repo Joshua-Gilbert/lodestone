@@ -23,7 +23,7 @@ What 0.2.1 changed: cylinder read-ahead cache (18 KB), whole-run writes
 with clusters linked after the write, FAT writes only of changed sectors,
 FAT before directory entry at close.  Confirm on the GRiD with BENCH.COM.
 
-On the GRiDCase 1520, 2026-10-05 (BENCH 1.2, Joshua's floppy; seconds):
+On the GRiDCase 1520, 2026-10-05 (BENCH 1.2, the author's floppy; seconds):
 
 test                                GOS 0.2.1  MS-DOS   note
 Write 256 KB, 16 KB writes             14.66    13.89   lost a turn per request

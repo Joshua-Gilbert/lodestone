@@ -135,7 +135,7 @@ link_idle:
 %endif
 .msg:   call    frame_next
 %ifdef TX_INPL
-.tx:    cmp     byte [pend_msg], 2      ; (P7: a fragment where it lies)
+.tx:    cmp     byte [pend_msg], 2      ; (a fragment where it lies)
         je      lw_inpl
 %endif
         jmp     link_write
@@ -215,7 +215,7 @@ frame_next:
         mov     si, [bx+4]
         mov     ax, [bx+8]              ; (sent: 0, or whole fragments)
         add     si, ax
-        test    ax, ax                  ; P7: a later fragment, when the driver
+        test    ax, ax                  ; a later fragment, when the driver
         jz      .cp                     ;  adds the check, goes from where it
         test    byte [use_fl], 2        ;  lies (lw_inpl swaps the header in
         jz      .cp                     ;  over the 6 bytes before it, and back)
@@ -316,7 +316,7 @@ link_write_nak:
         ret
 
 %ifdef TX_INPL
-; P7: a later fragment sent where it lies (frame_next's pend_msg 2: driver
+; A later fragment sent where it lies (frame_next's pend_msg 2: driver
 ; 1.23, which adds the check): txframe's header swapped in over the 6 bytes
 ; before it (the fragment before's, or the message's own), and back after
 lw_inpl:
@@ -433,7 +433,7 @@ link_wait:
 link_read:
         mov     di, rxbuf
 %ifdef RX_INPL
-        cmp     byte [rq_type], 0       ; (P7: mid-request, maybe in reqbuf)
+        cmp     byte [rq_type], 0       ; (mid-request, maybe in reqbuf)
         jne     .in
 .r:
 %endif
@@ -473,7 +473,7 @@ link_read:
         jmp     short rq_back
 .ok2:   call    took_answer
         jmp     short rq_back
-; P7: mid-request (a fragment with MORE read), the answer goes straight after
+; Mid-request (a fragment with MORE read), the answer goes straight after
 ; what reqbuf holds, if a whole read has room there: its header lands on the
 ; last 6 bytes held, kept in rq_save till rq_back.  (Any answer may come:
 ; a CELLS frame between the fragments is taken from there too.)
@@ -768,8 +768,8 @@ delay_ms:
 .x:     ret
 
 ; A frame's check over DS:SI, CX bytes -> AX, every frame, HELLO too (till
-; audit3 R56 the HELLO and its answer went with a CRC-16; a gridlink from
-; 8db568c on takes either).  Fletcher-16 with 8-bit sums: A = 1 + the bytes,
+; 2026-10-29 the HELLO and its answer went with a CRC-16; a gridlink from
+; 2026-10-22 on takes either).  Fletcher-16 with 8-bit sums: A = 1 + the bytes,
 ; B = the sum of the A's, both mod 256 (the registers' own wrap: no modulo
 ; step at all, where Fletcher's mod 255 would cost an ADC after every add);
 ; AX = B << 8 | A.  Four bytes a pass: about 8.5 clocks a byte on the 286 by

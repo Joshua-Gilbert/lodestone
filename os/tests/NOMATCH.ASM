@@ -1,4 +1,4 @@
-; NOMATCH.COM (test_kernel t_nomatch): FIND FIRST that finds nothing (X22),
+; NOMATCH.COM (test_kernel t_nomatch): FIND FIRST that finds nothing,
 ; and the searches next to it: a directory that isn't there, a bad name, a
 ; hidden file without the bit, an empty directory.  Each line: fn, the
 ; name, ok or the error.  test_kernel holds the answers GRiD MS-DOS 3.30
