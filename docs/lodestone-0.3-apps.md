@@ -1,6 +1,6 @@
 # Lodestone 0.3 — the UI core and the first programs (2026-10-05)
 
-0.3 starts the application suite. The Executive now sits on a shared UI core (our COMMON.SHR), and programs written for it are `.RUN` files that load next to it and call it with near calls. The first two are **System** (GRiD's "Usage") and **Write** (after GRiDWrite). Everything here is tested in emulation; nothing has been on the 1520 yet. 0.3 is built on 0.2.3, so it keeps 0.2.3's one-sector-at-a-time retry on read errors.
+0.3 starts the application suite. The Executive now sits on a shared UI core (our COMMON.SHR), and programs written for it are `.RUN` files that load next to it and call it with near calls. The first two are **System** (GRiD's "Usage") and **Write** (after GRiDWrite). When 0.3 was written, everything here had been tested only in emulation. 0.3 is built on 0.2.3, so it keeps 0.2.3's one-sector-at-a-time retry on read errors.
 
 ## The UI segment
 - **The finding that shaped it:** the kernel's segment (0060h) was 50 KB full. Code, BSS and the Executive's lists ended at C350h, which left too little room for programs in the same segment.
@@ -146,10 +146,10 @@
 
 ## GRiD's font (2026-10-06)
 - *Since 2026-11-05 the built-in font is Lodefont (`lodestone-font.md`); GRiD's is `GRIDFONT.FNT`, on ROM 2.*
-- Joshua asked why Lodestone didn't use the GRiD's built-in fonts. What the 1520 has:
+- Why Lodestone doesn't use the GRiD's built-in fonts. What the 1520 has:
   - **The text-mode fonts** (4, picked with INT 15h E422h) are in the display controller. They only show in text modes and the processor can't read them, so a graphics screen can't use them.
   - **The BIOS** has only the IBM 8×8 CGA font (F000:FA6E). In mode 40h its INT 10h draws each row twice.
-  - **InteGRiD's fonts**, `InterGRiD\PROGRAMS\*.TYP` on Joshua's PC: 21 bitmap fonts from 4×8 to 24×32. **TC8X16 is byte for byte the 8×16 font built into GRID.EXE**, the system font InteGRiD used on 640×400 screens.
+  - **InteGRiD's fonts**, `InterGRiD\PROGRAMS\*.TYP`: 21 bitmap fonts from 4×8 to 24×32. **TC8X16 is byte for byte the 8×16 font built into GRID.EXE**, the system font InteGRiD used on 640×400 screens.
 - **The .TYP format**, decoded: an OMF object module (GRiD linked fonts into programs). Its data segment is an 8-byte header (number of characters, width, height, line height, baseline, 0, 0, 0), then the glyphs as a strike: row 0 of every character, then row 1, and so on, MSB = leftmost pixel. TC8X16 has 255 characters: two-letter control-code glyphs, ASCII, then arrows, ©, a four-glyph GRiD logo, Latin-1 letters and box drawing.
 - **Now:** `src/FONT.INC` is TC8X16, made by `typfont.py` (which also draws any .TYP as a sheet). Only codes 32–127 are kept, so it costs the same 1,536 bytes as Terminus did. The Executive, the core, System, Write and DEFRAG use it.
   - The glyphs fill the 16-pixel cell (capitals rows 0–13, descenders to row 15), as on GRiD's own screens.
@@ -158,7 +158,7 @@
 - **Rights:** GRiD Systems was bought by Tandy in 1988 and its products sold on after that. In the US, the design of a bitmap typeface generally isn't protected by copyright. The original .TYP files stay out of the repo; `FONT.INC` holds only the 96 glyphs. (Not legal advice.)
 
 ## Switching fonts (2026-10-06, API 2)
-- **Joshua's choice:** GRiD's font stays built in, and other fonts are files.
+- GRiD's font stays built in, and other fonts are files.
   - A **.FNT** file is the 96 glyphs of codes 32–127, 8×16, 16 bytes each, top row first: exactly 1,536 bytes.
   - `fonts/TERMINUS.FNT` (the font 0.3 started with) is built from `src/TERMINUS.INC` by `fonts/TERMINUS.ASM`. `typfont.py X.TYP --fnt X.FNT` makes one from any 8×16 GRiD font.
 - **The core:**
@@ -188,7 +188,7 @@
 - CLAUDE.COM keeps Terminus built in for now.
 
 ## The mouse for DOS programs (0.3.1, 2026-10-06)
-- **Joshua found that TM5000G said "No mouse detected"**, though the mouse works in the Executive. The core had a working serial-mouse driver: it finds the mouse on COM2/COM1 and decodes its packets. But DOS programs had only the kernel's INT 33h stub, which returned AX = 0, and the core switched the mouse off before every DOS program.
+- **TM5000G said "No mouse detected"**, though the mouse works in the Executive. The core had a working serial-mouse driver: it finds the mouse on COM2/COM1 and decodes its packets. But DOS programs had only the kernel's INT 33h stub, which returned AX = 0, and the core switched the mouse off before every DOS program.
 - **Now the core answers INT 33h itself** (`src/MOUSE33.INC`), on the same driver. Its vector is set at start-up and again when the UI block moves past a TSR.
   - **The mouse stays off while a DOS program runs until the program asks for it** (function 0 or 21h). A program that drives COM1/COM2 itself is left alone. After the program ends, the core takes the mouse back, hides the pointer and forgets any event handler.
   - **Functions:** 00–0Ch, 0Fh, 10h, 13h–17h, 1Ah, 1Bh, 1Dh–21h, 24h, 26h. The others return with the registers unchanged.
@@ -200,8 +200,8 @@
     - modes 4/5, 6 and 40h show the arrow, with function 09h shapes and hot spots;
     - when the pointer goes, any byte the program has written over since is left as it is.
   - **The event handler** (0Ch / 14h) runs after the interrupt is acknowledged, with interrupts on, and never re-entered. It is dropped if its program is no longer in memory: the owner word of that program's memory block no longer names it.
-- **Cost:** LODE.SYS 32,162 bytes (+1,870 with the review's fixes). A DOS program gets 569.4 KB, 2.1 KB less, because the driver stays resident while programs run. The version is now 0.3.1; System's About shows it.
-- **Tests (`t_mouse`, 38 checks; `tests/M33TEST.COM` steps through the calls, `M33GFX`, `M33QUIT`, `M33HSET` and `M33HVIC` cover the review's cases):**
+- **Cost:** LODE.SYS 32,162 bytes (+1,870 with the fixes below). A DOS program gets 569.4 KB, 2.1 KB less, because the driver stays resident while programs run. The version is now 0.3.1; System's About shows it.
+- **Tests (`t_mouse`, 38 checks; `tests/M33TEST.COM` steps through the calls, `M33GFX`, `M33QUIT`, `M33HSET` and `M33HVIC` cover the fixes below):**
   - the port is left alone for MEMSZ; reset, version, show, follow, position, presses and releases, mickeys, ranges, the event handler, hide;
   - a cell the program wrote over stays as written; mode 4's arrow drawn and taken away;
   - the program ends with the pointer on and a handler set, and the Executive and its mouse are fine;
@@ -210,7 +210,7 @@
   - The TSR test also checks that INT 33h follows the UI block.
   - the graphics pointer bit for bit against the masks (mode 40h at three places with a hot spot, mode 6 clipped, mode 4 with a hot spot);
   - a program that ends inside its handler, a handler left behind under the shell, a packet while a handler is being set.
-- **Review (a Fable agent, 2026-10-06):** 6 findings, all confirmed and fixed, each with a test that fails on the code before:
+- **Fixes (2026-10-06),** each with a test that fails on the code before:
   - **DF:** `int33_ui` didn't clear the direction flag, so a program calling with DF set made the reset write 138 bytes backwards over the Executive's row table (fn 09h, 16h and 17h too). Now `cld` on entry.
   - **A program ending inside its event handler** left `m33_busy` set, which silenced every later program's handler. It's cleared when a program ends and at a reset.
   - **A handler left behind under the shell** (LCMD → a program that sets one and ends without a reset → the next program loaded at the same segment) was called inside the new program: the owner check can't tell two programs at one segment apart. Now the kernel tells the core when a program ends (`ui_progend` → `m33_gone`), and that program's handler goes. A TSR's stays.
@@ -221,9 +221,9 @@
 - **On the 1520, still to see:** the pointer on the plasma in TM5000G's text menus and in its CGA graph screen.
 
 ## The File form (0.3.2, 2026-10-06)
-- **Joshua's requests:**
-  - change devices in the Executive (his 1520 has an external B: drive);
-  - Tab between Device, Subject and Title, "kind of GMANAGER style … but for sure allow tab";
+- **Aims:**
+  - change devices in the Executive (a 1520 can have an external B: drive);
+  - Tab between Device, Subject and Title, as in GRiDManager;
   - drop CODE-R (restart) and CODE-D (restart into the EPROM): CTRL-ALT-DEL restarts, and the code costs memory.
 - **GRiD's File form, from GEXEC's own help:** "Press the Arrow keys to select an item. Press RETURN to move the outline to the next item in the form." The items are Device, Subject, Title and Kind. GRiDManager lists titles or subjects in columns.
 - **Now:**
@@ -263,7 +263,7 @@
   | CODE-R | Rename | the new title, in the same subject |
   | CODE-D | Delete (erase) | a question first |
 
-  Joshua's keys: C for Copy, D for Delete, M for Move, R for Rename. The command prompt moved from CODE-C to **CODE-P**.
+  The keys are the commands' initials. The command prompt moved from CODE-C to **CODE-P**.
 - **Copy** writes the copy under a temporary name first, and renames it only once it is complete. So a full or write-protected disk leaves what was there alone, and the date and time go with the copy.
 - **Move** on the same drive only moves the directory entry. To the other drive it copies, then erases; a read-only file is refused.
 - **A title that is already there** is replaced only after confirming.
@@ -276,7 +276,7 @@
 - **Cost:** LODE.SYS 35,360 bytes. A DOS program gets 565.9 KB, 2.8 KB less than 0.3.2.
 - **Tests:**
   - **`t_files`:** each command and its form, replace-or-not, read-only files, a write-protected disk, and copies between A: and B: checked byte for byte.
-  - **`t_file_safety`:** the review's cases:
+  - **`t_file_safety`:** the edge cases:
     - one file however spelled;
     - the saver during a question and during a form;
     - forbidden characters;
@@ -287,7 +287,7 @@
   - With all of them, apps has 237 checks; kernel 60, DEFRAG 33, Claude link 21 and HEADCLN 9 still pass.
 
 ## The screen saver's delay (0.3.4, 2026-10-06)
-- **Joshua's request:** set in System when the screen saver starts.
+- **Aim:** set in System when the screen saver starts.
 - **System has a "Screen saver" topic,** between Display and About. It shows "Starts after: 5 minutes". Return steps through 1, 2, 5, 10, 15 and 30 minutes, then never, and the choice takes effect at once.
 - **LODE.INI** keeps the choice as `SAVER=n` (any case). There is no line for the usual 5 minutes, and `SAVER=0` means never. Its other lines, `FONT=` included, are kept; with nothing left the file goes.
   - System writes both settings through one routine (`save_ini`, with `ini_is` matching a key in any case).
@@ -305,7 +305,7 @@
   - after a restart; `FONT=` and `SAVER=` together; `saver=2` before `FONT=` with another line kept; back to 5 removing the line; `SAVER=99` taken as 30.
 
 ## Wildcards in Copy, Move and Delete (0.3.5, 2026-10-06)
-- **Joshua's choices:** wildcards typed in the form (GRiDManager style), not marking in the list; Copy, Move and Delete take them, Rename stays one title; Replace as Ask / All / None, plus Only newer for backups.
+- **Design:** wildcards typed in the form (GRiDManager style), not marking in the list; Copy, Move and Delete take them, Rename stays one title; Replace as Ask / All / None, plus Only newer for backups.
 - **The forms:**
   - **Copy:** Titles, Device, Subject, Title, Replace, Only newer.
   - **Move:** Titles, Device, Subject, Replace.
@@ -318,27 +318,27 @@
 - **The band after several:** "Copied 3 titles to B:\DATA, 2 left as they were" / "Moved 2 titles to A:\WORK". One title left by Replace None or Only newer: "NOTES.TXT is there already: left as it was".
 - **Errors stop the run** at that title and say why ("Can't copy A.TXT: Disk is write-protected"); a Move that copied but couldn't erase says so and goes no further. The list is read again if anything changed.
 - **How:** `pat_find` collects the matching names (find first/next, attribute 0: files and read-only ones, not hidden or system), with their date and time, into a block of their own (17 bytes a title), cut down to what it holds so Copy's 32 KB buffer still fits. The directory can then change under the run (Move renames, Copy makes its temporary file) without upsetting it. `xfer_do` uses find first on the destination (time, date, subject or not) where it used 4300h.
-- **A Subject that isn't there is made** (Joshua, after a Move to `B:\NEWFOLDER` on the 1520): "B:\NEW\DEEP isn't there: Confirm to make it", then each level in turn. ESC leaves everything as it was.
+- **A Subject that isn't there is made** (a Move to `B:\NEWFOLDER` on the 1520 needed it): "B:\NEW\DEEP isn't there: Confirm to make it", then each level in turn. ESC leaves everything as it was.
 - **Two kernel fixes found on the way** (a failed MKDIR on a write-protected disk):
   - `clu_zero` returned the cluster number instead of the error (so "error 17"), and its CF was lost to an `add sp`. It now returns CF with AX = the error.
   - A cluster taken for a new subject (MKDIR) or for a subject that grows was kept when it couldn't be written: a lost cluster, or, when a subject had to grow, its chain led into a cluster of old data that showed as stray entries. Both now give the cluster back.
 - **Cost:** LODE.SYS 36,636 bytes (+1,364). A DOS program gets 564.6 KB (−1.1 KB).
-- **Review:** an independent review found three bugs, all fixed with tests: an emptied Titles checked leftover bytes after the chosen title (a stray `\` or `*` from an earlier path); a wildcard Move that couldn't erase an original was reported as a full success; and the name block could take all free memory, starving Copy's buffer. Left as designed: ESC at a Replace question leaves just that title.
+- **Fixes:** three bugs, all fixed with tests: an emptied Titles checked leftover bytes after the chosen title (a stray `\` or `*` from an earlier path); a wildcard Move that couldn't erase an original was reported as a full success; and the name block could take all free memory, starving Copy's buffer. Left as designed: ESC at a Replace question leaves just that title.
 - **Tests (`t_wild`, 31 checks; the last 8 for making subjects and the kernel fixes):** the form; `*.TXT` to B: with None, with All and Only newer (older replaced, newer and as-new left), with Ask (Return, then ESC each); Move `*.DAT` on the same drive and `*.*` to B:; no match; a path in Titles; Title changed with a pattern; a pattern into its own subject; another title typed in Titles; Titles emptied; one title with None; a write-protected B: and A:; Delete `*.TXT` (ESC, then Return, the read-only one kept). The existing Copy/Move/Delete tests now step over the Titles field.
 
 ## Delete on a subject (0.3.6, 2026-10-06)
-- **Joshua's request:** Delete wouldn't remove a folder. His choice: a subject goes empty or not, after a question.
+- **Why:** Delete wouldn't remove a folder. Now a subject goes, empty or not, after a question.
 - **How:** outline Subject, choose the subject (it is the current one), CODE-D: "Erase: Confirm to erase \OLD and all in it". Return erases every title under it (read-only, hidden and system ones too: their attributes are cleared first), every subject below it once empty, then the subject. Subject then lists the subjects again with the one above chosen. Root can't be erased (a beep). An error stops it and says what and why ("Can't erase K.TXT: Disk is write-protected").
 - **The walk (`tree_del`):** after the CHDIR to `..` (checked), one DTA (the Executive's own): files are erased as find-next goes; on reaching a subject it goes down into it, and once a subject is empty and removed the level above is searched again from its start (everything before it is gone). The path is `dstpath` (no new buffer).
-- **Size:** the first build counted the titles for the question, which needed a DTA a level and a second pass (+552 bytes). Joshua found that too much, so the count went: 186 bytes less.
+- **Size:** the first build counted the titles for the question, which needed a DTA a level and a second pass (+552 bytes). That was too much, so the count went: 186 bytes less.
 - **Guards for damaged disks:** a subject whose first entry isn't "." (a corrupt one pointing at the root or elsewhere) is left alone; a path longer than DOS allows stops the walk.
 - **Kernel fix (RMDIR, also the prompt's RD):** a subject Windows or Linux wrote long names into kept the long-name entries after its files were erased, and RMDIR took those as titles ("Access denied"). They no longer count.
-- **Review:** an independent review (of the first build) found no way for the walk to leave the subject on a sound disk. Its findings that still apply (long names, an unchecked CHDIR) and the damaged-disk guards are in.
+- **Checked:** no way was found (in the first build) for the walk to leave the subject on a sound disk. The fixes for long names and an unchecked CHDIR, and the damaged-disk guards, are in.
 - **Cost:** LODE.SYS 37,002 bytes (+366). A DOS program gets 564.2 KB (−0.4 KB).
 - **Tests (`t_subdel`, 10 checks):** Root refused; the question; ESC; Return erasing a tree with a read-only title, a long-named one and empty subjects; the list after; an empty subject; a write-protected disk. Checked to fail without the RMDIR fix.
 
 ## Screen capture (0.3.9, 2026-10-07)
-- **Joshua's choices:** the BIOS's own print-screen key (Shift-PrtSc) saves the screen to a file instead of printing it; the file goes in the root of the boot disk; graphics become a BMP and text a TXT.
+- **Design:** the BIOS's own print-screen key (Shift-PrtSc) saves the screen to a file instead of printing it; the file goes in the root of the boot disk; graphics become a BMP and text a TXT.
 - **Asking:** on Shift-PrtSc the 1520's BIOS (INT 9, after its EOI) calls INT 5. The kernel owns INT 5 now, and its handler only sets `cap_req`, because the key can come in the middle of anything (the BIOS, a disk transfer, the kernel).
 - **Taking it, at the next safe moment.** `capture` goes ahead only when `cap_req` is 1 and `indos` is 1 (one word compare), and the PIC has no interrupt in service:
   - at the INT 21h entry, for an outermost call, before the dispatch;
@@ -347,7 +347,7 @@
   - A DOS program that reads the keyboard straight from the BIOS gets the picture at its next DOS call.
   - It runs on the kernel stack. Its own create, write, close and erase calls nest on the critical-error stack (about 90 of its 512 bytes in pcemu).
 - **The files:** `SCREEN01.BMP` … `SCREEN99.BMP`, or `SCREEN01.TXT` …, in the root of the boot drive. Each extension is numbered on its own, and create-new (5Bh) finds the first number free.
-  - **Printing, through a driver (2026-10-19):** with `PRINTER=PS.PRN` in LODE.INI (System, Devices, Return: the next `.PRN`, then none), PrtSc alone prints, and Shift-PrtSc still saves the file (Joshua's choice: INT 5 reads the BIOS's shift flags at 40:17 into `cap_file`; on the 1520 both are Fn-PrtSc). A driver is a flat binary of 16 bytes to 1 KB that starts with a `JMP SHORT` and then `'PRN', 1`; the kernel runs nothing else, and System offers nothing else (a print job saved as `.PRN` would otherwise be run as code and hang the machine, found in review). At the same safe moment the kernel reads it into the capture's 1 KB at the kernel stack's bottom, calls it far at offset 0, and forgets it: it reads the screen itself, may use the BIOS but not DOS, and returns AL = 0 when printed. A missing driver, one under 16 bytes or over 1 KB, one without the signature, or AL ≠ 0 gives the long beep. When the ROM's own LODE.INI names a driver, choosing none in System writes an empty `PRINTER=`, so it stays none. Resident: the loader and a 24-byte path, 0.2 KB of DOS memory (561.5 / 577.6 KB with EMS). The path is set at start-up by the kernel's discarded boot code (KSPLASH.INC `pr_boot`: from the ROM `C:\LODE\NAME` if it is there, else the drive started from, as PATH finds programs), and System changes it in place through INT 21h F006h (ES:BX → the path, CX its room). `drivers/PS.PRN` (on ROM 1 too) sends PostScript to LPT1 through INT 17h, as TM5000G prints to a Brother HL-5370DW: the graphics modes as a 640 × 400 `image` (hex, bottom line first, lit pixels black), the text modes as Courier lines with `( ) \` escaped and the PC's graphics characters as `?`; each byte tried for 10 s while the printer is busy. A first version had the PostScript code in the kernel (0.6 KB resident); Joshua asked for a driver loaded only when printing. Tests: `test_kernel.py t_print` (PostScript byte for byte against video memory, another driver, one over 1 KB, a missing one; its output rendered with Ghostscript), `test_apps.py t_prtsc_setting`.
+  - **Printing, through a driver (2026-10-19):** with `PRINTER=PS.PRN` in LODE.INI (System, Devices, Return: the next `.PRN`, then none), PrtSc alone prints, and Shift-PrtSc still saves the file (INT 5 reads the BIOS's shift flags at 40:17 into `cap_file`; on the 1520 both are Fn-PrtSc). A driver is a flat binary of 16 bytes to 1 KB that starts with a `JMP SHORT` and then `'PRN', 1`; the kernel runs nothing else, and System offers nothing else (a print job saved as `.PRN` would otherwise be run as code and hang the machine). At the same safe moment the kernel reads it into the capture's 1 KB at the kernel stack's bottom, calls it far at offset 0, and forgets it: it reads the screen itself, may use the BIOS but not DOS, and returns AL = 0 when printed. A missing driver, one under 16 bytes or over 1 KB, one without the signature, or AL ≠ 0 gives the long beep. When the ROM's own LODE.INI names a driver, choosing none in System writes an empty `PRINTER=`, so it stays none. Resident: the loader and a 24-byte path, 0.2 KB of DOS memory (561.5 / 577.6 KB with EMS). The path is set at start-up by the kernel's discarded boot code (KSPLASH.INC `pr_boot`: from the ROM `C:\LODE\NAME` if it is there, else the drive started from, as PATH finds programs), and System changes it in place through INT 21h F006h (ES:BX → the path, CX its room). `drivers/PS.PRN` (on ROM 1 too) sends PostScript to LPT1 through INT 17h, as TM5000G prints to a Brother HL-5370DW: the graphics modes as a 640 × 400 `image` (hex, bottom line first, lit pixels black), the text modes as Courier lines with `( ) \` escaped and the PC's graphics characters as `?`; each byte tried for 10 s while the printer is busy. A first version had the PostScript code in the kernel (0.6 KB resident); a driver loaded only when printing costs less. Tests: `test_kernel.py t_print` (PostScript byte for byte against video memory, another driver, one over 1 KB, a missing one; its output rendered with Ghostscript), `test_apps.py t_prtsc_setting`.
   - **Graphics:** a 640 × 400, 1-bit BMP with the Windows 3 header, 32,062 bytes, in dark red (36, 8, 2) and orange (255, 120, 40), the 1520 plasma's colours and the README's (brown and amber before 2026-10-19). Modes 40h, 48h and 74h read four banks. The 200-line modes (4 to 6) read two banks and write each line twice; modes 4 and 5 come out as their bit patterns.
   - **Text** (modes 0–3): the shown page (40:4Eh) as 25 lines of 40 or 80 columns (40:4Ah), without trailing blanks, NUL as a blank, ending CR LF.
   - The mouse pointer is in the picture if it's on the screen.
@@ -361,7 +361,7 @@
   - Success gives one beep (BEL through INT 10h).
   - The program's INT 21h 59h error is kept.
   - A press while a picture is being saved is dropped (the screen is the same).
-- **Review (an independent agent):** confirmed in pcemu, all fixed with tests:
+- **Fixes,** confirmed in pcemu, all with tests:
   - **Data loss:** a disk swapped in that a program had already read through the BIOS (change line clear, no 0Dh yet, as HEADCLN does) got the boot disk's cached FAT and root written over it: 30 files gone. The capture now starts with `disk_reset` (as INT 21h 0Dh), so the kernel checks the disk first and writes the picture to the disk that is there.
   - **Inside a hardware interrupt:** a TSR's INT 1Ch hook that calls DOS while InDOS is 0 (as clock TSRs do) made the capture run before the timer's EOI, with the floppy's IRQ blocked. The capture now waits while the PIC's in-service register is non-zero. pcemu now models that register.
   - **A disk pulled mid-picture** would have tried every remaining piece (minutes with the BIOS's time-outs). It stops after the first failure.
@@ -381,7 +381,7 @@
   - The changed-disk and timer-hook checks fail without their fixes.
 
 ## The hard disk as C: (0.3.10, 2026-10-07)
-- **Why:** the 1520's BIOS only types the few Conner drives on its list, so Joshua's CP30104H (121 MB, freed by `HDPROBE /X`) is invisible to INT 13h. Lodestone drives it itself at 1F0h–1F7h. Joshua's brief: as small and fast as the EMS driver, nothing in memory without a drive, and fine to use with its 4 bad sectors (free space; HDSCAN found the same 4 twice).
+- **Why:** the 1520's BIOS only types the few Conner drives on its list, so a Conner CP30104H (121 MB, freed by `HDPROBE /X`) is invisible to INT 13h. Lodestone drives it itself at 1F0h–1F7h. The aims: as small and fast as the EMS driver, nothing in memory without a drive, and fine to use with the drive's 4 bad sectors (free space; HDSCAN found the same 4 twice).
 - **Start-up (`hd_init`, section `boot`, after `ems_init`):**
   - **Is there a drive?** A register echo test; if it fails, two status reads separated by filler bytes tell an empty or floating bus (FFh, or leftover code bytes without BSY) from a drive spinning up (BSY in both), which gets 5 s.
   - **Geometry:** IDENTIFY words 1, 3 and 6, set with 91h as the BIOS would. CHS throughout (drives of the 1520's age have no LBA).
@@ -393,13 +393,13 @@
 - **The FAT:** a 1.5 KB window of 3 sectors, least-recently-used with dirty bits, written to every FAT copy at each kernel FAT flush or when a slot is needed. A sector that can't be had (unreadable, or its slot's changes can't be written) comes back as FFFFh: no cluster is followed or taken there, and writes to it go nowhere. The free count is made on the first INT 21h 36h (kept only if every FAT sector read) and kept up to date after.
 - **Kernel changes:** FAT16 end markers (FFF0h and up read as ends, FFFFh written); NDRV 3; INT 21h 0Eh reports 3 drives with C:; drives with D_UNIT bit 7 skip the change-line check; the Executive's Device list and Copy form offer C: ("Hard disk C:"); DEFRAG and the saver's tidying stay with the floppies; About shows the patch number.
 - **Cost:** LODE.SYS 42,114 bytes (+2,324). Without a drive a DOS program gets 547.4 KB (−0.2 KB, the kernel's 32-bit plumbing). With C: the module (1,248 bytes) and window cost 2.8 KB with EMS (560.7 KB) and 3.2 KB without (544.2 KB).
-- **Review (an independent agent), 8 findings, all fixed and tested:** an unreadable FAT sector left a window slot labelled with the new sector over the old one's contents (later writes went to the wrong FAT sector); a failed write-back on eviction lost the slot's changes; a failed flush cleared the dirty bits; C:'s flush failing stopped a floppy's FAT from being written; the free count could drift past an unreadable sector; the boot sector wasn't checked against the table or the drive; `clu2lba` left a stale high part; `drv_init`'s unit mask.
-- **Tests (`tests/test_hd.py`, 42 checks; disks from `tests/fat16img.py`, which also checks one as CHKDSK would):** no drive, floating bus, stuck drive, no / FAT12 / oversized partitions; the shell on C: (DIR, TYPE, COPY both ways, MD/CD/REN/DEL/RD) with a directory and a file past sector 65,535 and one across it; TM5000G copied and run from C:; a 121 MB disk behind Joshua's real sector 0 and boot sector; a bad sector; a full disk; FAT sectors that can't be read (DEL with Fail, Abort mid-read) or written (DEL through five FAT sectors, a passing fault, C:'s FAT failing while A:'s has changes, with `HDFLUSH.COM`); TESTDOS and CACHETST on C:; the Executive; memory. pcemu's `Ata` takes writes (30h) and refuses listed ones (`badw`).
-- **On the 1520 (2026-10-07):** works (Joshua).
+- **Fixes, 8, all tested:** an unreadable FAT sector left a window slot labelled with the new sector over the old one's contents (later writes went to the wrong FAT sector); a failed write-back on eviction lost the slot's changes; a failed flush cleared the dirty bits; C:'s flush failing stopped a floppy's FAT from being written; the free count could drift past an unreadable sector; the boot sector wasn't checked against the table or the drive; `clu2lba` left a stale high part; `drv_init`'s unit mask.
+- **Tests (`tests/test_hd.py`, 42 checks; disks from `tests/fat16img.py`, which also checks one as CHKDSK would):** no drive, floating bus, stuck drive, no / FAT12 / oversized partitions; the shell on C: (DIR, TYPE, COPY both ways, MD/CD/REN/DEL/RD) with a directory and a file past sector 65,535 and one across it; TM5000G copied and run from C:; a 121 MB disk behind a real CP30104H's sector 0 and boot sector; a bad sector; a full disk; FAT sectors that can't be read (DEL with Fail, Abort mid-read) or written (DEL through five FAT sectors, a passing fault, C:'s FAT failing while A:'s has changes, with `HDFLUSH.COM`); TESTDOS and CACHETST on C:; the Executive; memory. pcemu's `Ata` takes writes (30h) and refuses listed ones (`badw`).
+- **On the 1520 (2026-10-07):** works.
 - **0.3.11:** INT 25h/26h (absolute sectors, DOS 4's 32-bit form) for C:, and DEFRAG on C:; see `lodestone-defrag.md`.
 
 ## System and the hard disk; the saver's tidying (0.3.12, 2026-10-07)
-- **Joshua's requests:** C: in Disks, the hard disk's own name in Devices, and a switch for whether the screen saver tidies the disks.
+- **Aims:** C: in Disks, the hard disk's own name in Devices, and a switch for whether the screen saver tidies the disks.
 - **Disks:** after A: (and B:), C: when INT 21h 0Eh says 3 drives. Its label, size, free space and space in use. Sizes now print in 32 bits (UI_SBU32): the CP30104H shows "118448 KB".
 - **Devices:** a "Hard disk" line with the name the drive gives itself, e.g. "Conner Peripherals 120MB - CP30104H", or "none".
   - System sends IDENTIFY (ECh) itself and reads words 27–46, with a 1 s time-out. It does this only when Lodestone has C:, so the kernel keeps no copy of the name (no resident bytes).
@@ -414,7 +414,7 @@
   - The delay tests now expect the new band text.
 
 ## Copy on a subject (0.3.13, 2026-10-08)
-- **Joshua's choice** of what comes first in building out the suite: folder copy. It works the way Delete on a subject (0.3.6) does: outline Subject, choose the subject (it is the current one), CODE-C.
+- Folder copy works the way Delete on a subject (0.3.6) does: outline Subject, choose the subject (it is the current one), CODE-C.
 - **The form** ("Copy WORK", "Copy Root"): Device, Subject, Replace, Only newer.
   - **Subject is where the copy goes**, the subject itself to start with, so a copy on another disk changes only Device: WORK on A: to B: is `B:\WORK`. Typed as a path from the root, as in the title Copy.
   - Replace (Ask, All, None) and Only newer work title by title, as in the title Copy. A backup of a whole subject to B: is Device B:, Replace All, Only newer Yes; run again, it copies only what changed.
@@ -436,14 +436,14 @@
   - The kernel caches one FAT, A:'s or B:'s. MKDIR took a cluster on B:, couldn't write it, and gave it back (0.3.5), which left B:'s FAT marked as changed though it was as on the disk. That can never be written to a write-protected disk, and loading A:'s FAT writes the cached one out first, so every read of A: failed with error 19.
   - The title Copy into a new subject on a write-protected B: did this since 0.3.5; the subject copy's own Subject list, read again right after, showed it at once.
   - Now `fat_keep` and `fat_back` keep the FAT's changed-sectors mask around the cluster taken, and put it back when the cluster is given back because it couldn't be written (MKDIR: only when the zeroing fails, before any FAT write; a subject's growth likewise). Nothing reached the disk, so the FAT is as before in every sense.
-- **Review (an independent agent):** nothing serious: no crash, stack imbalance or lost FAT change; the kernel fix checked sound (the drive's own FAT is always the one cached when it saves the mask; C:'s FAT16 is untouched by it). Fixed, each with a check that fails before:
+- **Checked:** no crash, stack imbalance or lost FAT change; the kernel fix is sound (the drive's own FAT is always the one cached when it saves the mask; C:'s FAT16 is untouched by it). Fixed, each with a check that fails before:
   - hidden and system titles and subjects left behind without a word (above);
   - "Copied 0 titles to B:\X" with no disk in B:, or with a file called X there: the destination wasn't checked like the subjects below it;
   - the screen saver (any redraw) while the form was open wrote the subject's path into `runpath`, so the band said "Can't copy \WORK into itself" or, for Root, "Can't copy : …". The name is put back from the form's title;
   - a 67-character destination was made and then failed; and for Root to Root the length limit was one too strict.
   - Left: the spelling aliases above.
 - **Cost:** LODE.SYS 43,256 bytes (+908: the subject copy 844, the kernel fix 64). A DOS program gets 562.5 KB without EMS and 578.6 KB with it (−0.9 KB): the Executive's code stays in memory while a program runs.
-- **Tests (`t_subcopy`, 33 checks; 2 more in `t_wild`):** the form; confirmed unchanged ("into itself"); to B: (the question, every title and subject there byte for byte, a read-only one, 75 KB three levels down, an empty subject, the dates, no temporary file, both disks sound, Subject still chosen, the memory back); again with Replace Ask through the screen saver; Only newer and Replace All into a backup there already; into a subject in it, into itself with a `\` after; `\WORKS`; Root into its own drive; Root to `B:\ALL` (all of A:); a subject to B:'s root; on the same drive (the Subject list shows the copy); ESC at the question; an empty subject; a 61-character destination; a write-protected B: (making the subject, copying a title), A:'s Subject list after it; help; CODE-M on a subject; and the review's cases (hidden and system titles and a hidden subject, still hidden on B:; the saver while the form is open; a file where it goes; no disk in B:; 67 characters). The two write-protected list checks fail without the kernel fix, the review's six checks without its fixes.
+- **Tests (`t_subcopy`, 33 checks; 2 more in `t_wild`):** the form; confirmed unchanged ("into itself"); to B: (the question, every title and subject there byte for byte, a read-only one, 75 KB three levels down, an empty subject, the dates, no temporary file, both disks sound, Subject still chosen, the memory back); again with Replace Ask through the screen saver; Only newer and Replace All into a backup there already; into a subject in it, into itself with a `\` after; `\WORKS`; Root into its own drive; Root to `B:\ALL` (all of A:); a subject to B:'s root; on the same drive (the Subject list shows the copy); ESC at the question; an empty subject; a 61-character destination; a write-protected B: (making the subject, copying a title), A:'s Subject list after it; help; CODE-M on a subject; and the fixes' cases (hidden and system titles and a hidden subject, still hidden on B:; the saver while the form is open; a file where it goes; no disk in B:; 67 characters). The two write-protected list checks fail without the kernel fix, the six fix checks without their fixes.
 - **`test_headcln.py`:** its first key went in while HEADCLN was still printing its prompt, and HEADCLN drops keys typed before it waits. Whether that happened depended on where the emulator's run slice ended, and it did once the Executive grew (HEADCLN loads 864 bytes higher): 7 of 9 checks failed. It now waits for the whole prompt.
 
 ## M:, the temporary disk (0.3.14, 2026-10-08)
@@ -527,7 +527,7 @@
 - **Found on the way:**
   - **`sub_build` overwrote a TSR.** It wrote the Subject list's first entry into `entries` even when the UI block had no room for it, i.e. when a TSR had just been left right after the UI block. Now the list is empty until `ui_room` moves the block.
   - **System's LODE.INI save dropped unknown lines** when there was no M: (a flag test). Fixed.
-- **Review (an independent agent): two real bugs and five smaller ones, all fixed, each with a check that fails before its fix (`test_kernel.py t_mdreview`):**
+- **Fixes: two real bugs and five smaller ones, each with a check that fails before its fix (`test_kernel.py t_mdreview`):**
   - **EXEC of "F:X.EXE" overran `ex_name`.** This came from this change's refactor: `full_name` lost its NDRV check, so for a drive the kernel doesn't have, `cwd_of` pointed past `cwdstr` (into `bounce`, or 16 KB further for "1:"). The copy, which has no limit, ran over `ex_name` and on into KEMS's code. Now `drv_present` first; the path is then refused (0Fh).
   - **"A file on M: is open" when none was.** `md_open` tested `S_REF` as a word, which takes in `S_MODE`, and a closed slot keeps its mode and drive. After `COPY A:X M:`, a new size was refused until some other open reused the slot.
   - **M:'s handle closed by a program by mistake and given to another.** M: wrote into the other program's pages, and turning M: off closed that program's handle. `md_dio` now checks the owner (still 0) at no cost in paragraphs, by reading the page count as a word; `md_down` frees only its own.
@@ -539,7 +539,7 @@
 - **Tests:**
   - **`test_kernel.py t_mdisk`, 48 checks:** nothing without EMS, with MDISK=0, or on a 2-page board; the stub and hooks; 256 KB by default (its own handle, owner 0); the MD block split off the environment; an empty FAT12 disk of the right shape; DOS programs' memory the same on and off; 64, 128, 512, 1024 KB, All free, off and 256 KB again, each consistent and split (off: no block, no hook, no EMS); COPY with A:, MD/CD/DIR/DEL/RD, a program run from M:, M: full (MDTEST /F); refused while a file is open (80h); EMS held by a resident program (M: as big as fits: 416 KB); no EMS free (82h); LODE.INI lines (ALL in either case; 128 among other lines; 100: 96 KB; 5: 16 KB; no number or junk: 256 KB; 99999: all); an 8-page board (96 KB); warm restarts (EMS kept, lost, M:'s first page lost; MDISK= changed).
   - **MDTEST /W:** the program's own pages in all four windows, a file of 72 KB in odd pieces across M:'s pages, buffers in the frame (window 1, windows 2–3 across, window 0); every window and page as it was.
-  - **`t_mdreview`, 8 checks:** the review's cases above (with the fixes taken out, all 8 fail).
+  - **`t_mdreview`, 8 checks:** the fixes above (with the fixes taken out, all 8 fail).
   - **`t_cache_ems`:** CACHETST with M: on all along (one more check says so).
   - **`test_apps.py t_mdisk`, 32 checks:** System's topic with no EMS (needs EMS; nothing written), Disks and Memory, every Return step and its LODE.INI line; the Device list and Copy form with M: (copy, rename, move to A:, delete, copy a subject); a program run from M:; the erase question (ESC keeps everything); refused with a file open; M: off while the Executive is on it; MDISK=0 after a restart; the saver and DEFRAG M:.
   - **`test_hd.py t_mdisk`, 8 checks:** C: and M: together (COPY both ways, past 64K sectors), the Device list and Copy form with both, memory with M: on and off. `t_exec`'s Device list now has no B: on its one-floppy machine.
@@ -556,7 +556,7 @@
   - **BENCH on M::** in System, Temporary disk, press Return until 1 MB. Then at the command prompt (CODE-P) run `M:` and `A:BENCH /N 10`. BENCH.TXT goes on M:, so `COPY M:BENCH.TXT A:` before switching off.
 
 ## A stale M: after MDISK=0 (0.3.15, 2026-10-08)
-- **Found in the review of 0.3.14** (an independent agent): a start-up with M: off (`MDISK=0`, typed into LODE.INI) left the old disk's boot sector in what would be M:'s first page. Programs could then use those pages, and a later start-up with M: on (the same pages again) found the boot sector, a FAT that passed the check, and mounted the old disk with whatever the programs had left in its data. Turning M: off from System was already safe (`md_down` clears the boot sector).
+- **A bug in 0.3.14:** a start-up with M: off (`MDISK=0`, typed into LODE.INI) left the old disk's boot sector in what would be M:'s first page. Programs could then use those pages, and a later start-up with M: on (the same pages again) found the boot sector, a FAT that passed the check, and mounted the old disk with whatever the programs had left in its data. Turning M: off from System was already safe (`md_down` clears the boot sector).
 - **Fix (`md_wipe`, KMDISK.INC):** at start-up, when M: isn't made (off, or no room), the first free EMS page, where M: would start, loses an old M:'s boot sector (its first word, only when it starts as M:'s does). It runs in the installer, in the disk cache's EMS page: LODE.SYS +80 bytes, no memory for DOS programs (562.5 / 578.6 / 559.2 / 575.7 KB, as before).
 - **Test:** `t_mdreview` gains the case (M: with a file, a warm restart with MDISK=0, then one with no line): it failed before the fix (the old A.COM came back) and passes now. All suites pass: kernel 178, apps 367, hard disk 56, DEFRAG 49, Claude link 21, HDPROBE 33, HDSCAN 20, HEADCLN 9.
 - **Version:** LODE_VER 003Fh. 0.3.15 is the last patch number the BH.BL scheme has for 0.3 (minor << 4 | patch): the next release is 0.4.0, or the scheme changes.
@@ -567,7 +567,7 @@
 - **On the GRiD:** CLAUDE.COM 1.1 (12,320 bytes, +1,168). Its link moved to `claude/TERMLINK.INC`, its cell drawing to `TERMCELL.INC` with the CELLS decoder, the shadow, scroll, cursor and status band; `TERMKEYS.INC` reads keys with AH=11h/10h and batches them. CODE-Q quits, CODE-R redraws. `CLAUDE` without `/T` is the chat as before.
 - **What the user sees:** Claude Code's own screen on rows 0-23 (its prompt box, answers, diffs in inverse, permission dialogs), the session's title and the link on row 24. A DOS program Claude runs takes the screen while it runs; then Claude Code's screen comes back from CLAUDE's copy.
 - **Cost:** LODE.SYS unchanged but for the version (45,438 bytes); memory for DOS programs unchanged (562.5 / 578.6 / 559.2 / 575.7 KB). CLAUDE.COM takes 1.4 KB more while it runs (about 68.9 KB), so a DOS program it runs gets 1.4 KB less. Nothing stays resident.
-- **Review (an independent agent):** nothing unsafe in the GRiD's CELLS path; 8 issues and some smaller ones, all fixed and tested (`docs/term.md`, Review). The ones on the GRiD: in Term, CLAUDE ignores the chat's messages (a turn still running when the GRiD switched); an answer to HELLO that isn't a HELLO restarts the link; CODE-R held down could cost a REPLY (now one repaint request at a time, and a request runs only when its REPLY has room).
+- **Fixes:** nothing unsafe was found in the GRiD's CELLS path; 8 issues and some smaller ones are fixed and tested (`docs/term.md`). The ones on the GRiD: in Term, CLAUDE ignores the chat's messages (a turn still running when the GRiD switched); an answer to HELLO that isn't a HELLO restarts the link; CODE-R held down could cost a REPLY (now one repaint request at a time, and a request runs only when its REPLY has room).
 - **The GRiD's tools for Claude Code** (Pi side only): four only look and can be allowed for good; three change something (DOS programs, file changes and copies, anything sent over GPIB) and Claude Code asks before every call. Pi files only inside `~/grid`; copies at most 1 MB and reads 48 KB, bigger is an error, never a cut; every argument checked; DOS device names refused (`AUX` would hang the GRiD) (`docs/term.md`, Tool server limits).
 - **Version:** LODE_VER 0040h; the Executive's band and help, LCMD's banner and VER say 0.4.
 - **Tests:** all suites pass: kernel 178, apps 367, hard disk 56, DEFRAG 49, Claude link on the kernel 21, HDPROBE 33, HDSCAN 20, HEADCLN 9; claude-link: chat 10 + 20 (emulator), Term 17 + 8 (emulator), MCP 13.
@@ -577,7 +577,7 @@
 - Grid-OS is now Lodestone: LODE.SYS, LODE.INI, LODE.TXT, LCMD.COM and LODEBOOT.COM (they were GRIDOS.SYS, GRIDOS.INI, GRIDOS.TXT, GRIDCMD.COM and GOSBOOT.COM); the repo's `gridos/` folder is `os/`. The boot sector looks for LODE.SYS, so a Grid-OS floppy needs LODEBOOT once; it runs at the prompt (`t_lodeboot`). Done on the 1520's floppy, and it boots.
 
 ## Command (0.4.2, 2026-10-09)
-Joshua's aim: a command prompt resident Claude can script against, as Claude Code drives PowerShell or Git Bash.
+The aim: a command prompt resident Claude can script against, as Claude Code drives PowerShell or Git Bash.
 - **The line editor** (LCMD's own; DOS's INT 21h 0Ah when standard input isn't the keyboard):
   - Left, Right, Home, End, Backspace and Del edit the line; ESC clears it; Ctrl-C drops it.
   - Up and Down step through a 512-byte history (the same line twice in a row is kept once); F3 adds the rest of the last line.
@@ -608,7 +608,7 @@ Joshua's aim: a command prompt resident Claude can script against, as Claude Cod
 - **Cost:**
   - LODE.SYS 45,466 bytes (+26 over 0.4.1). Resident, 32 bytes more (kernel 16, Executive 16), which leaves memory for DOS programs unchanged at 562.5 / 578.6 KB.
   - LCMD.COM is 10,909 bytes (+3,312). It still takes the same memory while a program runs from it (a program gets 16.1 KB less than from the Executive): the copy buffer it no longer keeps pays for the new code and the history. Its BSS is 40 bytes smaller.
-- **Review (an independent agent):** it found 12 issues, 10 of them reproduced in pcemu.
+- **Fixes:** 12 issues, 10 of them reproduced in pcemu.
   - `CALL` overwrote the line it was on (`&&`, `||` and `|` after it ran garbage).
   - Ctrl-C in COPY or TYPE leaked the buffer and the files; unwind now frees them.
   - Ctrl-C in a CALLed file could leave ECHO off at the prompt.
@@ -622,16 +622,16 @@ Joshua's aim: a command prompt resident Claude can script against, as Claude Cod
   - CHOICE /S was ignored.
   - DEFRAG could run under a directory search.
   - All are fixed, with tests.
-- **Tests:** `t_command` (34 checks: the batch language, exit codes, every review case, and CMDTEST.BAT), `t_cmdedit` (18: the editor, history, Tab, Ctrl-C, input from a file), `t_cmdsaver` (10: the saver at the prompt and in PAUSE, the Executive's memory and INT 24h afterwards, the start-up floppy taken out).
+- **Tests:** `t_command` (34 checks: the batch language, exit codes, every fix above, and CMDTEST.BAT), `t_cmdedit` (18: the editor, history, Tab, Ctrl-C, input from a file), `t_cmdsaver` (10: the saver at the prompt and in PAUSE, the Executive's memory and INT 24h afterwards, the start-up floppy taken out).
 - **Version:** LODE_VER 0042h.
-- **Copy to the floppy** (`releases/0.4.2`): LODE.SYS, LCMD.COM, LODE.TXT, and CMDTEST.BAT, a self-test of the batch language for the 1520 ("All 11 tests passed"). CLEANOLD.BAT deletes the Grid-OS files 0.4.1 replaced. On the 1520 the prompt, history, Tab and the saver all work, and CMDTEST passes all 11 (Joshua).
+- **Copy to the floppy** (`releases/0.4.2`): LODE.SYS, LCMD.COM, LODE.TXT, and CMDTEST.BAT, a self-test of the batch language for the 1520 ("All 11 tests passed"). CLEANOLD.BAT deletes the Grid-OS files 0.4.1 replaced. On the 1520 the prompt, history, Tab and the saver all work, and CMDTEST passes all 11.
 - **Fixed after 0.4.2 (found by SPIKES.BAT on the 1520, 2026-10-09):** `ECHO.` (a blank line), `ECHO.text`, `CD..` and `CD\` didn't work.
   - **Cause:** splitting a command word from its arguments when no space comes between them relied on AL after `strlen`, which leaves AL at 0.
   - **Effect:** `ECHO. >> FILE` wrote its arguments ("spikes.txt") instead of a blank line.
   - **Now:** `ECHO.` writes a blank line and `ECHO.text` writes the text. LCMD.COM is 10,903 bytes. `t_command` checks all four forms, into a file too.
 
 ## Calculator (0.4.4, 2026-10-12)
-Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`CALC 4*4`) and a small window over the Executive like MS-Windows' Calculator. It should use an 80287 or a 287XL when one is fitted. Memory should grow as little as possible, and existing code should be reused.
+The aim: a calculator on the 80287, scriptable at the prompt (`CALC 4*4`) and a small window over the Executive like MS-Windows' Calculator. It should use an 80287 or a 287XL when one is fitted. Memory should grow as little as possible, and existing code should be reused.
 - **One engine, two hosts.**
   - `src/CALC.INC` holds the engine: the parser, the 80287's and the 287XL's code, whole numbers when there is no coprocessor, and the answer as text.
   - `CALC.COM` (the prompt) and `CALC.RUN` (the window) both `%include` it, so neither stays in memory.
@@ -711,7 +711,7 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
   - CALC.COM 3,627 bytes and CALC.RUN 4,160 bytes (3,708 + 607 BSS) cost nothing until they run.
   - LCMD.COM is unchanged, byte for byte.
   - SYSTEM.RUN is 10,376 bytes (+60).
-- **Review (an independent agent):** 9 findings, 5 of them reproduced in pcemu. All are fixed except (8), with tests:
+- **Fixes:** 9 issues, 5 of them reproduced in pcemu. All are fixed except (8), with tests:
   1. **The window's line was wiped by any key that ends the line editor** (F2, F1, Tab, the arrows, a click off the keys): the next character replaced the whole sum. Now the window goes back to the editor with End first, unless the line is the answer's.
   2. **A leading `+` didn't go on from the answer:** it was taken as a plus sign. Fixed.
   3. **FPREM on an infinity could loop forever on a real 80287**, which leaves C2 undefined there (`sin(1e5000)`, `(1/0)%3`). FPREM now runs only on a number, by the same check as at the end.
@@ -723,8 +723,8 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
   7. **INT 16h AH=05h on the 1520:** confirmed in GRiD's BIOS source (`KbPlaceChar`, which puts the key at the buffer's tail).
   8. **API 5's two changes apply to older `.RUN`s too.** Left as is: every `.RUN` there is sets its redraw routine first and none returns 0FFFFh, and checking the header's API would cost resident bytes.
   9. **A stale strip after the Executive was redrawn under the window** (the saver, then a changed listing). The window counts its paints, and when it was repainted it exits with 0, so the Executive reads the disk and redraws.
-- **A persona review (2026-10-12):** three reviewers, each with one engineering culture's lens (SpaceX: delete what isn't needed; Jane Street: invariants; Amazon: how it fails in use), 17 findings after merging. Ten were fixed, and the nine bugs among them each have a test. Eight of those tests were run against the code before and failed; the ninth, the API stamp, fails by construction (the old `mkrun.py` wrote 05 into every header):
-  1. **`name=` under a parent that isn't LCMD printed, set nothing and gave ERRORLEVEL 0,** so `:loop / calc i=i+1 / if not %i%==3 goto loop` would never end. Now "name= works only at the command prompt", ERRORLEVEL 1, and `ENVPARA` comes from one file (`LCMDENV.INC`) for LCMD and CALC. (All three reviewers.)
+- **More fixes (2026-10-12):** 17 findings after merging; ten were fixed, and the nine bugs among them, below, each have a test. Eight of those tests were run against the code before and failed; the ninth, the API stamp, fails by construction (the old `mkrun.py` wrote 05 into every header):
+  1. **`name=` under a parent that isn't LCMD printed, set nothing and gave ERRORLEVEL 0,** so `:loop / calc i=i+1 / if not %i%==3 goto loop` would never end. Now "name= works only at the command prompt", ERRORLEVEL 1, and `ENVPARA` comes from one file (`LCMDENV.INC`) for LCMD and CALC.
   2. **`mkrun.py` stamped every `.RUN` with the current API,** so 0.4.4's SYSTEM.RUN would be "Not a program" on a floppy with an older LODE.SYS. Now `RUN_API` (above).
   3. **Misuse looked like success:** `CALC /X`, `CALC %UNSET%` and a bare `CALC` printed the usage to standard output with ERRORLEVEL 0. Now standard error and 1; `CALC /?` for the usage on purpose.
   4. **Sticky flags left on the coprocessor** after a good answer (only an error ran FNINIT). `calc_fmt` now ends with FNINIT. Mattered more than it looked: POST unmasks IRQ 13 on the 1520.
@@ -735,18 +735,18 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
   9. **Degrees gave chip-dependent answers:** π/180 was applied before reducing, so `/D cos(90)` printed 6.12323399573677E-17 in pcemu (a smaller but still non-zero number on a real 287XL) while the 80287's path could print 0. Now reduced by 45 in degrees on both.
   10. **Resident bytes:** `run_usage` jumps to `run_write.e`, and the lamp's width is worked out once, at start-up. 8 bytes of code, but the resident block was 6 bytes into its last paragraph, so DOS programs get 16 bytes back.
 
-  Settled without a change: **the start-up probe can't hang on an empty socket** (POST's own probe sets INT 11h's bit, above). Left as they are, by choice: delete the 287XL's code or the whole-number engine (both were asked for; the 80287's path is tested by `-DCALC_287`), gate API 5's changes on the header (resident bytes), compare the memory check with 0.4.3's LODE.SYS rather than fixed figures, `ans` and the leading operator in the one-shot CALC.COM, and a guard in `draw_ans` that can't fire.
+  Settled without a change: **the start-up probe can't hang on an empty socket** (POST's own probe sets INT 11h's bit, above). Left as they are, by choice: delete the 287XL's code or the whole-number engine (both are wanted; the 80287's path is tested by `-DCALC_287`), gate API 5's changes on the header (resident bytes), compare the memory check with 0.4.3's LODE.SYS rather than fixed figures, `ans` and the leading operator in the one-shot CALC.COM, and a guard in `draw_ans` that can't fire.
 - **Tests:**
   - `test_kernel.py` `t_calc` (114 checks):
     - sums, formatting and errors with ERRORLEVEL;
     - redirection;
     - `name=`, counting in a batch file, and `%%`;
-    - the review's environment cases (a 1 KB copy, a full block);
+    - the environment fixes (a 1 KB copy, a full block);
     - the 80287's code paths against Python;
     - FPREM never on an infinity;
     - a parent that isn't LCMD (`RUNCALC.COM`, which prints CALC's exit code);
     - whole numbers with INT 11h saying none;
-    - the persona review's: degrees on both paths, long names and values, `/?` and misuse, the coprocessor's status word after a sum, and a full disk.
+    - the 2026-10-12 fixes: degrees on both paths, long names and values, `/?` and misuse, the coprocessor's status word after a sum, and a full disk.
   - `test_apps.py` `t_calc` (33):
     - the lamp lit and absent, and System's Devices;
     - the window: keys, `+1` and `*10` after an answer, Up and F2 inside a sum, the keypad, Deg lit, help, errors;
@@ -769,7 +769,7 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
   - **Against 15-digit references, 15 of 16 to the last digit:** `2^0.5`, `sqrt(2)`, `1.5^2.5`, `exp(-0.7)` (0.49658530379141: pcemu's QEMU gives …409), `exp(1)`, `ln(10)`, `log(2)`, `sin(1)`, `cos(1)`, `tan(1)`, `atan(0.5)`, `atan(3)`, `1e300*1e300` (1E+600), `/D sin(30)`, `/D tan(60)`.
   - **`sin(1e6)`:** −0.349993502171308 against −0.349993502171293, 1.5e−14 out, inside the 1e−13 expected from reducing by the 80287's 64-bit π/4. pcemu's 80287 path is 5e−11 out (QEMU's FPREM through doubles).
   - **Errors:** `ln(0)` and `log(-1)` Not a number, `1/0` and `0^-0.5` Divide by zero, `sin(1e5000)` Too big (no hang), each with ERRORLEVEL 1.
-  - **The Executive (Joshua):** the lamp lit `80287`; System's Devices says 80287; the window's typed sums, `+1` after an answer, keypad clicks, F2 degrees, F1 help, and ESC back to the Executive as it was.
+  - **The Executive:** the lamp lit `80287`; System's Devices says 80287; the window's typed sums, `+1` after an answer, keypad clicks, F2 degrees, F1 help, and ESC back to the Executive as it was.
   - Still to see: no coprocessor (the chip out, or bit 1 of 0:410 cleared with DEBUG), and a 287XL.
 
 ## The 80287 found (0.4.5, 2026-10-13)
@@ -787,14 +787,14 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
     - step 1: the sums at the prompt, exact ones checked, the rest logged for comparison;
     - `CALCTEST W`: the Executive side.
 - **Version:** LODE_VER 0045h. `releases/0.4.5`: LODE.SYS, LODE.TXT, CALC.COM, CALC.RUN, SYSTEM.RUN, CALCTEST.BAT, FPUPROBE.COM.
-- **Fixed after 0.4.5 (found by a code audit, 2026-10-17; tested in emulation):**
+- **Fixed after 0.4.5 (2026-10-17; tested in emulation):**
   - **LODE.INI past 511 bytes:** `font_boot` read only the first 511 bytes, so once System's file grew past them its FONT=, SAVER= and TIDY= lines (written last) were lost at start-up. SPLASH= and MDISK= were already read past 1 KB (see `lodestone-splash.md`). It now reads 4095 bytes like them; the font file goes after them in the directory buffer. LODE.SYS is the same size and nothing more is resident. `t_saver_delay` checks all three after 960 bytes of other lines.
   - **SET with no room:** LCMD took the old NAME= out before looking for room for the new value, so "Out of environment space" left the variable gone. It now looks first, counting the old entry as freed, as CALC already did. `t_calc` checks both a replacement that only just fits and one that doesn't.
   - **COPY:** its 64 KB buffer is now whole sectors (65,024 bytes, not 65,520), so reads and writes after the first don't start part-way through a sector. A 300 KB COPY with the 1520's drive timing: 22.85 s → 21.26 s.
   - LCMD.COM is 10,970 bytes.
 
 ## Windows that move and close (UI API 6, after 0.6, 2026-10-19)
-Joshua's aim: Lodestone's own programs as GUI-style windows, the calculator first; and the first step towards multitasking, where several will be open at once.
+The aim: Lodestone's own programs as GUI-style windows, the calculator first; and the first step towards multitasking, where several will be open at once.
 - **API 6:**
   - A window gets a seventh word, `W_FLAGS` (so `W_SIZE` is 14). `WF_MOVE`: the user may move it. `WF_CLOSE`: a close box at the right end of its title strip.
   - The core reads `W_FLAGS` only from a `.RUN` that needs API 6 or newer (`win_flags`). An older `.RUN`'s windows are 12 bytes, so there is no such word: they never move. SYSTEM, WRITE and UITEST still declare API 4 and are unchanged.
@@ -874,8 +874,8 @@ Only with the switch on; the core with it off ignores all of this. The details a
   - `UI_EDIT` on "ab" and `UI_ASK`: the right click seen reaching them, and ignored;
   - nothing in the Executive, before or after an API 7 `.RUN`;
   - nothing in the API 6 build.
-  - Six mutations each fail a check: each gate taken out, the event built in AX, `win_mv` reading AX as x, `UI_EDIT` taking it as an editing key.
-  - The review panel (the core, the tests, the API) found the drag's roll case and `UI_EDIT`'s lost "typed first replaces". Both are fixed with a check each.
+  - The checks catch each gate taken out, the event built in AX, `win_mv` reading AX as x, and `UI_EDIT` taking it as an editing key.
+  - The drag's roll case and `UI_EDIT`'s lost "typed first replaces" are fixed, with a check each.
   - The hook that watches the Executive sits at `ui_event.got`, a jump target. A label reached by falling through, as `mouse_event.ev` is on the right button's path, is not hooked in pcemu, so a hook there would have seen nothing.
 
 ## Pop-up menus and drags (UI API 8, 2026-10-23)
@@ -915,8 +915,8 @@ The first of four steps toward right-click editing in Write: this one is the cor
   - `t_menu` in test_mt (5 checks):
     - in a window session: the cache borrowed, the screen as it was with no `redraw_all`;
     - CODE-F6 and a click on the Executive while it is open: the focus stays;
-    - a drag with two MTSPINs behind: switched to from `UI_MOUSE`'s wait (`..@ui_midle`), every switch at a safe point (the audit's rules know the new spot); held still, the UI only its turn; moving, each position seen within the tick (`mt_mwant`), and both MTSPINs taking turns between.
-  - Nineteen mutations each fail a check of one or the other: the three clamps (right, below, above), the column test and the row test of a click, a click on the edge taken as outside, no ESC, the light not where AH says, AH past the last item kept, no width clamp, no `NWIN` guard, no borrow of the cache, the cache not given back, `UI_MOUSE` not keeping the buttons (a right press during a drag became a menu after it), its CF not set with no mouse, `..@ui_midle` not a safe point, no `mt_mwant`, the buttons not noted by `mt_mdset`, and the round not going on after the task a boost took the turn from.
+    - a drag with two MTSPINs behind: switched to from `UI_MOUSE`'s wait (`..@ui_midle`), every switch at a safe point (the test's safe-point rules know the new spot); held still, the UI only its turn; moving, each position seen within the tick (`mt_mwant`), and both MTSPINs taking turns between.
+  - Between them the checks fail with any one of these taken out or broken: the three clamps (right, below, above), the column test and the row test of a click, a click on the edge taken as outside, no ESC, the light not where AH says, AH past the last item kept, no width clamp, no `NWIN` guard, no borrow of the cache, the cache not given back, `UI_MOUSE` not keeping the buttons (a right press during a drag became a menu after it), its CF not set with no mouse, `..@ui_midle` not a safe point, no `mt_mwant`, the buttons not noted by `mt_mdset`, and the round not going on after the task a boost took the turn from.
 
 ## The clipboard (UI_CLIP, UI API 8, 2026-10-23)
 The second of the four steps toward right-click editing in Write: a clipboard every `.RUN` shares. Write's Cut, Copy and Paste (step 4, below) use it, and any program after them.
@@ -942,7 +942,7 @@ The second of the four steps toward right-click editing in Write: a clipboard ev
     - no EMS: emptied first writes no file; `A:\CLIP.$$$` holds exactly what was put, got back whole, and after the program starts again; another put rewrites it;
     - EMS with every page M:'s (`MDISK=ALL`): the file.
   - `t_clip` in test_mt (1 check): put from a window session; the session ended; a task with an EMS page of its own (MTKILL F) started, parked, back and killed from LCMD, its page freed; the clipboard and its handle as they were.
-  - Eight mutations each fail a check: no 16 KB limit, the size not kept, a get not cut to what it holds, a new page at every put, no fall-back to the file, both copies in the same direction, the error not in AX, and emptying not done at once (it took a page, or wrote the file). Untested: the settings drive over the start-up one (a floppy start has both as A:), and a short write to the file (a full disk).
+  - The checks fail on each of: no 16 KB limit, the size not kept, a get not cut to what it holds, a new page at every put, no fall-back to the file, both copies in the same direction, the error not in AX, and emptying not done at once (it took a page, or wrote the file). Untested: the settings drive over the start-up one (a floppy start has both as A:), and a short write to the file (a full disk).
 
 ## Write with the mouse: drags and a menu (UI API 8, 2026-10-23)
 The third of the four steps toward right-click editing in Write. Write asks for UI API 8 now (`RUN_API`; an older LODE.SYS refuses it) and uses `UI_MOUSE` and `UI_MENU`. Its keys are as they were.
@@ -958,14 +958,14 @@ The third of the four steps toward right-click editing in Write. Write asks for 
   - After Find has shown what it found, a right click in the text (like a left one) is editing again.
   - Outside the text area (its window's frame, the rule, the status line, the band), and while pointing or making a selection for a command, a right click does nothing.
   - Cut, Copy and Paste came in step 4, at the top of this menu (below).
-- **With `MULTITASK=1`** the same in Write's window: the text area is the window's (`x0`, `y0`, `cols`, `rows`), and a drag lets the tasks behind run (`UI_MOUSE`'s wait, PR #85).
+- **With `MULTITASK=1`** the same in Write's window: the text area is the window's (`x0`, `y0`, `cols`, `rows`), and a drag lets the tasks behind run (`UI_MOUSE`'s wait).
 - **Help:** two lines say it (the help window stays at 15 lines, so step 4's three fit in its 18): "Command, select, confirm (Return); or drag first" and "Ins: overtype.  Right click: menu.  Any key closes".
 - **Cost:** WRITE.RUN is 9,526 bytes (8,679 before; the core is unchanged). ROM 1 has 512 bytes left (1,536 before).
 - **Tests:**
   - `t_write_mouse` in test_apps (23 checks): WRITE.RUN's header asks for API 8; a drag over a word (a selection of its own, the band); CODE-E erases it; a drag, CODE-M, a click, Return moves it; Backspace erases one; a character after a drag is typed, nothing erased; a click ends one; a drag back to where it began makes none; CODE-E first, then a drag, Return; the cursor keys extend one, Return beeps, ESC ends it (still in Write); CODE-B empties one, then CODE-E beeps and it stays a drag's; Delete erases one; CODE-D, a drag to point, Return duplicates it; no menu while making a selection for a command; a right click: the menu with its items, the cursor there, Find's form from it; a drag kept for the menu's Erase, and its Move by its letter; no menu while pointing, on the status line; ESC; after Find, a right click is editing; Jump from the menu ends a drag's selection; a drag held below the text area scrolls the view, the cursor on its last row (a 60-line file), and one held above it scrolls back.
   - `t_write` in test_mt (1 check more): in Write's window, moved, a drag selects (0 to 6), a right click gives its menu, Erase erases; a right click with none puts the cursor where it was in the window's text area.
   - `t_calc` in test_apps: SYSTEM.RUN and UITEST.RUN still declare API 4, WRITE.RUN 8.
-  - Nineteen mutations each fail a check: no drag (the button's state not followed), no anchor where the button went down, no command cleared for a drag's own selection, a click not ending one, a drag back to its start leaving an empty one, no scroll below the text area, no keys of its own for a drag's selection, Backspace not erasing it, the selection not kept for a right click, a menu while pointing, a menu outside the text area, the menu's Erase not on the selection, Jump from the menu not ending it, a right click not ending Found, the cursor not moved to a right click, an emptied selection taking the command, Delete not erasing one, Return not beeping (it ended one), ESC leaving Write. Untested: a drag left of a window's text area while it is scrolled sideways (the whole screen has no room left of its text; with no sideways scroll, a column to the left is column 0 either way).
+  - The checks fail on each of: no drag (the button's state not followed), no anchor where the button went down, no command cleared for a drag's own selection, a click not ending one, a drag back to its start leaving an empty one, no scroll below the text area, no keys of its own for a drag's selection, Backspace not erasing it, the selection not kept for a right click, a menu while pointing, a menu outside the text area, the menu's Erase not on the selection, Jump from the menu not ending it, a right click not ending Found, the cursor not moved to a right click, an emptied selection taking the command, Delete not erasing one, Return not beeping (it ended one), ESC leaving Write. Untested: a drag left of a window's text area while it is scrolled sideways (the whole screen has no room left of its text; with no sideways scroll, a column to the left is column 0 either way).
 
 ## Write's Cut, Copy and Paste (the clipboard, 2026-10-23)
 The last of the four steps toward right-click editing in Write: Cut, Copy and Paste through the clipboard every `.RUN` shares (`UI_CLIP`).
@@ -982,7 +982,7 @@ The last of the four steps toward right-click editing in Write: Cut, Copy and Pa
 - **Tests:**
   - `t_write_clip` in test_apps (11 checks): with the clipboard empty and nothing selected, no Cut, Copy or Paste in the menu, and CODE-C, CODE-Z, CODE-V do nothing (the text not even marked changed); a drag from right to left (the selection past the cursor), CODE-C: in the clipboard (CLIP.$$$ here, no EMS), still selected; CODE-V after a click; CODE-Z; CODE-V over a drag's selection; the menu's Paste with nothing selected, and Cut, Copy and Paste with a selection (Cut chosen); the menu's Copy (still selected) and its Paste over a selection; a whole line copied and pasted at the end (a line more); saved, quit, and Write again pastes it; 19,500 bytes refused by Copy and by Cut (the clipboard keeps the 3 it held, nothing erased), then 194 copied; text typed at the start, then copied from right to left (after the gap); an emptied selection copied: a beep, the clipboard as it was; a paste of 5 bytes over the 2 at the start (the room counted from the gap, not from where the selection ends). The band's second line and the help's 18 lines (in `t_write`) are checked too.
   - `t_write` in test_mt: what the first Write's window copied, CODE-V in a second Write's, saved in its file; two Writes and the calculator side by side as before.
-  - Fourteen mutations each fail a check: Cut not erasing, a refused Cut erasing all the same, the menu's Copy cutting, the room for a paste over a selection reckoned from its end, an empty selection copied (the clipboard emptied), error 8 not said as such, Paste not over the selection, its lines not counted, Cut and Copy in the menu with nothing selected, Paste in it with nothing to paste, an empty clipboard pasted (the text marked changed), MT applying the fixups from where they no longer are (`kmwsi`: every window .RUN broken) or the slot sized by the fixups alone (`kmwslot`: TASKS.RUN then fits beside two Writes and the calculator), and the file written from the wrong segment. One is equivalent: the copy of a selection past the cursor read from before the gap. The gap only gets there by moving back over that text, which leaves an exact copy of it, and any edit ends the selection first.
+  - The checks fail on each of: Cut not erasing, a refused Cut erasing all the same, the menu's Copy cutting, the room for a paste over a selection reckoned from its end, an empty selection copied (the clipboard emptied), error 8 not said as such, Paste not over the selection, its lines not counted, Cut and Copy in the menu with nothing selected, Paste in it with nothing to paste, an empty clipboard pasted (the text marked changed), MT applying the fixups from where they no longer are (`kmwsi`: every window .RUN broken) or the slot sized by the fixups alone (`kmwslot`: TASKS.RUN then fits beside two Writes and the calculator), and the file written from the wrong segment. Reading the copy of a selection past the cursor from before the gap makes no difference: the gap only gets there by moving back over that text, which leaves an exact copy of it, and any edit ends the selection first.
   - Untested: Paste with no room in the text (a 64 KB buffer).
 
 ## Shorter help (2026-10-23)
@@ -1017,10 +1017,10 @@ The Executive's bottom line now reads, for example, `80286 80287XL  581K + 1120K
   - t_calc: ports FFh, F5h and FEh show `LCD 640x400`, `External` and `Panel`, on the line and in System's Devices, and 384 KB of extended memory (pcemu's `ext_kb`) shows as `+ 384K ext`;
   - t_memory: after a 16 KB TSR (TSR.ASM with -DKEEP=400h) the line drops from 565K to 524K, as System's 524.3 KB does. The UI block moves past the TSR and leaves a hole, so the largest run loses more than 16 KB.
   - t_calc_move: a window dragged without a save-under leaves the line as it was. The Executive redraws under a loaded .RUN, so conv_free shows its last figure from a draw with no .RUN loaded. Before this fix the line dropped to 553K and stayed that way after the window closed.
-  - Two mutants were each caught: dropping the lend correction (558K against MEMSZ's 565.5) and halving the EMS figure.
+  - The checks fail with the lend correction dropped (558K against MEMSZ's 565.5) or the EMS figure halved.
 
 ## The Executive's right-click menu (2026-11-04)
-A right click in the Executive's list selects the row under it, then opens a menu (`UI_MENU`, at the click) of what applies to that row. Each item is one of the Executive's keys, run as if typed (`ui_dispatch` on `ex_keys`). The menu is there with multitasking on and off. It is the plan's second step; the first made gridfox follow a window's rows (PR #154), and the third adds the modes a program lists for itself, CLAUDE.COM's Web browser among them.
+A right click in the Executive's list selects the row under it, then opens a menu (`UI_MENU`, at the click) of what applies to that row. Each item is one of the Executive's keys, run as if typed (`ui_dispatch` on `ex_keys`). The menu is there with multitasking on and off. The modes a program lists for itself, CLAUDE.COM's Web browser among them, are in the next section.
 
 - **What it offers:**
 
@@ -1050,7 +1050,7 @@ A right click in the Executive's list selects the row under it, then opens a men
   - `mw_got` routes a right click as a left one. On another window, or on the Executive, it brings that one to the front and is taken, with no menu. On the one in front it is that one's. So two right clicks open the Executive's menu from a window in front.
   - `ex_rclk` is kept per window session, as `ex_mtw` is (KMW's `mw_ctx`, now 2 bytes there, and its length assert counts both). A new session starts with it 0.
 - **Cost** (multitasking off):
-  - The UI block grows by 580 bytes (`ui_keep_end` 64D0h to 6714h), so DOS programs get 0.6 / 0.5 KB less: MEMSZ 564.9 KB without EMS, 581.0 KB with it. That is the resident cost Joshua accepted for a menu with multitasking off.
+  - The UI block grows by 580 bytes (`ui_keep_end` 64D0h to 6714h), so DOS programs get 0.6 / 0.5 KB less: MEMSZ 564.9 KB without EMS, 581.0 KB with it. That is the resident cost of a menu with multitasking off.
   - With multitasking on, MEMSZ is 556.8 KB (557.5 before).
   - LODE.SYS is 50,176 bytes, exactly 98 sectors (49,648 before). ROM 1 has 1,024 bytes (2 sectors) left (1,536 before).
   - LODEMT.SYS is 21,736 bytes (21,679 before), still 43 sectors.
@@ -1081,17 +1081,17 @@ A right click in the Executive's list selects the row under it, then opens a men
   - the choices of a menu longer than the screen (13 items at most, 7 at once).
   - `mw_rcno` at `.own` (the filter ahead of `mw_topses`): reaching it needs an Executive wait that isn't its list's, with a session window open on top. The Executive's forms, help and messages are windows on top, so this is defensive; the Rename-form check runs with no windows (`.win0`).
   - KMW's `mw_say` (an older path: a message from the Executive's wait, as when a window doesn't fit) leaves bit 0 of `ex_rclk` on, so `ui_msg`'s wait can see a right click. It ends on any event and the result is thrown away, so this is harmless.
-- **The review** (3 reviewers, then a re-review of the fixes) found:
+- **Fixes:**
   - **`UI_POLL` gave an API 6 `.RUN` right clicks under multitasking.** The core made the event for everyone whenever multitasking was on, and only `mw_got` filtered it, but `UI_POLL` doesn't go through `mw_got`. Now only `mw_poll`'s look makes it for everyone (bit 1). Reproduced with RCP6.RUN, now a test.
   - **The menu's Calculator and Tasks started a second window** under multitasking, where CODE-K and CODE-T typed bring the open one to the front. The key went straight to `ui_dispatch`, past KMW. Now it is put in the BIOS's buffer and read as typed.
   - **A filter bypass:** with the Executive in front and a window on top, `mw_topses` returned events before the filter. The filter is now first (`mw_rcno`, at `.own` and with no windows).
   - **Smaller fixes:** `mw_ctx`'s length assert counted 1 byte for the `ex_mtw` range, which is 2 now; a subject whose CHDIR fails gave a menu for the subject before it; and `rm_buf` was sized for the 7 that apply at once now, with no check.
-  - **Test gaps:** the items' order; Copy and Move never chosen; a file that isn't a program under multitasking; a right click in a form under multitasking. Each now has a check.
+  - **Checks added:** the items' order; Copy and Move chosen; a file that isn't a program under multitasking; a right click in a form under multitasking.
   - **Bytes:** `RX_MT` as `ex_mtw`'s own bit and one word add for `ex_mtw` and `ex_rclk` in `ex_loop` saved 10 bytes, which the fixes used.
-  - **Mutations:** 25 one-change mutations of the menu and the routing, each built and run against both `t_exmenu`s. All are caught except one: skipping the CHDIR message's check (untested above). The first run let one through, `mw_poll` leaving bit 1 set: the RCP6 check read its events at RCTEST's offsets, so it could never fail. It now reads RCP6's own, and has a left click that must arrive.
+  - **The RCP6 check** read its events at RCTEST's offsets, so it could never fail (`mw_poll` leaving bit 1 set got through). It now reads RCP6's own, and has a left click that must arrive.
 
 ## A program's modes on the right-click menu (2026-11-04)
-A program can name its own modes, which the Executive's right-click menu then offers after Open (and Open full screen). CLAUDE.COM 1.17 names five: Claude Code (`/T`), Web browser (`/W`), Chat (`/C`), Load resident (`/R`) and Unload resident (`/U`). With multitasking on, Web browser starts `CLAUDE /W` as a task in a terminal window: gridfox, sized to the window (gridfox following the window's rows, PR #154).
+A program can name its own modes, which the Executive's right-click menu then offers after Open (and Open full screen). CLAUDE.COM 1.17 names five: Claude Code (`/T`), Web browser (`/W`), Chat (`/C`), Load resident (`/R`) and Unload resident (`/U`). With multitasking on, Web browser starts `CLAUDE /W` as a task in a terminal window: gridfox, sized to the window.
 - **The mode block** is in the program file, so a program names its own modes and nothing needs listing in LODE.INI:
   - A `.COM` that has one starts with a jump (`EB xx` or `E9 xx xx`), then `'LMOD'`, then up to six entries, then a 0.
   - Each entry is `db flags, 'Label', 0, 'arguments', 0`. The label is shown as the Executive's own are: CLAUDE's are the text, HT, 21, the switch, so the switch shows in the key column. It is only a label there: no key types it. An HT must be followed by its column byte (one last in a label would take the label's 0 for it and show the arguments too; nothing is written out of bounds).
@@ -1120,11 +1120,10 @@ A program can name its own modes, which the Executive's right-click menu then of
     - The menu with Open full screen. Plain is a task with its tail; Open after it a task with none; Plain with Shift full screen in the Executive's task (its own `exec_raw`) with the tail.
     - Pause and Full run in the Executive's task; Pause waits for a key. Open full screen then has no tail (`msgbuf` holds the block). Return afterwards: a task with no tail.
     - CLAUDE.COM's Web browser: CLAUDE a task, the Executive in front, its PSP's tail " /W".
-- **Mutations:** 23 one-change mutations, each built and run against both suites' `t_modes` and `t_exmenu`. All are caught; two only after a check was added (`run_pause` 0 after Pause, Open full screen's empty tail).
-- **Untested:** an `.EXE` (its `MZ` isn't a jump, so no block is found); a read error on the file (no modes then); the Pi's side of the Web browser from the menu (no Pi in test_mt; CLAUDE /W windowed is #154's).
+- **Untested:** an `.EXE` (its `MZ` isn't a jump, so no block is found); a read error on the file (no modes then); the Pi's side of the Web browser from the menu (no Pi in test_mt).
 
-## Review and tests
-- **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
+## Fixes and tests
+- **Fixes:** 14 issues in the new code; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
   - **Backward Substitute** re-matching its own replacement text.
   - **Write's cursor** drawn on the wrong row after a full redraw.
@@ -1132,7 +1131,7 @@ A program can name its own modes, which the Executive's right-click menu then of
   - **Register-contract slips:** `UI_SBU16`'s AX, `UI_EVENT` / `UI_EDIT` / `UI_LVCLICK` registers.
   - **Window and saver details:** the redraw routine not cleared before a `.RUN`, a form outline left behind after the saver, System's band after the saver, a fifth window unbalancing closes, and a message's Return swallowed after the saver.
   - **Smaller ones:** keypad arrows with NumLock, `UI_RUN` with a `.RUN` path, date numbers over 255, and saving to `X.$$$`.
-- **A second review (2026-10-06):** a panel of six reviewers (Fable), one per area, hunting classic bugs. About 40 findings, almost all confirmed in the emulator. Fixed, with tests for the serious ones:
+- **More fixes (2026-10-06):** about 40 findings, almost all confirmed as bugs in the emulator. Fixed, with tests for the serious ones:
   - **A click above an open form hung the machine:** a borrow went unchecked before a `DIV`, which faulted. Every form was affected (Write's Find/Substitute/Jump/Save, System's clock).
   - **Write's PgDn, PgUp and Jump didn't redraw the text:** `update` compared the view with itself. It now compares with the view last drawn.
   - **A damaged `.RUN` could wreck the core:** the fixup counts and offsets weren't checked, so a bad header rewrote the jump table or crashed. Now it's "Not a program".
@@ -1170,7 +1169,7 @@ A program can name its own modes, which the Executive's right-click menu then of
   - **CODE-?, CODE-Return, CODE-ESC** in the Executive, a form, System and Write, as the 1520's BIOS delivers them (below).
   - **Write:** every command; the saved bytes; Cancel; a new file; a 41 KB file round trip; a write-protected disk; Include; a mouse click; backward Substitute.
   - **Memory:** MEMSZ before and after; a TSR after the UI block; the screen saver inside Write.
-  - **The review's cases:**
+  - **The fixes' cases:**
     - a click above a form;
     - a field kept after PgDn;
     - `UI_RUN` on a `.RUN`;
@@ -1212,7 +1211,7 @@ A program can name its own modes, which the Executive's right-click menu then of
 - **The shell:** LCMD's version strings say 0.3.
 
 ## For the 1520
-- **Copy to the floppy:** `LODE.SYS` (30,292 bytes, with the CODE-? fix, GRiD's font, the review's fixes and the font switch), `LCMD.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `LODE.TXT`, `DEFRAG.COM` and `TERMINUS.FNT`. All are in `releases/0.3`. Copy each on its own and read it back, as usual.
+- **Copy to the floppy:** `LODE.SYS` (30,292 bytes, with the CODE-? fix, GRiD's font, the fixes above and the font switch), `LCMD.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `LODE.TXT`, `DEFRAG.COM` and `TERMINUS.FNT`. All are in `releases/0.3`. Copy each on its own and read it back, as usual.
 - **Check:**
   - CODE-U (System), each topic, and setting the clock;
   - CODE-W (Write): type, Quit, name it;

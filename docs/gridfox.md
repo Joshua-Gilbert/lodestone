@@ -1,4 +1,4 @@
-# gridfox: Firefox on the GRiD (W1, 2026-10-16)
+# gridfox: Firefox on the GRiD (2026-10-16)
 
 `CLAUDE /W` makes the GRiD 1520 the screen and keyboard of a real Firefox on
 the Raspberry Pi. Firefox does all the work (JavaScript, sign-ins, modern
@@ -14,12 +14,12 @@ CLAUDE /W  ── KEYS ──────────────▶ (device, 7)
  rows 0-23 ◀── CELLS (changed cells) ◀────────────────    pyte screen, cell diff (Term's, unchanged)
 ```
 
-## Decisions (Joshua, 2026-10-16)
+## Design decisions
 - **Firefox on the Pi** does the browsing; the GRiD is its terminal.
-- **Text view first, picture view later.** The text view reuses Term's cell
-  path whole. A dithered 640x400 picture of the page is milestone W2.
-- **Claude Code shares the browser later** (W3), as a tool, after the
-  browser itself works.
+- **Text view first, picture view second.** The text view reuses Term's cell
+  path whole. The picture view (below) shows a dithered picture of the page.
+- **Claude Code sharing the browser** as a tool comes after the browser
+  itself works (Next, below).
 
 ## How it works
 
@@ -113,7 +113,7 @@ address with a `#fragment`. A page that changes its own address
 summary, as `[+] …`; Return on it opens it.
 
 ## The mouse (2026-10-17)
-Joshua asked for the mouse the OS already supports in this mode. It uses
+gridfox takes the mouse the OS already supports in this mode. It uses
 the kernel's own INT 33h (`src/MOUSE33.INC`, the serial mouse) as it stands.
 
 - **On the GRiD (CLAUDE.COM; under `/W` only at first, all of Term since the pictures):**
@@ -149,8 +149,7 @@ the kernel's own INT 33h (`src/MOUSE33.INC`, the serial mouse) as it stands.
 - Left only: Backspace already goes back. A serial Microsoft mouse has no
   wheel.
 
-## The picture view (W2, 2026-10-17)
-Joshua asked for "video dithering mode for the full browsing experience".
+## The picture view (2026-10-17)
 V shows the page as Firefox draws it; Esc goes back to the text. The text
 view stays the default: it is the fast one.
 
@@ -264,8 +263,8 @@ workspace.
 ## In a Lodestone window (2026-11-04)
 
 Under Lodestone's multitasking, `CLAUDE /W` runs in a terminal window as
-Claude Code does (T5d): `CLAUDE.COM` publishes its screen, and TERM.RUN
-draws it. Since T5e the window tells the Pi how many rows it shows (19 at
+Claude Code does: `CLAUDE.COM` publishes its screen, and TERM.RUN
+draws it. Since CLAUDE 1.16 the window tells the Pi how many rows it shows (19 at
 the usual size, 4 to 24). gridlink then makes the pty that tall
 (`Term.set_rows`, for gridfox as for Claude Code), and the program gets
 SIGWINCH. Until now gridfox kept its 24-row layout, so the window showed
@@ -283,11 +282,12 @@ the middle of the page, with the address and the status line out of view.
   `signal.set_wakeup_fd`, so a resize is drawn within a frame, not at
   the loop's next half-second look.
 - **The picture view** is unchanged: a picture takes the whole screen
-  (CLAUDE goes full screen for it, T5d), 640x384 as before.
+  (CLAUDE goes full screen for it), 640x384 as before.
 - **On the GRiD** nothing changes: `CLAUDE.COM` 1.16 already sends the
-  window's rows. Today `CLAUDE /W` is started at a windowed prompt
-  (CODE-P). The Executive's right-click menu will offer it next (Next,
-  below).
+  window's rows. `CLAUDE /W` is started at a windowed prompt (CODE-P), or
+  from the Executive's right-click menu on CLAUDE.COM: Web browser (CLAUDE
+  1.17, `lodestone-0.3-apps.md`), which starts it as a task in a terminal
+  window.
 
 Tests:
 - `test_gridfox.py` `test_app_rows`: at 19 rows the status line is in
@@ -322,30 +322,23 @@ Tests:
   Return and PgDn work. Full screen for good gives 24 rows, with the status
   line in row 23. Against the gridfox before this change the same test
   fails: the window's row 0 is the page, not the address.
-- Mutations: 27 of 30 fail a check. Each place that uses the page's rows
-  was made to use 22 instead, one at a time. So were the clamps at small
-  sizes, the first read of the rows, the SIGWINCH handler and the wakeup
-  fd.
 - Untested:
   - The size of the choices and their PgUp/PgDn at 19 rows. They differ
     only for a list of more than 15 choices, and no test page has one.
   - `resize`'s full redraw against a plain one. These are equivalent:
     every row is drawn again anyway, because `shown` is reset.
-- The review (3 reviewers) found that Shift-Tab and Find upwards put two
-  rows above their line, which hid it at 4 rows. That is fixed now: at
-  most the page's rows less one go above it. It also found that:
+- Fixed along the way:
+  - Shift-Tab and Find upwards put two rows above their line, which hid
+    it at 4 rows. Now at most the page's rows less one go above it;
   - a resize just before the SIGWINCH handler was installed could be
     lost; the handler and wakeup fd now go in first, then the size is
     read;
   - F's numbers kept the old screen's links after a resize. They are now
-    made again for the new screen, and with no link left on it they go
-    (the re-review found that case);
+    made again for the new screen, and with no link left on it they go;
   - at 3 rows, a click on the status line chose the choice cut off above
     it;
   - the wakeup fd and the SIGWINCH handler were not given back as they
     were found.
-
-  Each of these is fixed.
 
 ## Measured (emulator and GridSim, stand-in Firefox)
 
@@ -359,7 +352,7 @@ Tests:
 | Its next screen (PgDn) / three rows down | 1,914 / 675 |
 | A page that changes by itself, in GridSim (a fast link) | 11 whole frames in 3 s, against 2 at the idle pace |
 
-The ranges are runs here and on Joshua's machine. The page's own weight
+The ranges are runs on two development PCs. The page's own weight
 never crosses GPIB, only the cells that change. How
 long Firefox takes on the Pi 5 for a real site is not measured yet.
 
@@ -374,12 +367,12 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
     a script answers, a list, a check box;
   - a page filled in late by script;
   - end to end through gridlink and GridSim, with the byte counts;
-  - the review's findings (below): the session's shape, real clicks and the
+  - the fixes (below): the session's shape, real clicks and the
     fallback, a hostile page, a form not sent early, a slow page, Back from
     help, an error kept, Esc timing, no busy loop while typing, a lost
-    Firefox, gridfox's own folder and no API key;
-  - Joshua's review (below): `#fragment` links and addresses, `pushState`,
-    `<label>`s, `<details>`, Firefox's clean quit, Term's exit line.
+    Firefox, gridfox's own folder and no API key; `#fragment` links and
+    addresses, `pushState`, `<label>`s, `<details>`, Firefox's clean quit,
+    Term's exit line.
 - `tests/fake_firefox.py` is the stand-in: a Marionette server whose pages
   are jsdom (`fake_firefox_dom.js`), served from `tests/web/`. It needs Node,
   and `npm ci` in `tests/` (jsdom pinned, `package-lock.json` kept). Without
@@ -424,11 +417,10 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
   | `test_resident_term` | 77 |
   | `test_claude_kernel` | 21 |
 
-## Review (2026-10-17)
+## Fixes (2026-10-17)
 
-An independent review read the change against Firefox's own Marionette
-source. Everything it found is fixed and tested where the stand-in can show
-it:
+Checked against Firefox's own Marionette source. Each of these is fixed and
+tested where the stand-in can show it:
 
 - **The session settings were in the wrong shape.** Marionette takes the
   capabilities as the parameters themselves. In geckodriver's
@@ -480,13 +472,10 @@ it:
   - Back from help returns to the page without touching Firefox's history;
   - an error opening a page stays on the status line.
 
-## Joshua's review (2026-10-17, on the PR)
-
-"Approve with changes." He ran the suites under WSL and read Firefox ESR
-128's Marionette source. That confirmed the flat capabilities (the BiDi
-path, `--remote-debugging-port`, is the one that takes the wrapped shape,
-and gridfox never uses it) and that the named sandbox is kept between calls.
-All of his findings are fixed:
+Firefox ESR 128's Marionette source confirms the flat capabilities (the
+BiDi path, `--remote-debugging-port`, is the one that takes the wrapped
+shape, and gridfox never uses it) and that the named sandbox is kept
+between calls. Also fixed:
 
 1. **`#section` links threw the reader to the top.** Any change of address
    counted as a new page, and a page changing its own hash or query
@@ -513,12 +502,10 @@ All of his findings are fixed:
    (it lost Firefox) (code 3)" rather than "python3 exited".
 7. **The tests were slow.** About 6.5 s each, from a node and jsdom per
    test; now one stand-in per run, and the suite takes about 15 s.
-8. **Nits.** The test counts are corrected, and PROTOCOL.md's HELLO lists
-   `app=web`.
-
-Also from the review: a closed `<details>` showed its contents (Firefox
-hides them without `display: none`, inside a shadow tree a script can't
-walk). Now only its summary shows, and Return opens it.
+8. **PROTOCOL.md's HELLO lists `app=web`.**
+9. **A closed `<details>` showed its contents** (Firefox hides them without
+   `display: none`, inside a shadow tree a script can't walk). Now only its
+   summary shows, and Return opens it.
 
 ## Not yet tried
 - **A real Firefox.** Firefox could not be downloaded in the build
@@ -553,7 +540,7 @@ walk). Now only its summary shows, and Return opens it.
     waits up to 20 s.
 
 ## Setting up (Pi 5)
-1. Get `claude-link/` from this branch onto the Pi and run `bash install.sh`
+1. Get `claude-link/` from this repository onto the Pi and run `bash install.sh`
    there.
    - It copies `gridlink/` and `gridfox/` to `~/gridlink`, adds `wcwidth`
      to the venv, and installs Firefox if it is missing.
@@ -573,19 +560,7 @@ default command used the system Python, which has no `wcwidth`. Both are
 fixed.
 
 ## Next
-- **W2, the picture view.** A key flips to a picture of the same page:
-  1. Firefox's screenshot (`WebDriver:TakeScreenshot`), dithered to the
-     1520's 640x400.
-  2. Only changed tiles are sent, run-length coded, in one new GLP frame
-     kind.
-  3. A bitmap blitter in CLAUDE.COM, about 1 KB.
-  4. The mouse for clicks is in already (text view, 2026-10-17); the
-     picture view would use the same EVENT, in pixels.
-- **W3, Claude Code shares the browser.** Marionette takes one session at a
+- **Claude Code shares the browser.** Marionette takes one session at a
   time, so gridfox would keep it and offer a small local socket. A
   `grid_browser` MCP tool would then look at and act on the page you have
   open.
-- An entry in the Executive for `CLAUDE /W`, as CODE-A is for Claude: the
-  Executive's right-click menu (planned 2026-11-04). Programs list their own
-  modes there, CLAUDE.COM's Web browser among them, and it starts in a
-  window under multitasking (the window part is above).

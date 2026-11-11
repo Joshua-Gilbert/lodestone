@@ -2,8 +2,8 @@
 
 `CLAUDE /T` makes the GRiD 1520 the screen and keyboard of the real Claude
 Code, running on a Raspberry Pi 5 on the GPIB bus, on your own Claude
-plan. Phase 1 of two; Phase 2 (Claude resident over DOS programs) is at the
-end.
+plan. This is Phase 1; Phase 2, Claude resident over DOS programs, is in
+`lodestone-resident-claude.md`, with its first sketch at the end of this file.
 
 ## Why a terminal
 
@@ -118,12 +118,10 @@ GRiD's own drawing does.
   575.7.
 - Nothing on the GRiD stays resident.
 
-## Review
+## Fixes
 
-An independent review agent read the whole change. It found nothing unsafe
-in the GRiD's CELLS path (every operation bounded by the screen and the
-payload; no 386 instructions or long conditional jumps), and these, all
-fixed and tested:
+The GRiD's CELLS path bounds every operation by the screen and the payload,
+and uses no 386 instructions or long conditional jumps. Fixed and tested:
 
 - **Switching between chat and Term** left the other app talking: a chat
   turn still running could draw chat text over Term's screen (and its
@@ -165,9 +163,8 @@ fixed and tested:
 
 ## Tool server limits
 
-A second review, of the MCP tools alone, found four ways around Claude
-Code's own permission checks, all fixed (with an advisor's review of the
-fixes, which added the last four items):
+The MCP tools had ways around Claude Code's own permission checks, all
+fixed:
 
 - **Pi files without a prompt.** The copies could read or write any file on
   the Pi: a GRiD file over `~/.claude/settings.json` or `.bashrc`, or
@@ -204,18 +201,18 @@ fixes, which added the last four items):
   takes 4,700 per request), and all its waits shorter than the timeout. The
   stdio server exited on params that weren't an object, on bytes that
   weren't UTF-8, and on deeply nested JSON; now each gets a JSON-RPC error.
-- **DOS device names** (the advisor): `read A:\AUX` opened the serial port
+- **DOS device names:** `read A:\AUX` opened the serial port
   on the GRiD and waited for good. `CON`, `AUX`, `PRN`, `NUL`, `COM1-4`,
   `LPT1-3`, `CLOCK$` are refused in any directory with any extension, in
   the tools and in `Grid.read`/`write` (so for the chat too).
-- **`python -m` imported from `~/grid`** (the advisor): `-m` puts the
+- **`python -m` imported from `~/grid`:** `-m` puts the
   working directory first on `sys.path`, and Claude Code may write files
   there, so a `json.py` in `~/grid` would have run as you before any
   prompt. `.mcp.json` now starts Python isolated (`-I`).
-- **"Not connected" while busy** (the advisor): a RUN keeps the GRiD from
+- **"Not connected" while busy:** a RUN keeps the GRiD from
   polling, so a second call was told to start CLAUDE /T. It now waits its
   turn and asks after.
-- **Command line and timeout** (the advisor): CLAUDE builds ` /C `,
+- **Command line and timeout:** CLAUDE builds ` /C `,
   the command, ` >` and the output file into DOS's 125 characters, so a
   command is at most 100 (status F3h now reads "command line too long"). The
   GRiD never stops a program; the timeout is only how long the Pi waits, at
@@ -224,7 +221,7 @@ fixes, which added the last four items):
 Left as it is: the check between resolving a path and opening it can be
 raced only by a program running as you, which could read the files itself.
 
-**Follow-ups after the merge** (from the second review):
+**Later fixes:**
 - A device name with a colon got past the check: `A:\AUX:` and `A:\X\COM1:`
   (the colon was taken for a drive's, leaving an empty name), and Lodestone's
   own `EMMXXXX0` wasn't on the list. Both are refused now.
@@ -246,7 +243,7 @@ raced only by a program running as you, which could read the files itself.
   answer, a diff, a permission dialog, Shift-Tab, CODE-Return, Ctrl-C, the
   alternate screen, CODE-R, damaged frames both ways on stock firmware,
   `claude` exiting and starting again, a link restart, the router, the echo
-  time; the review's cases (answers in order, colon SGR, no API key for
+  time; the fixes' cases (answers in order, colon SGR, no API key for
   Claude Code, a lone Esc, the chat stopped and gated when Term takes over).
 - `test_emu_term.py` (8): the real CLAUDE.COM /T in the emulator, its
   shadow and every pixel of rows 0-23 checked against pyte: typing, scroll,
@@ -294,9 +291,9 @@ follows Claude Code's cursor (hidden, as it is), with the status band
 under it in view once the conversation reaches the foot. The chat (`/C`)
 stays full screen, and a second CODE-A says Claude is running already.
 The window's close box asks first ("Close: Confirm to end CLAUDE.COM"),
-then ends CLAUDE.COM, as KILL does (M9c).
+then ends CLAUDE.COM, as KILL does.
 Design, limits and the link's figures are in
-`lodestone-multitasking.md`, T5d.
+`lodestone-multitasking.md`.
 
 ## The screen saver (CLAUDE 1.14, 2026-10-27)
 
@@ -335,9 +332,9 @@ another GPIB device holds SRQ (a ring would make no edge). If gridlink
 restarts while the saver is up, it can't ring the GRiD it hasn't met
 yet: a key ends the saver, and Term goes on as after any restart.
 
-## Phase 2: resident Claude (the original sketch)
+## Phase 2: the first sketch of resident Claude
 
-Being built: the plan, its spikes, M1 (`CLAUDE /R` and `/U`, 0.8 KB resident) and M2 (this Term, in the pop-up: the same session, its code in EMS) are in `lodestone-resident-claude.md`.
+What was built (`CLAUDE /R`) is described in `lodestone-resident-claude.md`.
 
 A hot key, CODE-\\ (in the BIOS's set that AH=00h programs never see), pops
 Claude Code up over a running DOS program; Claude sees that program's
@@ -345,8 +342,8 @@ screen and types into it; the program carries on. All intelligence stays
 on the Pi; the GRiD needs only a screen-and-keys console and RUN's key hook.
 
 - **About 1.1 KB conventional** (a TSR, `CLAUDE /R`): RUN's INT 16h hook
-  (205 bytes today) extended to catch the hot key with AH=11h, pop-up and
-  pop-down, the EMS page registers saved and restored around everything, a
+  (205 bytes at the time) extended to catch the hot key with AH=11h, pop-up
+  and pop-down, the EMS page registers saved and restored around everything, a
   key-script buffer and a stack. **3 EMS pages:** one for TERMLINK, TERMCELL,
   TERMKEYS, the font and the link buffers (why they are written CS-relative,
   without DOS calls); two for the program's 32 KB screen, moved by INT 67h
@@ -363,7 +360,7 @@ on the Pi; the GRiD needs only a screen-and-keys console and RUN's key hook.
   from INT 08h (the GPIB driver's timeouts count the BIOS tick; INT 60h is
   not re-entrant). INT 60h busy (AX=6) means later, not a failure. No
   INT 60h AH=0Bh from the resident: it would clear TM5000G's SRQ latch.
-- **Spikes first:** a 300-byte TSR running code from the EMS frame over a
+- **Spikes:** a 300-byte TSR running code from the EMS frame over a
   program that uses EMS (pcemu, then the 1520); a pop-up over TM5000G with
   the 7210 model while it polls an instrument; video memory and 40:49-66h
   byte-compared before and after a pop-up over a graphics program, and

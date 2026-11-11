@@ -246,7 +246,7 @@ The API key (chat only) comes from the Claude Console
 session's running total. Term needs no key (see above).
 
 CLAUDE 1.15 and resident Claude's console 1.13 need gridlink from
-2026-10-22 (8db568c) on: they check frames only with the Fletcher sum.
+2026-10-22 on: they check frames only with the Fletcher sum.
 With an older gridlink the GRiD keeps resetting the link, saying "No
 answer from the bridge at GPIB address 7".
 
@@ -269,7 +269,7 @@ CLAUDE          chat (CLAUDE /T: Term; CLAUDE /W: Firefox; CLAUDE /A:nn if the b
 ```
 
 It connects, sets the GRiD's clock from the Pi, and shows the welcome.
-It needs gridlink from 2026-10-22 (8db568c) on; with an older one it keeps
+It needs gridlink from 2026-10-22 on; with an older one it keeps
 resetting, saying "No answer from the bridge at GPIB address 7".
 
 ### Without the GPIB cartridge: the modem or a serial cable
@@ -307,9 +307,9 @@ every byte checked.
   every message. A REPLY was answered NOP at once, so the next request waited
   for the GRiD's 1 s idle POLL. The bridge read USB a byte at a time
   (106 KB/s; now 510 KB/s). The table CRC cost the 286 about 34 clocks a
-  byte; the Fletcher sum costs 8.5. Since CLAUDE 1.15 (and the console's 1.13;
-  audit3 R56) the GRiD has no CRC at all, its HELLO too goes with the sum:
-  they need gridlink from 2026-10-22 (8db568c, PR #60) on.
+  byte; the Fletcher sum costs 8.5. Since CLAUDE 1.15 (and the console's 1.13,
+  2026-10-29) the GRiD has no CRC at all, its HELLO too goes with the sum:
+  they need gridlink from 2026-10-22 on.
 - **The first call after idle:** CLAUDE POLLs once a second between
   messages. The bridge now raises SRQ when gridlink has news for an idle GRiD
   (WAKE, PROTOCOL.md), and CLAUDE POLLs at once. That left 51 ms: CLAUDE's
@@ -439,24 +439,18 @@ every byte checked.
 
 ## Status
 
-CLAUDE 1.15 and resident Claude's console 1.13 (the 2026-10-26 audit's
-step 8: no CRC on the GRiD) need gridlink from 2026-10-22 (8db568c) on. An
+CLAUDE 1.15 and resident Claude's console 1.13 (2026-10-29: no CRC on the
+GRiD) need gridlink from 2026-10-22 on. An
 older gridlink shows up as CLAUDE resetting the link with "No answer from
 the bridge at GPIB address 7".
 
-Version 1.1: Term. Tested in emulation (and the MCP server against the real
-Claude Code's `claude mcp list`), not yet on the Pi 5: 18 Term checks with
-the GRiD model, 8 with the real CLAUDE.COM, 13 for the MCP bridge (its
-limits included). On the
-Pi 5: a real Claude Code session from the GRiD, the echo, a permission
-dialog answered on the GRiD, an MCP call that runs a DOS program.
-
-Version 1.0 (chat), tested in emulation, not yet on hardware. The real CLAUDE.COM
-(11 KB) runs under an emulated DOS 3.30 with the real GRIDGPIB driver,
-talking through the 7210 and AR488 models to the real gridlink with a
-scripted Claude: 20 scenarios pass (connect, chat, read, edit with Yes and
-No, a DOS program driven by a key script with a screenshot, captured DOS
-output, GPIB query/write/scan, 22.8 KB each way, damaged frames, stock
-bridge, interrupt, queued prompt, 200-line scroll-back, long prompt and
-history, link loss and reconnect, quit to DOS, CLAUDE.MD, help, slash
-commands). Next: `--console` on the Pi with a real key, then the bench.
+The emulator suites in `tests/` run the real CLAUDE.COM under an emulated
+DOS 3.30 with the real GRIDGPIB driver, talking through the 7210 and AR488
+models to the real gridlink with a scripted Claude. Chat covers connect,
+chat, read, edit with Yes and No, a DOS program driven by a key script with
+a screenshot, captured DOS output, GPIB query/write/scan, 22.8 KB each way,
+damaged frames, the stock bridge, interrupt, a queued prompt, 200-line
+scroll-back, a long prompt and history, link loss and reconnect, quit to
+DOS, CLAUDE.MD, help and slash commands. Term is checked with the GRiD
+model and with the real CLAUDE.COM, and the MCP bridge (its limits
+included) also against the real Claude Code's `claude mcp list`.
