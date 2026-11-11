@@ -275,7 +275,11 @@ Multitasking works on the 1520, tasks running from its hard disk included, and s
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.
 - **The FreeDOS kernel calls:** INT 21h 60h/6Ch and IOCTL 440Dh, so FreeDOS's LABEL, XCOPY and the like run.
 
-Third-party material in the repo (the Terminus font, FreeDOS for the benchmark, the AR488 patch, the bridge firmware's libraries, TM5000G) and its licenses: [`THIRD_PARTY.md`](THIRD_PARTY.md).
+## License
+
+Lodestone is Copyright (C) 2026 Joshua Gilbert. It is free software under the GNU General Public License, version 3 or (at your option) any later version, and comes with no warranty: [`LICENSE`](LICENSE), [`NOTICE`](NOTICE).
+
+Third-party material in the repo (the Terminus-derived fonts, GRiD's TC8X16 glyphs, FreeDOS for the benchmark, the AR488 patch, the bridge firmware's libraries, TM5000G) keeps its own license: [`THIRD_PARTY.md`](THIRD_PARTY.md).
 
 > **Name:** Lodestone was called Grid-OS up to 0.4.0. Since 0.4.1 the kernel is `LODE.SYS` (settings in `LODE.INI`), the shell `LCMD.COM` and the boot installer `LODEBOOT.COM`; they were `GRIDOS.SYS`, `GRIDOS.INI`, `GRIDCMD.COM` and `GOSBOOT.COM`. Release notes up to 0.4.0 keep the old names.
 
