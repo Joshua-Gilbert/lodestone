@@ -367,6 +367,21 @@ def t_fatwrite():
     check('C:\'s FAT never written, Fail each time: A:\\F.DAT on the floppy all the same, C:\'s other files whole',
           n >= 2 and 'X close failed' in o and not fl and ffiles.get('\\F.DAT') == 12288 and
           all('X.DAT' in p or 'lost' in p for p in probs) and files.get('\\README.TXT') == README, (o, fl, probs))
+    # a write that grows the file inside the cluster it has, then fails (no cluster taken): its size given back
+    # with its position (WRGROW.COM: README.TXT's second sector won't take the write, the program's Fail)
+    c = os.path.join(OUT, 'WRGROW.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', c, os.path.join(HERE, 'WRGROW.ASM')], check=True)
+    d, f = std()
+    v = F.Volume(d, PLBA)
+    cl = next(c_ for n_, a_, c_, s_ in v.entries(0) if n_ == 'README.TXT')
+    ata = drive(d, badw=[PLBA + v.data + (cl - 2) * 4 + 1])
+    k, t = boot('wrgrow', ata, files=(LCMD, c))
+    o = Shell(k).run('a:wrgrow')
+    files, probs = vol(ata).files(f.gaps)
+    check('a write growing README.TXT (21 bytes) inside its cluster, its second sector refusing it, Fail: the error '
+          '(1Bh), position and size back at 21, and so on the disk after the close',
+          'W-001B P0015 S0015' in o and files.get('\\README.TXT') == README and not probs, (o, probs,
+          len(files.get('\\README.TXT', b''))))
 
 def t_abs():
     """INT 25h/26h on C: (DOS 4's form): a read; A: and the old form

@@ -3257,9 +3257,8 @@ do_copy:
         mov     cx, touch + 1 - dstate
         rep     stosb
         call    cparse                  ; -> plist, plus, path2, dsw, touch
-        jnc     .p1
-        jmp     err
-.p1:    mov     si, path2               ; (its drive: crit's dchg)
+        jc      .er
+        mov     si, path2               ; (its drive: crit's dchg)
         call    drv_of
         mov     [ddrv], al
         mov     si, plist
@@ -3267,6 +3266,8 @@ do_copy:
         cmp     byte [path1], 0         ; (no first source)
         jne     .p2
 .par:   jmp     err_param
+.pl:    mov     si, e_plong             ; (pairs: a destination past pdst)
+.er:    jmp     err
 .p2:    cmp     byte [plus], 0
         jne     .sf
         ; the source: a directory means all of it
@@ -3293,6 +3294,9 @@ do_copy:
         call    has_wild
         jc      .cc
 .pk:    mov     si, path2
+        call    strlen                  ; (pdst's 80: a longer one would run
+        cmp     cx, 79                  ;  on into pfirst and plist, pair's
+        ja      .pl                     ;  names and the sources to come)
         mov     di, pdst
         call    strcpy
         inc     byte [pmode]

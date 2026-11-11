@@ -108,6 +108,13 @@ def t_syslabel():
     check('Disks: a label whose 8.3 split falls among spaces ("ABC     DEF") shown as on the disk',
           has(k, 'ABC     DEF'), screen(k))
     k.key(ktest.ESC)
+    # on a LODE.SYS before 1.1 (no FCB calls: INT 21h 11h answers FFh), its label by 4Eh as before
+    p = mkimg.build(os.path.join(OUT, 'syslab10.img'), [os.path.join(GOS, 'releases', '1.0', 'LODE.SYS'), SYSTEM])
+    k = ktest.KPC(p); k.start()
+    k.key(CODE['U']); k.key(ktest.DOWN)
+    check('Disks on 1.0\'s LODE.SYS (no FCB calls): the label by 4Eh, LODESTONE, not "(no label)"',
+          any('Drive A:' in l and 'LODESTONE' in l for l in lines(k)), screen(k))
+    k.key(ktest.ESC)
 
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [SYS] + list(files))

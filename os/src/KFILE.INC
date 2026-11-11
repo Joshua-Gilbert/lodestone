@@ -1336,12 +1336,12 @@ file_write:
         pop     ax
 .ef:    call    free_chain
         call    fat_back
-        mov     ax, [rw_sz0]
-        mov     [si+S_SIZE], ax
-        mov     ax, [rw_sz0+2]
-        mov     [si+S_SIZE+2], ax
         mov     word [si+S_CCL], 0
-.ee:    mov     ax, [rw_p0]             ; the position it had (the write
+.ee:    mov     ax, [rw_sz0]            ; the size it had (grown inside a
+        mov     [si+S_SIZE], ax         ;  cluster the file had already, too:
+        mov     ax, [rw_sz0+2]          ;  no cluster taken, rw_a1 0),
+        mov     [si+S_SIZE+2], ax
+        mov     ax, [rw_p0]             ; the position it had (the write
         mov     [si+S_POS], ax          ;  failed), and with nothing written
         mov     ax, [rw_p0+2]           ;  its flags: no entry change to go
         mov     [si+S_POS+2], ax
