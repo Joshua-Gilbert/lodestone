@@ -661,6 +661,8 @@ drv_ready:
         jmp     short .kp               ;  D_CHK 3)
 .um:    mov     al, [act]               ; nothing to go: the disk in is
         call    unmount                 ;  mounted, the current directory
+        mov     byte [si+D_CHK], 0      ; (mounted in this look: none due
+                                        ;  after it; .mf's if it fails)
         jmp     short .same             ;  found again by its name (as
                                         ;  MS-DOS's FATREAD_CDS: mount_bpb)
 .nc:    mov     byte [si+D_PRES], 1     ; "not changed": a change line, what-

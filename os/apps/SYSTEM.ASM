@@ -461,8 +461,28 @@ disk_lines:
         int     21h                     ;  search, as DOS's COMMAND
         pop     di
         or      al, al
-        jnz     .nolab
-        mov     si, dta + 8 + 11        ; (its trailing spaces off;
+        jz      .l11
+        mov     al, [drv]               ; FFh: no label, or a LODE.SYS before
+        add     al, 'A'                 ;  1.1 (no FCB calls: FFh for them
+        mov     [s_vol], al             ;  all): 4Eh's then, its dot left out
+        push    di
+        mov     dx, s_vol
+        mov     cx, 08h
+        mov     ah, 4Eh
+        int     21h
+        pop     di
+        jc      .nolab
+        test    byte [dta+21], 08h
+        jz      .nolab
+        mov     si, dta + 30
+.lab:   lodsb
+        or      al, al
+        jz      .labx
+        cmp     al, '.'
+        je      .lab
+        stosb
+        jmp     .lab
+.l11:   mov     si, dta + 8 + 11        ; (its trailing spaces off;
         xor     ch, ch                  ;  CH, CL apart: clus_line, which
         mov     cl, 11                  ;  this runs on into, even)
 .t:     cmp     byte [si-1], ' '
@@ -2324,6 +2344,7 @@ l_free      db 'Free for programs',0
 l_ems       db 'Expanded memory (EMS)',0
 l_ext       db 'Extended memory',0
 s_drive     db 'Drive A:',0
+s_vol       db 'A:\*.*',0
 s_vfcb      db 0FFh, 0, 0, 0, 0, 0, 08h, 0, '???????????'  ; (the label's
             times 25 db 0               ;  extended FCB)
 s_nolabel   db '(no label)',0

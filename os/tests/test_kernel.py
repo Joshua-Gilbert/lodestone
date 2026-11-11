@@ -3413,6 +3413,21 @@ def t_mntback():
         else:
             check('... (the same at once, under 2 s: no look, no question: the rule as MS-DOS\'s)',
                   '[' not in o and 'R+' in o, o[-120:])
+    # another disk in, nothing open on the first: its mount, in the look that found it, leaves no look due (unmount's
+    # D_CHK 3 was left there: the DIR's next call looked again, its sums and the FAT's 9 sectors read twice)
+    k = ktest.KPC(image('mb_a.img', lcmd), b=b1); k.start()
+    sh = Shell(k); pc = k.pc
+    sh.run('dir b:')
+    other = pcemu.Floppy(bytearray(b2)); other.changed = True; pc.drives[1] = other
+    xf = lambda n0: [c for c in pc.calls13[n0:] if c[1] == 1 and c[0] in (2, 3)]
+    n0 = len(pc.calls13); o = sh.run('dir b:'); t1 = xf(n0)
+    chk = pc.rd(0x60, k.Y['drvtab'] + 32 + 31, 1)[0]
+    n0 = len(pc.calls13); sh.run('dir b:'); t2 = xf(n0)
+    fat9 = [c for c in t1 if c[5] == 9]
+    check('another disk in B:, nothing open on the first: the DIR B: that finds it looks once, its FAT read once '
+          '(%d transfers, %d sectors), no look left due after, the next DIR B: reads no boot sector'
+          % (len(t1), sum(c[5] for c in t1)), 'OTH' in o and len(fat9) == 1 and chk == 0
+          and not [c for c in t2 if c[2] == 0 and c[3] == 0 and c[4] == 1], (t1, t2, chk))
 
 def t_swaps():
     """Disks swapped around a file's calls (SWAPS.COM; KDISK.INC rules 1, 4, 9).  After "Invalid disk change" and
@@ -5010,6 +5025,18 @@ def t_cmdshare():
           all(('A:\\SUB\\%s.%s' % (b, e)) in f for b in 'AB' for e in ('BBK', 'CCK'))
           and 'A:\\Q\\A.DDK' in f and 'A:\\Q\\B.DDK' in f
           and all('2 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith(('A:\\SUB', 'A:\\Q')))))
+    # pairs ("+", wildcards) to a destination past pdst's 79 characters: refused, the sources as they were (its
+    # string ran on into pfirst and plist: A1.T and A2.T written over with themselves and the B files)
+    sh.run('md \\pp'); sh.run('cd \\pp')
+    for n in ('a1', 'a2', 'b1', 'b2'): sh.run('echo ' + n + '> ' + n + '.t')
+    f0 = fs()
+    o = sh.run('copy a*.t+b*.t a:' + '.\\' * 39 + '*.o')          # 83 characters
+    sh.run('cd \\'); f = fs()
+    check('COPY pairs (a*.t+b*.t) to a destination of 83 characters, past pdst\'s 79: "Invalid path or file name", '
+          'A1.T and A2.T as they were, no .O made', 'Invalid path or file name' in o
+          and all(f.get('A:\\PP\\A%d.T' % i) == f0.get('A:\\PP\\A%d.T' % i) for i in (1, 2))
+          and not [n for n in f if n.startswith('A:\\PP\\') and n.endswith('.O')],
+          (o, {n: f.get(n) for n in f if n.startswith('A:\\PP')}))
     # X29: a name found by a pattern in a 68- or 69-character directory runs past src's 79 characters;
     # COPY hung.  Now such a name is skipped and the rest copied (LONGNAME.TXT, 80, before LONGNAME.TX, 79)
     # (directories deeper than CD goes: made, and written in, by their paths)
