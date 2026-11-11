@@ -557,3 +557,9 @@ Keep COMMAND.COM, CONFIG.SYS and AUTOEXEC.BAT off this disk unless they
 are meant for GRiD MS-DOS: booted from the EPROM with this floppy in the
 drive, GRiD MS-DOS uses A:\COMMAND.COM (and A:\CONFIG.SYS) in place of
 its own.
+
+Lodestone is Copyright (C) 2026 Joshua Gilbert, free software under the
+GNU General Public License, version 3 or any later version, with no
+warranty.  The license and the source: github.com/Joshua-Gilbert/lodestone.
+OFL.TXT is the license of its Terminus-derived fonts.  GRIDFONT.FNT is
+GRiD's TC8X16, not covered by Lodestone's license.
