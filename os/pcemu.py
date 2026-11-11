@@ -10,6 +10,8 @@ DOS itself.
   * Floppies A: and B: as image files behind INT 13h with the real
     controller's limits: no track crossing, no 64 KB DMA crossing, ROM
     can't be a DMA buffer (the EMS frame can).  Change line per drive.
+    Formatting (AH=18h the media type, 05h a track): a track's sector IDs
+    are checked, and another density gives the disk that geometry.
   * Video: text modes (B800 cells), GRiD mode 40h (640x400 1 bpp),
     CGA modes 4/6 memory; PNG rendering.
   * uPD7210 at 02E1h + n*400h (any object with read/write), COM2 serial
@@ -92,6 +94,10 @@ FD_BIOS_IN = 250.0          # BIOS + FDC command phase
 FD_BIOS_OUT = 100.0         # result phase + BIOS return
 
 
+# the formats each kind of drive takes (INT 13h AH=18h): (cylinders, sectors per track)
+FD_MEDIA = {1: {(40, 9)}, 2: {(40, 9), (80, 15)}, 3: {(80, 9)}, 4: {(80, 9), (80, 18)}}
+
+
 class Floppy:
     GEOM = {1474560: (80, 2, 18), 737280: (80, 2, 9), 1228800: (80, 2, 15), 368640: (40, 2, 9)}
     def timing(s):
@@ -107,8 +113,15 @@ class Floppy:
         s.ops = 0; s.busy_us = 0.0      # transfers and time spent in them
         s.wp = False                    # write-protect tab
         s.no_changeline = False         # a drive that always says "changed"
-        s.bad = set()                   # LBAs that fail to read (CRC error)
+        s.change_err = False            # a read, write or format of a changed disk fails 06h (an AT BIOS's
+                                        #  check of the change line), the line then reset
+        s.bad = set()                   # LBAs that fail to read (CRC error), formatted or not: the disk's flaws
+        s.noid = set()                  # LBAs with no sector ID (an unformatted disk's): a format of their
+                                        #  track with the right IDs makes them readable
         s.empty = False                 # no disk in the drive: time-out
+        s.kind = 4                      # the drive (INT 13h AH=08h's BL): 1 360 KB, 2 1.2 MB, 3 720 KB, 4 1.44 MB
+        s.media = None                  # (cylinders, sectors) set by AH=18h for the next format
+        s.formats = []                  # (cylinder, head) of each track formatted
     def save(s, path=None):
         open(path or s.path, 'wb').write(s.img)
 
@@ -346,6 +359,15 @@ class Ata:
                 s.wq = s.wq[:len(s.wq) // 2]; s.cutting = True
                 if not s.wq: return s.power_cut()
             s.st = ok | s.DRQ
+        elif val in (0x40, 0x41):                       # READ VERIFY SECTORS: read, no data moved
+            s.verifies = getattr(s, 'verifies', 0) + 1
+            for i in range(s.reg[2] or 256):
+                if not s.has_sector(c, h, n): return fail(0x10)
+                if (c * s.heads + h) * s.spt + n - 1 in s.bad: return fail(0x40)
+                n += 1
+                if n > s.spt: n = 1; h += 1
+                if h >= s.heads: h = 0; c += 1
+            s.st = ok
         elif val in (0x20, 0x21):
             s.reads += 1
             if s.stick_at and s.reads >= s.stick_at: s.stuck = True; return
@@ -554,10 +576,14 @@ class PC:
         # 1520 rate instead of a whole block each.
         if addr == s.last_blk[0] and size <= 4: s.us += s.rep_us(addr, size)
         else: s.us += BLOCK_US
+        pa, pz = s.last_blk
         s.last_blk = (addr, size)
         if s.watch: s.watch(addr)
-        if s.irq_wait and s.r('flags') & 0x200:
-            s.irq_wait = False; s.mu.emu_stop()     # (IF back with an IRQ waiting: run() delivers it)
+        if s.irq_wait and s.r('flags') & 0x200 \
+                and not (pa + pz == addr and s.mu.mem_read(addr - 1, 1)[0] == 0xFB):
+            s.irq_wait = False; s.mu.emu_stop()     # (IF back with an IRQ waiting: run() delivers it; but the
+                                                    #  instruction after an STI first, as the 286: STI / HLT
+                                                    #  takes it in the HLT, and returns past it)
         if s.us >= s.next_event: s.on_time()
 
     def rep_us(s, addr, size):
@@ -1039,14 +1065,49 @@ class PC:
         if d is None:
             s.w('ax', (s.r('ax') & 0xFF) | 0x8000); s.cf(1); return
         if ah == 0x08:
-            s.w('bx', 4); s.w('cx', ((d.cyls - 1) << 8) | d.spt); s.w('dx', 0x0100 | (2 if s.drives[1] else 1))
+            s.w('bx', d.kind); s.w('cx', ((d.cyls - 1) << 8) | d.spt); s.w('dx', 0x0100 | (2 if s.drives[1] else 1))
             s.w('ax', 0); s.cf(0); return
-        if ah == 0x15: s.w('ax', 0x0200); s.cf(0); return
+        if ah == 0x15: s.w('ax', 0x0100 if d.no_changeline else 0x0200); s.cf(0); return   # (1: no change line)
         if ah == 0x16:
             if d.changed or d.no_changeline: d.changed = False; s.w('ax', 0x0600); s.cf(1)
             else: s.w('ax', 0); s.cf(0)
             return
-        if ah in (0x17, 0x18): s.w('ax', 0); s.cf(0); return
+        if ah == 0x17: s.w('ax', 0); s.cf(0); return
+        if ah == 0x18:                                  # set the media type for a format: cylinders and
+            cx = s.r('cx')                              #  sectors the drive takes, or 0Ch (80h: no disk)
+            c, n = ((cx >> 8) | ((cx & 0xC0) << 2)) + 1, cx & 63
+            if d.empty: s.w('ax', 0x8000); s.cf(1); return
+            if (c, n) not in FD_MEDIA.get(d.kind, ()): s.w('ax', 0x0C00); s.cf(1); return
+            d.media = (c, n)                            # ES:DI: its parameter table, where the 1520's BIOS
+            s.wr(STUB, 0xEFC7, bytes([0xDF, 0x02, 0x25, 0x02, n, 0x1B if n >= 15 else 0x2A, 0xFF,
+                                      0x6C if n >= 15 else 0x50, 0xF6, 0x0F, 0x08]))   #  keeps its own
+            s.w('es', STUB); s.w('di', 0xEFC7); s.w('ax', 0); s.cf(0); return
+        if ah == 0x05:                                  # format a track: ES:BX the sectors' IDs (C, H, R, N)
+            cx, dx = s.r('cx'), s.r('dx')
+            c, h = (cx >> 8) | ((cx & 0xC0) << 2), dx >> 8
+            if d.empty: s.w('ax', 0x8000); s.cf(1); return
+            if d.change_err and d.changed: d.changed = False; s.w('ax', 0x0600); s.cf(1); return
+            if d.wp: s.w('ax', 0x0300); s.cf(1); return
+            cyls, spt = d.media or (d.cyls, d.spt)
+            if (cyls, spt) != (d.cyls, d.spt):          # another density: the disk's old tracks are gone
+                d.cyls, d.spt = cyls, spt
+                d.img = bytearray(b'\xF6' * (cyls * d.heads * spt * 512))
+                d.noid = set(range(cyls * d.heads * spt))
+            if c >= d.cyls or h >= d.heads: s.w('ax', 0x0400); s.cf(1); return
+            ids = s.rd(s.r('es'), s.r('bx'), 4 * al)
+            lba = (c * d.heads + h) * d.spt
+            s.calls13.append((5, dl, c, h, 0, al, '%05X' % (s.r('es') * 16 + s.r('bx'))))
+            d.formats.append((c, h))
+            d.img[lba * 512:(lba + d.spt) * 512] = b'\xF6' * (d.spt * 512)
+            if al != d.spt or sorted(ids[i + 2] for i in range(0, 4 * al, 4)) != list(range(1, d.spt + 1)) or \
+                    any(ids[i] != c or ids[i + 1] != h or ids[i + 3] != 2 for i in range(0, 4 * al, 4)):
+                d.noid.update(range(lba, lba + d.spt))  # (IDs no read will find)
+            else:
+                d.noid.difference_update(range(lba, lba + d.spt))
+            if s.disk_model == 'real': s.disk_time(d, c, 1, d.spt); s.us += FD_REV
+            else: s.us += FD_REV
+            d.changed = False
+            s.w('ax', 0); s.cf(0); return
         if ah in (2, 3, 4) and s.fd_wait and s.fd_op is not None:
             s.fd_reentry += 1                           # (M10: a second call while one waits: the
             s.log.append('[INT 13h AH=%02Xh while one waits]' % ah)    #  controller's in use)
@@ -1056,6 +1117,8 @@ class PC:
                 s.fd_op = {'ah': ah, 'empty': True}; s.fd_ops += 1
                 s.wr(0, 0x43E, bytes([s.rd(0, 0x43E, 1)[0] & 0x7F])); s.fd_enter(); return
             s.w('ax', 0x8000); s.cf(1); return          # time-out: no disk
+        if ah in (2, 3, 4) and d.change_err and d.changed:
+            d.changed = False; s.w('ax', 0x0600); s.cf(1); return
         if ah in (2, 3, 4):
             cx, dx = s.r('cx'), s.r('dx')
             c, sct, h = (cx >> 8) | ((cx & 0xC0) << 2), cx & 63, dx >> 8
@@ -1081,9 +1144,9 @@ class PC:
                 s.wr(0, 0x43E, bytes([s.rd(0, 0x43E, 1)[0] & 0x7F]))
                 s.fd_enter()                            # (FDWAIT: the BIOS's wait for IRQ 6)
                 return
-            if ah == 2 and d.bad.intersection(range(lba, lba + al)):
-                good = min(d.bad.intersection(range(lba, lba + al))) - lba
-                s.dma_write(lin, bytes(d.img[lba * 512:(lba + good) * 512]) + b'\xEE' * 512)   # (bad data DMA'd anyway)
+            if ah in (2, 4) and (d.bad | d.noid).intersection(range(lba, lba + al)):
+                good = min((d.bad | d.noid).intersection(range(lba, lba + al))) - lba
+                if ah == 2: s.dma_write(lin, bytes(d.img[lba * 512:(lba + good) * 512]) + b'\xEE' * 512)   # (bad data DMA'd anyway)
                 s.calls_bad = getattr(s, 'calls_bad', 0) + 1
                 s.w('ax', 0x1000 | good); s.cf(1); return
             if ah == 2: s.dma_write(lin, bytes(d.img[lba * 512:(lba + al) * 512]))
@@ -1118,9 +1181,9 @@ class PC:
                 s.log.append('[INT 13h transfer at %05X: its EMS window changed under it]' % lin)
                 if FD_STRICT: s.crash = 'INT 13h transfer at %05X: its EMS window changed under it' % lin
         res = (al, 0)
-        if ah == 2 and d.bad.intersection(range(lba, lba + al)):
-            good = min(d.bad.intersection(range(lba, lba + al))) - lba
-            s.dma_write(lin, bytes(d.img[lba * 512:(lba + good) * 512]) + b'\xEE' * 512)
+        if ah in (2, 4) and (d.bad | d.noid).intersection(range(lba, lba + al)):
+            good = min((d.bad | d.noid).intersection(range(lba, lba + al))) - lba
+            if ah == 2: s.dma_write(lin, bytes(d.img[lba * 512:(lba + good) * 512]) + b'\xEE' * 512)
             s.calls_bad = getattr(s, 'calls_bad', 0) + 1
             res = (0x1000 | good, 1)
         elif ah == 2: s.dma_write(lin, bytes(d.img[lba * 512:(lba + al) * 512]))

@@ -308,8 +308,9 @@ pr_boot:
         pop     ds
         jnc     .x
 .root:  mov     bx, MDB(s_prroot)
-; ES:prn_path = the string at BX, then the name at SI (to a blank or the
-; line's end, 12 characters at most)
+; ES:prn_path = the string at BX, then the name at SI (to the line's end
+; or a tab, 12 characters at most, the trailing spaces dropped: a name may
+; have one inside)
 .cp:    mov     di, prn_path
 .p:     mov     al, [bx]
         inc     bx
@@ -320,10 +321,14 @@ pr_boot:
 .n:     mov     cx, 12
 .nm:    lodsb
         cmp     al, ' '
-        jbe     .z
+        jb      .z
         stosb
         loop    .nm
-.z:     xor     al, al
+.z:     cmp     byte [es:di-1], ' '
+        jne     .z0
+        dec     di
+        jmp     .z
+.z0:    xor     al, al
         stosb
 .x:     ret
 

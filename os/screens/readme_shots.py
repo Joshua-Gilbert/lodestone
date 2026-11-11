@@ -92,4 +92,21 @@ keys(0x6F00); arrows(-29, -11)          # 51 columns, 8 rows ...
 keys(0x6E00); arrows(28, -4)            # ... at the right, level with LCMD's
 k.run_for(6.0); shot('multitasking')
 keys(CODE['T'], t=1.0); shot('tasks')    # CODE-T: the tasks, over them
+# DOS 3.30's utilities at the prompt (ROM 2's, here on the floppy): CHKDSK
+# of A:, then FORMAT B: /S on a disk never formatted
+util = [os.path.join(GOS, 'src', f) for f in ('LODE.SYS', 'LODEMT.SYS', 'LODE.PIC', 'LCMD.COM', 'CHKDSK.COM',
+        'FORMAT.COM')] + ['DOCS\\', 'DOCS\\NOTES.TXT=' + os.path.join(GOS, 'src', 'LODE.TXT'),
+        'DOCS\\LETTERS\\', 'WORK\\', 'WORK\\BENCH\\', 'WORK\\BENCH\\BENCH.COM=' + os.path.join(GOS, 'bench', 'BENCH.COM'),
+        'WORK\\PLOTS\\']
+img = mkimg.build(os.path.join(TMP, 'util.img'), util)
+bimg = os.path.join(TMP, 'util_b.img'); open(bimg, 'wb').write(bytes(1474560))
+k = ktest.KPC(img, bimg, ems_pages=88); k.pc.drives[1].noid = set(range(2880)); k.start(20); k.code_p()
+scr = lambda: k.pc.text_screen()
+for c in ('cls', 'chkdsk'):
+    k.key(c, ktest.ENTER); k.settle(20)
+shot('chkdsk')
+k.key('cls', ktest.ENTER); k.key('format b: /s /v:WORK', ktest.ENTER, settle=False)
+k.pc.run_until(lambda: 'strike ENTER' in scr(), 20); k.key(ktest.ENTER, settle=False)
+k.pc.run_until(lambda: 'another (Y/N)?' in scr(), 400); k.key('n'); k.settle(20)
+shot('format')
 print('\n'.join(sorted(os.listdir(OUT))))

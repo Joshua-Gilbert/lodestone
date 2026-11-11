@@ -19,7 +19,7 @@ FOC_TIT equ 0           ; the outlined item: Title (the list holds titles),
 FOC_DEV equ 1           ;  Device (the drives),
 FOC_SUB equ 2           ;  Subject (the subjects of this drive)
 SUBJ    equ 14          ; a subject in the list: depth, NAME    EXT, date
-SUBMAX  equ 66          ; a subject's path, "\" and all (the kernel's CWDLEN - 2)
+SUBMAX  equ 64          ; a subject's path, "\" and all (the kernel's CWDMAX: \ and 63, MS-DOS's)
 EV_TASK equ 0FF10h      ; (KMW's mw_poll, MULTITASK=1, only to ex_loop: a task ended;
 EV_TASKM equ 0FF11h     ;  one the Executive started: its message in msgbuf)
 
@@ -28,7 +28,7 @@ exec_dta    resb 44
 entlist     resw MAXENT         ; -> entries (FAT layout), at the end of the
                                 ;  UI segment's BSS (LODE.ASM)
 runpath     resb 80
-argpath     resb 84                 ; X:\ + a 66-char subject + \ + NAME.EXT
+argpath     resb 84                 ; X:\ + a 64-char subject + \ + NAME.EXT
 dir_note    resw 1              ; load_dir: 0, a DOS error, or FFFFh (too many)
 last_sel    resw 1              ; relist: the selection before an empty list
 last_top    resw 1
@@ -50,7 +50,7 @@ msgbuf      resb 128
 infobuf     equ tmp                 ; the information line: built by draw_all
                                     ;  just before it is drawn (draw_form and
                                     ;  the clock use tmp too)
-dstpath     resb 84                 ; Copy, Move: X: + \ + a 66-char subject + \ +
+dstpath     resb 84                 ; Copy, Move: X: + \ + a 64-char subject + \ +
 tmppath     resb 84                 ;  NAME.EXT (83); the subject it goes to, then
                                     ;  the new file in it (X:\SUBJECT\ABCDTMP, 78)
 curdir      resb 72                 ; X:\SUBJECT, where the list is
@@ -627,15 +627,18 @@ ex_lvname:                                ; (type-to-find) AX = item -> SI
         ret
         times ($ - $$) & 1 db 90h       ; (hot: even)
 
-; append the entry's title (name without trailing spaces) at DI
+; append the entry's title (name without trailing spaces: those inside
+; kept, as MS-DOS's names) at DI
 sb_title:
         push    si
         mov     cx, 8
-.c:     lodsb
-        cmp     al, ' '
-        je      .x
-        stosb
-        loop    .c
+        rep     movsb
+.t:     cmp     byte [es:di-1], ' '
+        jne     .x
+        dec     di
+        inc     cx
+        cmp     cx, 8
+        jb      .t
 .x:     pop     si
         ret
         times ($ + 1 - $$) & 1 db 90h   ; (hot: .k even)
@@ -739,16 +742,18 @@ sel_name:
 sb_fcb: push    si
         call    sb_title
         add     si, 8
-        cmp     byte [si], ' '
+        cmp     word [si], '  '         ; (an extension: any of its 3 not a
+        jne     .e                      ;  space; its trailing ones dropped)
+        cmp     byte [si+2], ' '
         je      .x
-        mov     al, '.'
+.e:     mov     al, '.'
         stosb
         mov     cx, 3
-.e:     lodsb
-        cmp     al, ' '
-        je      .x
-        stosb
-        loop    .e
+        rep     movsb
+.xt:    cmp     byte [es:di-1], ' '
+        jne     .x
+        dec     di
+        jmp     .xt
 .x:     pop     si
         ret
 
@@ -972,7 +977,8 @@ sub_scan:
         je      .r
         mov     al, '\'
         stosb
-.r:     mov     si, s_all
+.r:     mov     [tmp + 43], di          ; (where a name goes: one longer
+        mov     si, s_all               ;  than SUBMAX is no subject)
         call    sb_strz
         mov     dx, runpath
         mov     cx, 10h
@@ -982,6 +988,14 @@ sub_scan:
         jz      .n
         cmp     byte [exec_dta + 30], '.'
         je      .n
+        mov     di, exec_dta + 30       ; its path's length: past SUBMAX,
+        mov     cx, 13                  ;  CHDIR's, it can't be one
+        xor     al, al
+        repne   scasb
+        sub     di, exec_dta + 31
+        add     di, [tmp + 43]
+        cmp     di, runpath + SUBMAX
+        ja      .n
         mov     ax, [ent_max]           ; (room: 2 for each list entry)
         shl     ax, 1
         cmp     [nsubj], ax
@@ -1332,8 +1346,9 @@ tree_del:
         int     21h
         jnc     .nx
         ret
-.dir:   call    tw_end                  ; (a path longer than DOS takes:
-        cmp     di, tpath + 2 + 66      ;  only from a damaged disk)
+.dir:   call    tw_end                  ; (deeper than CHDIR goes is fine:
+        cmp     di, tpath + 2 + 66      ;  MKDIR makes them; past tpath's
+                                        ;  84 bytes with a name, 3)
         mov     ax, 3
         ja      .bad
         inc     word [t_lvl]
@@ -1565,7 +1580,7 @@ sc_list:
 sc_add:
         mov     ax, [sc_max]
         sub     ax, [sc_wr]
-        cmp     ax, 80                  ; (the longest: 66 + \ + NAME.EXT + 0)
+        cmp     ax, 80                  ; (the longest: 64 + \ + NAME.EXT + 0)
         mov     ax, 8
         jb      .no
         mov     si, [sc_rd]
@@ -3244,8 +3259,8 @@ h_code      db 'CODE is the Alt key.  Any key closes.',0
 ; ---------------------------------------------------------------------
 ;  data
 ; ---------------------------------------------------------------------
-s_brand     db 'Lodestone 1.0',0
-s_hlptitle  db 'Lodestone 1.0 Help',0
+s_brand     db 'Lodestone 1.1',0
+s_hlptitle  db 'Lodestone 1.1 Help',0
 prompts     dw s_prompt1, s_prdev, s_prsub
 s_prompt1   db 'Select a file and confirm',0
 s_prdev     db 'Device: Select item and confirm',0
@@ -3283,7 +3298,6 @@ s_mouse1    db 'Mouse COM1',0
 s_mouse2    db 'Mouse COM2',0
 s_nomouse   db 'No mouse',0
 s_bios      db 'BIOS ',0
-s_all       db '*.*', 0
 s_claude    db 'CLAUDE.COM', 0
 s_system    db 'SYSTEM.RUN', 0
 s_write     db 'WRITE.RUN', 0
@@ -3302,7 +3316,6 @@ s_cantopen  db 'open ', 0
 s_cantdir   db "Can't read the disk: ", 0
 s_first     db 'Only the first ', 0
 s_listed    db ' are listed', 0
-s_colon     db ': ', 0
 ; the file commands
 copy_form:  dw ftitle, s_copyp, 60, 11, 6
             dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
@@ -3335,14 +3348,13 @@ s_delete    db 'Delete ', 0
 s_delp      db 'Delete: Confirm to erase (* or ? for several)', 0
 s_erased    db 'Erased ', 0
 s_rokept    db ' read-only kept', 0
-s_title     db ' title', 0
-s_to        db ' to ', 0
 s_comma     db ', ', 0
 s_left      db ' is there already: left as it was', 0
 s_leftn     db ' left as they were', 0
 s_allin     db ' and all in it', 0
 s_dotdot    db '..', 0
-s_star      db '\*.*', 0
+s_star      db '\'                      ; (s_all its tail)
+s_all       db '*.*', 0
 s_mkq       db " isn't there: Confirm to make it", 0
 s_copy      db 'Copy ', 0
 s_move      db 'Move ', 0
@@ -3350,18 +3362,20 @@ s_rename    db 'Rename ', 0
 s_copyp     db 'Copy: Fill in form and confirm', 0
 s_movep     db 'Move: Fill in form and confirm', 0
 s_renp      db 'Rename: Fill in form and confirm', 0
-s_lbl_new   db 'New title', 0
-s_eraseq    db 'Erase: Confirm to erase ', 0
+s_lbl_new   db 'New'                    ; (s_title its tail)
+s_title     db ' title', 0
+s_eraseq    db 'Erase: Confirm to '     ; (s_canterase its tail)
+s_canterase db 'erase ', 0
 s_replace   db ' is there already: Confirm to replace it', 0
 s_same      db ' is there now: choose another place', 0
 s_inself    db ' into itself: choose another place', 0
 s_copying   db 'Copying ', 0
 s_moving    db 'Moving ', 0
-s_copied    db 'Copied to ', 0
+s_copied    db 'Copied'                 ; (s_to its tail)
+s_to        db ' to ', 0
 s_moved     db 'Moved to ', 0
 s_cantcopy  db 'copy ', 0                ; (xpick: the Move one next)
 s_cantmove  db 'move ', 0
-s_canterase db 'erase ', 0
 s_cantren   db 'rename ', 0
             times -(s_move != s_copy + 6 || s_moving != s_copying + 9) db 0     ; (xpick: each
             times -(s_moved != s_copied + 11 || s_cantmove != s_cantcopy + 6) db 0 ;  Move string next)
@@ -3375,7 +3389,8 @@ s_subch     db ':*?', 0                 ; not in a subject
 s_badtit    db ": a title can't have \ : * or ?", 0
 s_badsub    db ": a subject can't have : * or ?", 0
 s_partial   db "Copied, but can't erase ", 0
-s_here      db ' here: ', 0
+s_here      db ' here'                  ; (s_colon its tail)
+s_colon     db ': ', 0
 s_kept      db 'Copy kept as ', 0
 k_file      db 'File',0
 k_run       db 'Run',0

@@ -64,9 +64,74 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; no code slack at lastdrv 40CFh: any change netting +1 moves image_end and bss_end.  The UI's
-# pads, UICORE.INC's, likewise: ui_image_end 5220h, no slack before uibss's paragraph)
-OFF_MAP ={'image_end': 0x3F80, 'bss_end': 0x7380, 'ui_keep_end': 0x6816}  # (6806h before a menu's TAB lined its keys up, 1.0; 6714h before a program's modes on its right-click menu, 242 bytes; 64D0h before the Executive's right-click menu, 580 bytes; 3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 485Dh on
+# 2026-11-09, with the 2 s timed from a floppy's last transfer), and a change past it moves image_end and bss_end.
+# The UI's pads, UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
+OFF_MAP ={'image_end': 0x4870, 'bss_end': 0x7CD0, 'ui_keep_end': 0x6894}  # (4860h/7CC0h before INT 21h's
+                                        #  exit was inline again (done, no CALL to a shared
+                                        #  fr_out): 16 bytes more, the KB figures as they were,
+                                        #  2026-11-10; 4850h/7CB0h before the 2 s
+                                        #  without a change line was timed from the disk's last
+                                        #  transfer (dio.bok, as MS-DOS's driver) and 47h whose
+                                        #  look fails gave the name kept: 16 bytes more, the KB
+                                        #  figures as they were, 2026-11-09; 4860h/7CC0h/6874h before the
+                                        #  current directory was only marked unknown, found by
+                                        #  resolve alone, and the Executive asked about a FAT's
+                                        #  write and asked for a program's drive's free space
+                                        #  first: 16 bytes less in the kernel, 32 more kept of
+                                        #  the UI, the figures as they were; 4870h/7CD0h before the kernel's
+                                        #  default INT 24h was a Fail nobody was asked for, a
+                                        #  current directory that can't be found again unknown
+                                        #  (the drive's other calls going on), 0Dh kept such a
+                                        #  Fail's changes and a search looked first, its
+                                        #  savings 16 bytes more; 4830h/7C90h before a Fail nobody
+                                        #  was asked for was kept apart (83h), a FAT's look was a
+                                        #  write's and the user's Fail gave its changes up, a
+                                        #  directory wasn't taken for the root when its disk can't
+                                        #  be read, a close's slot was checked by name: 64 bytes,
+                                        #  0.1 KB less (562.2, 578.3; 554.0 with MULTITASK=1, its
+                                        #  0Fh prompt's text 28 more), 2026-11-09;
+                                        #  4810h/7C70h before a floppy's FAT
+                                        #  changes were kept when the look at its drive can't
+                                        #  read it, F008h left a look due, a root read by the
+                                        #  kernel settled which sum, an Ignored entry left alone
+                                        #  at its close: 32 bytes, the KB figures as they were,
+                                        #  2026-11-09;
+                                        #  4750h/7BB0h before F008h was given
+                                        #  the sector as read and as written, a failed root
+                                        #  write's two sums, a floppy's FAT written from another
+                                        #  drive's call only after a look, 2026-11-09;
+                                        #  4700h/7B60h before INT 21h F008h, a
+                                        #  floppy its program wrote through INT 13h taken as it
+                                        #  is, and an Abort at a close leaving its handle to
+                                        #  terminate, 2026-11-09;
+                                        #  4670h/7AC0h before a disk's root's
+                                        #  first sector was compared, a disk changed on another
+                                        #  machine told apart by it, 2026-11-09;
+                                        #  4580h/79A0h/6804h before a disk
+                                        #  changed under a transfer was asked about there and then
+                                        #  (Retry, Fail), each task's directories went with their
+                                        #  mount, MS-DOS's 2-second rule for a drive without a change
+                                        #  line, and the Executive's question for it, 2026-11-08;
+                                        #  4360h/7760h before a floppy's mount
+                                        #  rules: a file's mount number, "Invalid disk change" while
+                                        #  files are open, the current directory found again by name,
+                                        #  broken links past the disk's end, 2026-11-08;
+                                        #  4170h/7570h before a failed write's rules:
+                                        #  each disk's FAT its own, the clusters a failed write took given
+                                        #  back, chain walks that stop on a free entry, and "Invalid disk
+                                        #  change" while the old disk has changes to go, 2026-11-08;
+                                        #  4160h/7560h before fat_drop and SF_LOST gave
+                                        #  way to the writes in order (an entry before the frees it lets go
+                                        #  of), a failed buffer read again at Abort too, and terminate's
+                                        #  Abort as Fail, 2026-11-08;
+                                        #  6844h before Lodefont was packed (FONTPACK.INC)
+                                        #  and "Disk error (" shared in dos_msgs, ROM 1's room, 2026-11-07;
+                                        #  4100h/7500h before a failed write's FAT
+                                        #  changes dropped (fat_drop, SF_LOST), 2026-11-07;
+                                        #  40E0h/74E0h before the FCB search's checks of
+                                        #  MS-DOS 3 (separators, the attribute) and LCMD's names cut to 8.3, 2026-11-07;
+                                        #  3F80h/7380h/6816h before MS-DOS's FCB search for the label, its names and its CHDIR, and the Executive's whole names, 2026-11-07; 6806h before a menu's TAB lined its keys up, 1.0; 6714h before a program's modes on its right-click menu, 242 bytes; 64D0h before the Executive's right-click menu, 580 bytes; 3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -1087,6 +1152,35 @@ def t_ends():
     check('... and the next task\'s region goes at the top again (T1, below MT), and ends', A.disk_file(k, 'T.TXT') == b'next'
           and [(b[4], b[2]) for b in a1[-2:]] == [(b'T1', 8), (b'MT', 8)]
           and tstate(k)[0] == [(0, 1, 'Executive')] and merged(a) == m0, (show(a1), show(a), A.disk_file(k, 'T.TXT')))
+    # a resident program's file still open with changes (WPTSR), A:'s FAT refusing: the task's end closes it
+    # (mt_owners), the flush fails, Abort: Fail there, as in terminate's closes (else Abort terminated the
+    # stub inside its own end, and its closes asked again)
+    wpt = os.path.join(A.OUT, 'WPTSR.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', wpt, os.path.join(HERE, 'WPTSR.ASM')], check=True)
+    k = boot('mt_wpt.img', b'MULTITASK=1\r\n', 88, wpt)
+    sh = Shell(k)
+    sh.run('ver')
+    b0 = Baseline(k)
+    class FatBad:
+        def __bool__(s):
+            pc = k.pc; d = pc.drives[0]
+            cx, dx, al = pc.r('cx'), pc.r('dx'), pc.r('ax') & 0xFF
+            lba = ((cx >> 8) * d.heads + (dx >> 8)) * d.spt + (cx & 63) - 1
+            return lba < 19 and lba + al > 1
+    k.pc.drives[0].wp = FatBad()
+    typ(k, 'mtlaunch wptsr.com', 2.0)
+    n = 0
+    for _ in range(8):
+        c = k.pc.text_screen().count('Fail?')
+        if c <= n: break
+        n = c; k.key('a', settle=False); k.run_for(1.5)
+    k.pc.drives[0].wp = False
+    line(k, '')
+    v = sh.run('ver')
+    check('a resident program\'s file left open with changes (WPTSR), A:\'s FAT refusing: its task\'s end closes it, '
+          'asked twice (%d: terminate\'s flush, then the close), answered Abort: taken as Fail, not asked again; the '
+          'task gone, memory and handles as before, the prompt goes on' % n,
+          n == 2 and not k.crashed and 'Lodestone version' in v and b0.back(), (n, v[-80:], b0.now()))
 
 def t_fpu():
     print('== the coprocessor: each task\'s own')
@@ -4201,11 +4295,11 @@ def t_base():
           and pd == px and pt == px and bt[:1] == ['Device: Select item and confirm'] and pix(*w1) == px
           and mb('mw_cur') == 0, (s0, s1, pd == px, pt == px, bt, pix(*w1) == px))
     k.key(ktest.F1); k.run_for(0.5)
-    hp = A.has(k, 'Lodestone 1.0 Help')
+    hp = A.has(k, 'Lodestone 1.1 Help')
     k.key(ktest.ESC); k.run_for(0.5)
     st1 = strip('Write: NOTES.TXT')
     check('F1 in the Executive: its help, over Write; a key closes it: Write drawn again as it was (its bytes), its close '
-          'box too (%r)' % st1, hp and not A.has(k, 'Lodestone 1.0 Help') and st1.endswith('x') and pix(*w1) == px
+          'box too (%r)' % st1, hp and not A.has(k, 'Lodestone 1.1 Help') and st1.endswith('x') and pix(*w1) == px
           and mb('mw_cur') == 0, (hp, st1, pix(*w1) == px, A.screen(k)))
     k.select('OTHER.TXT'); k.key(A.CODE['R']); k.run_for(0.5)
     k.key('QQ'); k.run_for(0.3)
@@ -6825,7 +6919,7 @@ def t_srq():
           irq == 5 and not k.pc.pic_mask & 0x20 and (gb[0], gb[1] | gb[2] << 8, gb[3] | gb[4] << 8) == (0xEA, Y['mt_srqi'], seg),
           (irq, hex(k.pc.pic_mask), gb.hex()))
     # a program behind asking, a task computing: its turn at once
-    typ(k, 'mtlaunch mtsrq.com 4', 1.0); line(k, '')        # (task 1, MTSPIN 2: MTSPIN's next in turn is the
+    typ(k, 'mtlaunch mtsrq.com 5', 1.0); line(k, '')        # (task 1, MTSPIN 2: MTSPIN's next in turn is the
     typ(k, 'mtlaunch mtspin.com 9000 s1.txt', 1.0); line(k, '')     #  Executive, not MTSRQ)
     q = one()
     nq, nspin = (tnum_(q) if q else None), tnum('MTSPIN.COM')
@@ -6850,10 +6944,14 @@ def t_srq():
     check('... IRQ 5 in MT\'s own code as a switch to MTSPIN ends (mt_load\'s STI / RET: not a point to switch from): '
           'MTSRQ runs at the next tick (%s ms; %s), the wake kept, not lost' % r,
           isinstance(r[0], float) and 3 < r[0] <= 70 and 'pick' in r[1], r)
+    r = lat(q, lambda: cur() == nq, at=q * 16 + 0x19A)  # (MTSRQ's sleep: CLI / the count / STI / HLT; its STI)
+    check('... raised in its own CLI, at its STI before HLT (held, taken in the HLT: the instruction after STI runs '
+          'first, as the 286\'s): seen at once (%s ms), not at a tick after' % r[0], isinstance(r[0], float)
+          and r[0] <= 3.0, r)
     r = lat(q, lambda: cur() == nq)
     check('... while MTSRQ itself runs (in its HLT): seen at once (%s ms)' % r[0], isinstance(r[0], float) and r[0] <= 3.0, r)
     k.run_for(0.3)
-    check('... its fourth SRQ: it ends; its wake with it (mt_wkt FFh)', srq_progs(k) == [] and wkt() == 0xFF,
+    check('... its fifth SRQ: it ends; its wake with it (mt_wkt FFh)', srq_progs(k) == [] and wkt() == 0xFF,
           (srq_progs(k), wkt()))
     # in INT 21h when it comes: at its way out
     typ(k, 'mtlaunch mtspin.com 9000 s2.txt d', 1.0); line(k, '')
@@ -7024,7 +7122,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 580.7 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.7', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 578.3 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '578.3', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
@@ -7186,20 +7284,31 @@ def t_k2cap():
           'loads and runs whole (its buffers in the INT 21h stack\'s low area), the screen saved once, nothing crashed',
           'Fail?' in o1 and 'HELLO' in o and len(shots) == 1 and not k.crashed, (o1[-200:], o[-300:], shots))
 
+def code_hooks(k, addrs, fn):
+    """fn(address) each time the instruction at one of addrs runs, exactly (a UC_HOOK_CODE on each address alone:
+    pcemu's block hook sees only a block's start, a label run on into is missed, and a block it stops the
+    emulator at is run, and seen, twice).  The translations made before are flushed, so the hooks see them."""
+    from unicorn import UC_HOOK_CODE
+    for a in addrs:
+        k.pc.mu.hook_add(UC_HOOK_CODE, lambda uc, addr, size, ud: fn(addr), None, a, a)
+    k.pc.mu.ctl_flush_tb()
+
 class DWait:
-    """M10's points in MT, counted as they are passed (a hook at each label), and the kernel's stack at each
-    9001h from inside INT 21h (its depth: kstack_top less SP, SS the kernel's)."""
-    LABELS = ('mt_dwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dready', 'mt_dtick', 'mt_i0e', 'mt_gate', 'mt_gate.no',
-              'mt_gate.h', 'mt_dwait.u')
+    """M10's points in MT, counted as they are passed (a hook at each label: code_hooks), and the kernel's stack
+    at each 9001h from inside INT 21h (its depth: kstack_top less SP, SS the kernel's).  A wait given away is
+    mt_dwait.out less mt_dwait.u (none to run); a task made ready again, mt_dready.w."""
+    LABELS = ('mt_dwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dready', 'mt_dready.w', 'mt_dtick', 'mt_i0e', 'mt_gate',
+              'mt_gate.no', 'mt_gate.h', 'mt_dwait.u', 'mt_dwait.out')
     def __init__(s, k):
         s.k, seg = k, mt_seg(k)
         s.at = {seg * 16 + k.Y[n]: n for n in s.LABELS}
         s.n = collections.Counter(); s.depth = []
         s.top = k.Y['kstack_top']
-        k.hooks.append(s.hook)
-    def hook(s, pc):
-        n = s.at.get(s.k.addr)
-        if n is None: return
+        code_hooks(k, s.at, s.hook)
+    def sw(s): return s.n['mt_dwait.out'] - s.n['mt_dwait.u']
+    def hook(s, a):
+        pc = s.k.pc
+        n = s.at[a]
         s.n[n] += 1
         if n == 'mt_dwait' and pc.r('ss') == 0x60:
             s.depth.append(s.top - pc.r('sp'))
@@ -7286,23 +7395,24 @@ def hw_files(ata):
 class HWait:
     """M12's points in MT, counted (a hook at each label); the kernel's stack at each 9000h from inside INT 21h;
     the time each owner was out (from its switch to its IRQ 14 or tick: given to the others)."""
-    LABELS = ('mt_hwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dwait.u', 'mt_dready', 'mt_dtick', 'mt_i76', 'mt_i77',
-              'mt_gate', 'mt_gate.no', 'mt_gate.h', 'mt_dwait.s')
+    LABELS = ('mt_hwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dwait.u', 'mt_dwait.out', 'mt_dready', 'mt_dready.w',
+              'mt_dtick', 'mt_i76', 'mt_i77', 'mt_gate', 'mt_gate.no', 'mt_gate.h', 'mt_dwait.s')
     def __init__(s, k):
         s.k, seg = k, mt_seg(k)
         s.at = {seg * 16 + k.Y[n]: n for n in s.LABELS}
-        s.sw = seg * 16 + k.Y['mt_dwait.bk'] - 3        # (mt_dwait's CALL mt_switch: the owner going out)
+        s.call = seg * 16 + k.Y['mt_dwait.bk'] - 3      # (mt_dwait's CALL mt_switch: the owner going out)
         s.n = collections.Counter(); s.depth = []; s.out = None; s.given = 0.0
         s.top = k.Y['kstack_top']
-        k.hooks.append(s.hook)
-    def hook(s, pc):
-        a = s.k.addr
-        if a == s.sw: s.out = pc.us
+        code_hooks(k, list(s.at) + [s.call], s.hook)
+    def sw(s): return s.n['mt_dwait.out'] - s.n['mt_dwait.u']
+    def hook(s, a):
+        pc = s.k.pc
+        if a == s.call: s.out = pc.us
         n = s.at.get(a)
         if n is None: return
         s.n[n] += 1
         if n == 'mt_hwait' and pc.r('ss') == 0x60: s.depth.append(s.top - pc.r('sp'))
-        if n == 'mt_dready' and s.out is not None: s.given += pc.us - s.out; s.out = None
+        if n == 'mt_dready.w' and s.out is not None: s.given += pc.us - s.out; s.out = None
     def m12(s, on):
         """M12 (and M10) on, or off: INT 15h straight to the BIOS."""
         k = s.k; seg = mt_seg(k)
@@ -7340,7 +7450,7 @@ def t_hwait():
         hw.m12(on)
         tc, _ = hw_copy(k)
         fs, probs = hw_files(ata)
-        alone.append((tc, hw.n['mt_dcan.y'], hw.n['mt_dwait.u'], fs.get('\\B2.BIN') == data and not probs))
+        alone.append((tc, hw.n['mt_dwait.out'], hw.n['mt_dwait.u'], fs.get('\\B2.BIN') == data and not probs))
     (a0, y0, u0, o0), (a1, y1, u1, o1) = alone
     check('a 1 MB copy on C: alone (timed: the CP30104H\'s seeks and rotation): %.2f s with M12 off, %.2f s on (%d of '
           'its waits could have been given away, nobody to take them: no switch), both exact, the FAT consistent'
@@ -7355,13 +7465,13 @@ def t_hwait():
         fs, probs = hw_files(ata)
         res[on] = (tc, c, fs.get('\\B2.BIN') == data and not probs, hw, ata, k)
     (t_off, c_off, ok0, hw0, _, _), (t_on, c_on, ok1, hw, ata, k) = res[False], res[True]
-    sw = hw.n['mt_dcan.y'] - hw.n['mt_dwait.u']
+    sw = hw.sw()
     check('... MTSPIN counting behind (40 ticks, within the copy): with M12 off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d '
           '(%d switches at 9000h, %.2f s given to it, every one back by IRQ 14 through MT\'s INT 76h: %d of them, '
           '%d IRQ 14s in all): the copy no slower, MTSPIN more; both exact, the FAT consistent; no command written '
           'to the drive while one was in flight'
-          % (t_off, c_off, t_on, c_on, sw, hw.given / 1e6, hw.n['mt_dready'], hw.n['mt_i76']),
-          ok0 and ok1 and hw0.n['mt_dcan.y'] == 0 and sw >= 20 and hw.n['mt_dready'] == sw and hw.n['mt_dtick'] >= 0
+          % (t_off, c_off, t_on, c_on, sw, hw.given / 1e6, hw.n['mt_dready.w'], hw.n['mt_i76']),
+          ok0 and ok1 and hw0.n['mt_dwait.out'] == 0 and sw >= 20 and hw.n['mt_dready.w'] == sw and hw.n['mt_dtick'] >= 0
           and c_on > c_off and t_on < 1.05 * t_off and hw.n['mt_i76'] > sw and not k.crashed,
           (ok0, ok1, dict(hw.n), c_off, c_on, t_off, t_on))
     d = hw.depth
@@ -7379,7 +7489,7 @@ def t_hwait():
         ok = fs.get('\\B2.BIN') == data and not probs and (mode == 'd' or len(fs.get('\\W.DAT', b'')) == 64 * c)
         check('MTSPIN %s behind, %s (%d times held, %d switches at 9000h): the copy exact (%.2f s), MTSPIN counted %d, '
               'the FAT consistent' % (mode.split()[0].upper(), what, hw.n['mt_gate'],
-                                       hw.n['mt_dcan.y'] - hw.n['mt_dwait.u'], tc, c),
+                                       hw.sw(), tc, c),
               ok and c > 0 and hw.n['mt_gate'] > 0 and hw.n['mt_gate.no'] == 0 and not k.crashed,
               (ok, c, dict(hw.n), probs, len(fs.get('\\W.DAT', b''))))
     # 4. a dead IRQ 14 line (the drive never raises it): the tick ends the waits, and after two MT stops switching
@@ -7390,7 +7500,7 @@ def t_hwait():
     htk = k.pc.rd(mt_seg(k), k.Y['mt_htk'], 1)[0]
     check('IRQ 14 dead: the first two waits given away come back by the tick (the drive\'s status: done), then no more '
           'switches on the hard disk (%d declined); the copy exact (%.2f s against %.2f s with M12 off), MTSPIN counted %d'
-          % (hw.n['mt_dcan.no'], tc, t_off, c), htk == 2 and hw.n['mt_dcan.y'] == 2 and hw.n['mt_dtick'] >= 2
+          % (hw.n['mt_dcan.no'], tc, t_off, c), htk == 2 and hw.sw() == 2 and hw.n['mt_dtick'] >= 2
           and hw.n['mt_dcan.no'] > 20 and fs.get('\\B2.BIN') == data and not probs and tc < 1.05 * t_off and c > 0
           and not k.crashed, (htk, dict(hw.n), tc, probs))
     # 5. without multitasking: KHD's 9000h goes to the BIOS, which zeroes AH (the wait's status mask): kept round it
@@ -7413,7 +7523,7 @@ def t_hwait():
     typ(k, 'mtlaunch mtspin.com 200 c.txt', 1.0); typ(k, '', 0.2)
     typ(k, r'copy c:\big.bin c:\b2.bin', 0.1)
     k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen() or k.pc.crash, 60)
-    o1, sw = k.pc.text_screen(), hw.n['mt_dcan.y']
+    o1, sw = k.pc.text_screen(), hw.sw()
     k.pc.keys.append(ord('f'))
     k.pc.run_until(lambda: bool(A.disk_file(k, 'C.TXT')) or k.pc.crash, 60); k.run_for(1.0)
     fs, probs = hw_files(ata)
@@ -7473,14 +7583,17 @@ def t_dmaems():
     try:
         k = boot('mt_de.img', b'MULTITASK=1\r\n', 88, CL, TERMRUN, TERMFNT, mouse=True, fd_wait=True, disk_model='real')
         seg = mt_seg(k); n = collections.Counter()
-        at = {seg * 16 + k.Y[x]: x for x in ('mt_dcan.y', 'mt_dready', 'mt_eout')}
-        k.hooks.append(lambda pc: n.update([at[k.addr]]) if k.addr in at else None)
+        at = {seg * 16 + k.Y[x]: x for x in ('mt_dwait.out', 'mt_dwait.u', 'mt_dready.w', 'mt_eout')}   # (.out less .u,
+        # none to run, is a wait given away; mt_dready itself runs for 9101h and IRQ 6 both, as the timing has it: .w
+        # is a task made ready, once a wait; code_hooks: each counted exactly)
+        code_hooks(k, at, lambda a: n.update([at[a]]))
         k.select('CLAUDE.COM'); k.key(ktest.ENTER, settle=False); k.run_for(15.0)
         pc = k.pc
         check('Return on CLAUDE.COM in the Executive (its task reads it from the floppy, the 1520\'s drive timing): %d '
               'waits given away and back (%d), no EMS page register changed under a transfer (%d; the 1520 restarted '
-              'here before the fix), nothing crashed' % (n['mt_dcan.y'], n['mt_dready'], getattr(pc, 'fd_ems_write', 0)),
-              n['mt_dcan.y'] > 0 and n['mt_dready'] == n['mt_dcan.y'] and not getattr(pc, 'fd_ems_write', 0)
+              'here before the fix), nothing crashed' % (n['mt_dwait.out'] - n['mt_dwait.u'], n['mt_dready.w'],
+                                                          getattr(pc, 'fd_ems_write', 0)),
+              n['mt_dwait.out'] > n['mt_dwait.u'] and n['mt_dready.w'] == n['mt_dwait.out'] - n['mt_dwait.u'] and not getattr(pc, 'fd_ems_write', 0)
               and not pc.crash, (dict(n), pc.crash, pc.log[-4:]))
         k = boot('mt_de2.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, mouse=True, fd_wait=True, disk_model='real')
         k.key(ktest.CODE_P, settle=False); k.run_for(4.0)
@@ -7693,7 +7806,7 @@ def t_dwait():
         dw.m10(on)
         typ(k, 'cls', 0.3); t0 = k.pc.us; typ(k, 'copy pad.bin p.bin', 0.1)
         k.pc.run_until(lambda: 'copied' in k.pc.text_screen() or k.pc.crash, 60)
-        alone.append(((k.pc.us - t0) / 1e6, dw.n['mt_dcan.y'], A.disk_file(k, 'P.BIN') == want))
+        alone.append(((k.pc.us - t0) / 1e6, dw.n['mt_dwait.out'], A.disk_file(k, 'P.BIN') == want))
     (a0, s0, o0), (a1, s1, o1) = alone
     check('the copy alone (the 1520\'s drive timing): %.2f s with M10 off, %.2f s on (%d of its waits could have been '
           'given away, nobody to take them: no switch), both exact' % (a0, a1, s1),
@@ -7702,7 +7815,7 @@ def t_dwait():
     dw.m10(False)
     t_off, c_off = dw_run(k, '200 c0.txt', 'copy pad.bin p0.bin', 'copied')
     ok0 = A.disk_file(k, 'P0.BIN') == want
-    sw0 = dw.n['mt_dcan.y']
+    sw0 = dw.sw()
     dw.m10(True)
     t_on, c_on = dw_run(k, '200 c1.txt', 'copy pad.bin p1.bin', 'copied')
     ok1 = A.disk_file(k, 'P1.BIN') == want
@@ -7711,9 +7824,9 @@ def t_dwait():
           'off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d (%d switches at 9001h, back in %d 9101h, %d IRQ 6s through '
           'MT\'s hook): the waits given to MTSPIN, the copy within 10%% (a switch back is ~1.5 ms); both copies '
           'exact; no INT 13h while one waited, no transfer whose EMS window '
-          'changed under it, no time-out' % (t_off, c_off, t_on, c_on, dw.n['mt_dcan.y'], dw.n['mt_dready'],
+          'changed under it, no time-out' % (t_off, c_off, t_on, c_on, dw.sw(), dw.n['mt_dready.w'],
                                                 dw.n['mt_i0e']),
-          ok0 and ok1 and sw0 == 0 and dw.n['mt_dcan.y'] >= 20 and c_on > 5 * c_off and t_on < 1.10 * t_off
+          ok0 and ok1 and sw0 == 0 and dw.sw() >= 20 and c_on > 5 * c_off and t_on < 1.10 * t_off
           and pc.fd_reentry == 0 and pc.fd_frame_bad == 0 and pc.fd_timeouts == 0 and not k.crashed,
           (ok0, ok1, sw0, dict(dw.n), c_off, c_on, t_off, t_on, pc.fd_reentry, pc.fd_frame_bad, pc.fd_timeouts))
     d = dw.depth
@@ -7729,7 +7842,7 @@ def t_dwait():
         tc, c = dw_run(k, '120 c.txt ' + mode, 'copy pad.bin p.bin', 'copied')
         ok = A.disk_file(k, 'P.BIN') == want
         check('MTSPIN %s behind, %s (%d times held, %d switches at 9001h): the copy exact (%.2f s), MTSPIN counted %d; '
-              'no INT 13h while one waited' % (mode.upper(), what, dw.n['mt_gate'], dw.n['mt_dcan.y'], tc, c),
+              'no INT 13h while one waited' % (mode.upper(), what, dw.n['mt_gate'], dw.sw(), tc, c),
               ok and c > 0 and dw.n['mt_gate'] > 0 and dw.n['mt_gate.no'] == 0 and k.pc.fd_reentry == 0
               and k.pc.fd_frame_bad == 0 and not k.crashed,
               (ok, c, dict(dw.n), k.pc.fd_reentry, k.pc.fd_frame_bad))
@@ -7740,8 +7853,9 @@ def t_dwait():
     check('MTSPIN M behind, its own EMS page mapped in window 2 (the cache\'s) and checked on each count: it doesn\'t '
           'run while a cache fill holds the window (%d switches at 9001h), so its page and the copy are exact (%.2f s; '
           'MTSPIN counted %d, its pattern intact); no transfer whose window changed under it'
-          % (dw.n['mt_dcan.y'], tc, c), ok and c > 0 and dw.n['mt_dcan.y'] > 0 and k.pc.fd_frame_bad == 0
-          and not k.crashed, (ok, c, dict(dw.n), k.pc.fd_frame_bad))
+          % (dw.sw(), tc, c), ok and c > 0 and dw.n['mt_dwait.out'] > 0 and k.pc.fd_frame_bad == 0
+          and not k.crashed, (ok, c, dict(dw.n), k.pc.fd_frame_bad))   # (waits offered: given away or not, as
+                                                                      #  the cache's fills fall)
     # 4. behind: its INT 1Ch hook calls INT 21h (InDOS 0: its own task's) at interrupt time
     k, dw = fresh('mt_dw4.img')
     tc, c = dw_run(k, '120 c.txt h', 'copy pad.bin p.bin', 'copied')
@@ -7754,8 +7868,8 @@ def t_dwait():
     k, dw = fresh('mt_dw5.img')
     typ(k, 'mtlaunch mtspin.com 120 c.txt', 1.0); typ(k, '', 0.2)
     typ(k, 'copy pad.bin p.bin', 0.1)
-    k.pc.run_until(lambda: dw.n['mt_dcan.y'] >= 10, 20)
-    sw = dw.n['mt_dcan.y']
+    k.pc.run_until(lambda: dw.sw() >= 10, 20)
+    sw = dw.sw()
     k.pc.prtsc()
     k.pc.run_until(lambda: 'copied' in k.pc.text_screen() or k.pc.crash, 60); k.run_for(2.0)
     shots = [n for n in A.fatcheck.read_files(k.pc.drives[0].img) if 'SCREEN0' in n]
@@ -7765,8 +7879,8 @@ def t_dwait():
     # 6. MT_KILL of a task copying, in the middle of its copy
     k, dw = fresh('mt_dw6.img')
     typ(k, 'mtlaunch lcmd.com /c copy pad.bin p.bin', 0.5); typ(k, '', 0.2)
-    k.pc.run_until(lambda: dw.n['mt_dcan.y'] >= 10, 20)
-    sw = dw.n['mt_dcan.y']
+    k.pc.run_until(lambda: dw.sw() >= 10, 20)
+    sw = dw.sw()
     typ(k, 'mtlaunch /K:1', 3.0); line(k, ''); k.run_for(2.0)
     probs, files = A.fatcheck.check(bytes(k.pc.drives[0].img))
     got = A.disk_file(k, 'P.BIN')
@@ -7789,7 +7903,7 @@ def t_dwait():
     typ(k, 'mtlaunch mtspin.com 200 c.txt', 1.0); typ(k, '', 0.2)
     typ(k, 'copy pad.bin p.bin', 0.1)
     k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen() or k.pc.crash, 60)
-    o1, sw = k.pc.text_screen(), dw.n['mt_dcan.y']
+    o1, sw = k.pc.text_screen(), dw.sw()
     k.pc.keys.append(ord('f'))
     k.pc.run_until(lambda: bool(A.disk_file(k, 'C.TXT')) or k.pc.crash, 60); k.run_for(1.0)
     probs, _ = A.fatcheck.check(bytes(d.img))
@@ -7808,7 +7922,7 @@ def t_dwait():
     typ(k, 'mtlaunch mtspin.com 300 c.txt', 1.0); typ(k, '', 0.2)
     typ(k, 'dir b:', 0.1)
     k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen() or k.pc.crash, 60)
-    sw, to = dw.n['mt_dcan.y'], dw.n['mt_dtick']
+    sw, to = dw.sw(), dw.n['mt_dtick']
     k.pc.keys.append(ord('f')); k.run_for(2.0)
     k.pc.run_until(lambda: bool(A.disk_file(k, 'C.TXT')) or k.pc.crash, 60)
     check('B: with no disk, MTSPIN behind: each try switched away at 9001h (%d), back by MT\'s time-out (%d INT 13h '
@@ -7874,17 +7988,284 @@ def t_nodisk():
           'asked), not "Bad command or file name"', crit == 0 and 'Data error' in o and 'Bad command' not in o
           and 'HELLO' not in o, (crit, o[-300:]))
 
+def t_cwdmount():
+    """Each task's current directories go with the floppy's mount they are of (TX_MG, KDISK.INC rule 1): task 1's
+    LCMD in B:\\SUB; in task 0 another disk in B: (another serial, no SUB, a file over SUB's cluster) is mounted;
+    back in task 1 a relative ECHO > NEW.TXT goes to the new disk's root (its SUB found again by name: none), the
+    file over SUB's cluster whole; the same with task 1 run, and switched from, before it looks at B: and task 0
+    looks again.  The first disk back before task 1 runs again: B:\\SUB still."""
+    import mkimg, fatcheck
+    def mkf(n, b):
+        p = os.path.join(A.OUT, 'mc_' + n.replace('\\', '_')); open(p, 'wb').write(b); return n + '=' + p
+    b1 = mkimg.build(os.path.join(A.OUT, 'mc1.img'), ['SUB\\', mkf('SUB\\A.TXT', b'a' * 100)])
+    b2 = mkimg.build(os.path.join(A.OUT, 'mc2.img'), [mkf('BIG.TXT', (b'B' * 480 + b'\0' * 32) * 39)])
+    d2 = bytearray(open(b2, 'rb').read()); d2[0x27:0x2B] = b'\x12\x34\x56\x78'; d2 = bytes(d2)
+    big = fatcheck.read_files(d2)['A:\\BIG.TXT']
+    for back in (False, 'twice', True):
+        k = boot('mt_cwd.img', b'MULTITASK=1\r\n', 88, b=b1)
+        sh = Shell(k); sh.run('ver')
+        typ(k, 'start lcmd.com', 1.0)
+        line(k, 'b:'); line(k, 'cd sub')
+        front(k, 0); k.run_for(0.5)
+        first = k.pc.drives[1]
+        other = pcemu.Floppy(bytearray(d2)); other.changed = True; k.pc.drives[1] = other
+        sh.run('dir b:')
+        if back is True:
+            first.changed = True; k.pc.drives[1] = first
+            sh.run('dir b:')
+        if back == 'twice':                     # (task 1 switched from with its look still due: TX_MG not
+            front(k, 1); k.run_for(0.5)         #  this mount's then)
+            front(k, 0); k.run_for(0.5)
+            sh.run('dir b:')
+        front(k, 1); k.run_for(0.5)
+        line(k, 'cd'); first_cd = k.pc.text_screen()
+        line(k, 'echo hello>new.txt'); line(k, 'cd')
+        scr = k.pc.text_screen()
+        if back is False:
+            check('... task 1\'s first CD (47h, its B: directory unknown: another mount\'s) finds it again first, as '
+                  'MS-DOS\'s ValidateCDS: B:\\ (no SUB there), not the old B:\\SUB', 'B:\\SUB>cd\nB:\\\n' in first_cd,
+                  first_cd[-160:])
+        if back is not True:
+            f = fatcheck.read_files(bytes(other.img)); probs = fatcheck.check(bytes(other.img))[0]
+            check('B:\\SUB current in task 1, another disk mounted in task 0%s: task 1\'s ECHO > NEW.TXT goes to that '
+                  'disk\'s root (B:\\), BIG.TXT over SUB\'s cluster whole' % ('' if not back else
+                  ', task 1 in front and back before it looks, task 0 looking again'), f.get('A:\\NEW.TXT') == b'hello\r\n'
+                  and f.get('A:\\BIG.TXT') == big and not probs and 'B:\\>cd\nB:\\\n' in scr, (scr[-200:], probs))
+        else:
+            f = fatcheck.read_files(bytes(first.img)); probs = fatcheck.check(bytes(first.img))[0]
+            check('... the first disk back (mounted again in task 0) before task 1 runs: task 1\'s B:\\SUB found '
+                  'again by name, NEW.TXT there, the other disk untouched', f.get('A:\\SUB\\NEW.TXT') == b'hello\r\n'
+                  and not probs and bytes(other.img) == d2 and 'B:\\SUB>cd\nB:\\SUB\n' in scr, (scr[-200:], probs))
+    # the same disk, changed elsewhere (SUB moved to another cluster, its old one NEW.TXT's, all past FAT sector 0
+    # and the root's first), seen by task 0's look: task 1's B:\A\SUB found again by name when it runs (each look
+    # that takes a disk for the same one counts in mlook: TX_ML not that anymore)
+    bm = mkimg.build(os.path.join(A.OUT, 'mcm.img'), [mkf('K.TXT', b'k' * 3000), mkf('PAD.BIN', b'p' * (400 * 512)),
+                                                      'A\\', 'A\\SUB\\', mkf('A\\SUB\\F.TXT', b'f' * 100)])
+    k = boot('mt_cwd.img', b'MULTITASK=1\r\n', 88, b=bm)
+    sh = Shell(k); sh.run('ver')
+    typ(k, 'start lcmd.com', 1.0)
+    line(k, 'b:'); line(k, 'cd a\\sub'); line(k, 'dir')
+    front(k, 0); k.run_for(0.5)
+    sh.run('dir b:\\')
+    d = k.pc.drives[1].img
+    def sec(c): return (33 + c - 2) * 512
+    def fset(c, v):
+        for base in (512, 512 + 9 * 512):
+            o_ = base + c * 3 // 2; w = d[o_] | d[o_ + 1] << 8
+            w = (w & 0x000F) | (v << 4) if c & 1 else (w & 0xF000) | v
+            d[o_] = w & 255; d[o_ + 1] = w >> 8
+    ia = bytes(d).find(b'A          ', 19 * 512); X0 = struct.unpack('<H', d[ia + 26:ia + 28])[0]
+    isub = bytes(d).find(b'SUB        ', sec(X0)); X = struct.unpack('<H', d[isub + 26:isub + 28])[0]; Y = 1000
+    d[sec(Y):sec(Y) + 512] = d[sec(X):sec(X) + 512]; d[sec(Y) + 26:sec(Y) + 28] = struct.pack('<H', Y)
+    d[isub + 26:isub + 28] = struct.pack('<H', Y)
+    j = sec(X0) + 32
+    while d[j] not in (0, 0xE5): j += 32
+    ent = bytearray(d[isub:isub + 32]); ent[0:11] = b'NEW     TXT'; ent[11] = 0x20
+    ent[26:28] = struct.pack('<H', X); ent[28:32] = struct.pack('<I', 512)
+    d[j:j + 32] = ent; d[sec(X):sec(X) + 512] = b'N' * 512; fset(Y, 0xFFF); fset(X, 0xFFF)
+    k.pc.drives[1].changed = True
+    sh.run('dir b:\\')
+    front(k, 1); k.run_for(0.5)
+    line(k, 'cls'); line(k, 'dir'); line(k, 'copy b:\\k.txt z.txt')
+    scr = k.pc.text_screen(); im = bytes(k.pc.drives[1].img); f = fatcheck.read_files(im)
+    check('B:\\A\\SUB current in task 1; in task 0 the disk, SUB moved on it elsewhere, taken for the same: task 1\'s '
+          'SUB found again by name (DIR lists F.TXT), COPY into it, NEW.TXT whole, the disk consistent',
+          'F        TXT' in scr and f.get('A:\\A\\SUB\\Z.TXT') == b'k' * 3000 and f.get('A:\\A\\NEW.TXT') == b'N' * 512
+          and not fatcheck.check(im)[0], (scr[-200:], fatcheck.check(im)[0][:3]))
+
+def t_rdmt():
+    """RMDIR of another task's current directory refused (16, as MS-DOS's: it checks every CDS; KMT.INC mt_rd):
+    task 1's LCMD in B:\\SUB (and C:\\SUB on a hard disk; and B:\\SUB with task 1 parked in EMS), task 2's LCMD
+    deletes SUB's file and removes SUB: refused ("Invalid path, not directory, or directory not empty"), then a
+    file over the cluster SUB would have freed; back in task 1, DIR and a COPY into its directory: SUB's, the
+    other file whole, the disk consistent.  SUB another task's no more (task 1 in B:\\): removed."""
+    import mkimg, fatcheck, test_hd as H
+    def mkf(n, b):
+        p = os.path.join(A.OUT, 'rd_' + n.replace('\\', '_')); open(p, 'wb').write(b); return n + '=' + p
+    lc = open(A.LCMD.split('=')[-1], 'rb').read()
+    for drv, how in (('b', ''), ('c', ''), ('b', 'parked'), ('b', 'moved')):
+        b1 = mkimg.build(os.path.join(A.OUT, 'rdb1.img'), [mkf('K.TXT', b'k' * 3000), 'SUB\\', mkf('SUB\\F.TXT', b'f' * 100)])
+        files = ['LODEMT.SYS=' + MTSYS, A.LCMD, MTL, ini(b'MULTITASK=1\r\n')]
+        kw = {'ata': H.drive(H.std()[0])} if drv == 'c' else {}
+        k = ktest.KPC(A.image('mt_rd.img', *files), open(b1, 'rb').read(), ems_pages=128, **kw)
+        k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc
+        ret(k, 'LCMD.COM', 2.0); k.run_for(1.0)
+        pre = ['md c:\\sub', 'echo f>c:\\sub\\f.txt'] if drv == 'c' else []
+        for c in pre + [drv + ':', 'cd sub'] + (['cd \\'] if how == 'moved' else []): line(k, c)
+        front(k, 0); k.run_for(0.5)
+        ret(k, 'LCMD.COM', 2.0); k.run_for(1.0)
+        if how == 'parked':
+            line(k, 'mtlaunch /p:1'); k.run_for(1.0)
+        line(k, 'cls')
+        for c in ['del %s:\\sub\\f.txt' % drv, 'rd %s:\\sub' % drv, 'copy a:lcmd.com %s:\\big.txt' % drv]:
+            line(k, c); k.run_for(1.0)
+        s2 = pc.text_screen()
+        st = tstate(k)[0]
+        if how == 'parked':
+            line(k, 'mtlaunch /u:1'); k.run_for(1.0)
+        t1 = [t for t, s_, nm in st if nm.startswith('LCMD')][0]
+        front(k, t1); k.run_for(1.0)
+        for c in ['cls', 'cd', 'dir', 'copy %s:\\big.txt z.txt' % drv]: line(k, c); k.run_for(1.0)
+        s1 = pc.text_screen()
+        refused = 'Invalid path, not directory' in s2
+        tag = {'': '', 'parked': ', task 1 parked in EMS meanwhile', 'moved': ''}[how]
+        if drv == 'b':
+            im = bytes(pc.drives[1].img); f = fatcheck.read_files(im); probs = fatcheck.check(im)[0]
+            if how == 'moved':
+                check('task 1\'s LCMD in B:\\ again: task 2\'s RD B:\\SUB removes it (no task\'s current directory)',
+                      not refused and 'A:\\SUB\\F.TXT' not in f and f.get('A:\\Z.TXT') == lc and not probs,
+                      (s2[-300:], sorted(f), probs))
+            else:
+                check('task 1\'s LCMD in B:\\SUB%s: task 2\'s RD B:\\SUB refused as MS-DOS refuses another CDS\'s '
+                      '(16, mt_rd), BIG.TXT whole, task 1\'s COPY into SUB, the disk consistent' % tag,
+                      refused and f.get('A:\\BIG.TXT') == lc and f.get('A:\\SUB\\Z.TXT') == lc and not probs,
+                      (s2[-300:], s1[-300:], sorted(f), probs))
+        else:
+            check('task 1\'s LCMD in C:\\SUB: task 2\'s RD C:\\SUB refused (the hard disk\'s too), task 1\'s COPY '
+                  'into it', refused and 'C:\\SUB>' in s1 and '1 File(s) copied' in s1, (s2[-300:], s1[-300:]))
+    # M: has one current directory for all tasks (no TX's: the kernel's own test): mt_rd leaves it alone.  Task
+    # 1 in A:\ABCDEFGH\IJKLMNO\C, its A: string's bytes 18-19 "C",0 (43h): read as an M: cluster, M:\X's (a
+    # pad of 65 clusters first) would be another task's
+    dirs = ['ABCDEFGH\\', 'ABCDEFGH\\IJKLMNO\\', 'ABCDEFGH\\IJKLMNO\\C\\']
+    files = ['LODEMT.SYS=' + MTSYS, A.LCMD, MTL, ini(b'MULTITASK=1\r\nMDISK=512\r\n'), mkf('PAD', b'p' * 65 * 1024)]
+    k = ktest.KPC(A.image('mt_rdm.img', *(files + dirs)), None, ems_pages=128)
+    k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc
+    ret(k, 'LCMD.COM', 2.0); k.run_for(1.0)
+    line(k, 'cd \\abcdefgh\\ijklmno\\c')
+    front(k, 0); k.run_for(0.5)
+    ret(k, 'LCMD.COM', 2.0); k.run_for(1.0)
+    line(k, 'cls')
+    for c in ['copy a:pad m:\\pad', 'md m:\\x', 'rd m:\\x', 'dir m:\\']: line(k, c); k.run_for(1.0)
+    s2 = pc.text_screen()
+    check('M: (one current directory for all tasks): task 2\'s MD M:\\X and RD M:\\X removes it, whatever task 1\'s '
+          'A: directory\'s name holds where an M: entry would be (mt_rd skips drives past NDRV)',
+          'Invalid path, not directory' not in s2 and '1 File(s) copied' in s2 and '<DIR>' not in s2.split('dir m:')[-1]
+          and 'PAD' in s2.split('dir m:')[-1], s2[-500:])
+
+def asks(band):
+    """The Executive's question about a floppy's changes that can't go out (UICORE.INC ui_int24) in its band"""
+    return any('Put the disk back in drive' in l for l in band)
+
+def t_dkeep():
+    """A floppy's changed FAT and an INT 24h nobody answered (KDISK.INC rule 4): MTKEEP, a task, writes B:K.TXT and
+    waits for a key; the Executive in front, B: emptied, MTADLY started: the Executive's own A: calls (A:'s FAT
+    loaded: B:'s looked at first, "Not ready", a FAT's write) are asked about in its band ("Put the disk back in
+    drive B:", as for 0Fh), B:'s changes kept meanwhile; the disk back, RETURN (Retry): MTADLY's create goes, and
+    MTKEEP's next write and close (K.TXT 4,200 bytes).  A text task's own prompt (mt_i24) for
+    another disk in says "Invalid disk change writing drive B", as COMMAND does; its Fail, the user's, drops the
+    changes (the write refused), the other disk untouched.  The Fails of Lodestone's other handlers that ask nobody
+    keep them too: LCMD's while Tab looks (its own work, no prompt in the line being edited); and before the
+    Executive EXECs a program (Shift-CODE-P's prompt loaded from A:) it asks for the program's attributes with its
+    own INT 24h in, so the question comes then, not the load failed by the kernel's default for nobody."""
+    import mkimg, fatcheck
+    kp = os.path.join(A.OUT, 'dk_k.txt'); open(kp, 'wb').write(b'k' * 3000)
+    b1 = open(mkimg.build(os.path.join(A.OUT, 'dk_b1.img'), ['K.TXT=' + kp]), 'rb').read()
+    b2 = open(mkimg.build(os.path.join(A.OUT, 'dk_b2.img'), ['O.TXT=' + kp]), 'rb').read()
+    files = ['LODEMT.SYS=' + MTSYS, A.LCMD, MTL, os.path.join(HERE, 'MTKEEP.COM'), os.path.join(HERE, 'MTADLY.COM'),
+             ini(b'MULTITASK=1\r\n')]
+    k = ktest.KPC(A.image('mt_dk.img', *files), b1, ems_pages=88)
+    k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc; d1 = pc.drives[1]
+    cd, auto = 0x600 + k.Y['crit_disk'], []
+    def hk(pc):
+        if k.addr == cd: auto.append(pc.rd(mt_seg(k), k.Y['mt_cur'], 1)[0])
+    k.hooks.append(hk)
+    ret(k, 'MTKEEP.COM', 1.0)
+    front(k, 0)
+    d1.empty = True; d1.changed = True
+    ret(k, 'MTADLY.COM', 0.3); front(k, 0); k.run_for(4.0)
+    crit, tail, q = pc.rd(mt_seg(k), k.Y['mt_crit'], 1)[0], ''.join(pc.tty)[-60:], k.band()
+    d1.empty = False; d1.changed = True
+    if asks(q): k.key(ktest.ENTER); k.run_for(2.0)
+    pc.keys.append(ord('r')); k.run_for(2.0)
+    n = [t for t, s, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
+    if n: front(k, n[0])
+    pc.keys.append(ord(' ')); k.run_for(4.0)
+    f = fatcheck.read_files(bytes(d1.img))
+    check('MTKEEP\'s B:K.TXT grown, the Executive in front, B: emptied, MTADLY started: the Executive\'s own A: '
+          'calls meet B:\'s look, and the Executive asks ("Put the disk back in drive B:", UICORE.INC ui_int24), '
+          'B:\'s changes kept meanwhile; the disk back, RETURN (Retry): MTADLY\'s RES.TXT made, MTKEEP\'s write and '
+          'close go, K.TXT 4,200 bytes, the disk consistent', 0 in auto and asks(q)
+          and A.disk_file(k, 'RES.TXT') == b'ok' and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'+0258 +')
+          and len(f.get('A:\\K.TXT', b'')) == 4200 and not fatcheck.check(bytes(d1.img))[0],
+          (auto, crit, tail, q, A.disk_file(k, 'RES.TXT'), A.disk_file(k, 'RES2.TXT'), len(f.get('A:\\K.TXT', b''))))
+    for lfirst in (False, True):
+        fl = files + [os.path.join(HERE, 'MTKEEP2.COM')]
+        k = ktest.KPC(A.image('mt_dk3.img', *fl), b1, ems_pages=88)
+        k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc; d1 = pc.drives[1]
+        ret(k, 'MTKEEP2.COM' if lfirst else 'MTKEEP.COM', 1.0)
+        front(k, 0)
+        if lfirst:                                  # LCMD loaded first, then B:'s FAT changed again
+            k.code_p(); k.run_for(1.0)
+            n = [t for t, s_, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
+            front(k, n[0]); pc.keys.append(ord(' ')); k.run_for(2.0); front(k, 0); k.run_for(0.5)
+        d1.empty = True; d1.changed = True
+        if not lfirst: k.code_p(); k.run_for(2.0)
+        else:
+            k.key('type a:\\lc'); k.key(ktest.TAB); k.run_for(2.0)
+        kept = (pc.rd(0x60, k.Y['fat_drv'], 1)[0], pc.rd(0x60, k.Y['fat_dirty'], 1)[0]); q = k.band()
+        if lfirst: k.key(ktest.ESC); k.key('exit'); k.key(ktest.ENTER); k.run_for(1.0); q = k.band()
+        d1.empty = False; d1.changed = True
+        if asks(q): k.key(ktest.ENTER); k.run_for(2.0)
+        if not lfirst: k.key('exit'); k.key(ktest.ENTER); k.run_for(1.0)
+        n = [t for t, s_, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
+        if n: front(k, n[0])
+        pc.keys.append(ord(' ')); k.run_for(4.0)
+        f = fatcheck.read_files(bytes(d1.img))
+        check('MTKEEP\'s B:K.TXT grown, B: emptied, %s: B:\'s look "Not ready", the Fail nobody was asked for '
+              '(%s): B:\'s changes kept; the disk back, MTKEEP\'s writes and close go, K.TXT %s bytes, the disk '
+              'consistent' % (('LCMD started first, Tab after "type a:\\lc" (its files looked for)', 'LCMD\'s, '
+              'while Tab looks', '4,800') if lfirst else ('Shift-CODE-P (the prompt loaded from A:, the Executive '
+              'asking first: the program\'s attributes (43h) with its INT 24h in, not the load failed by the kernel\'s for '
+              'nobody)', 'none: "Put the disk back in drive B:", RETURN', '4,200')), kept == (1, 1)
+              and (lfirst or asks(q))
+              and len(f.get('A:\\K.TXT', b'')) == (4800 if lfirst else 4200) and not fatcheck.check(bytes(d1.img))[0]
+              and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'+0258 +0258 +' if lfirst else b'+0258 +'),
+              (kept, q, len(f.get('A:\\K.TXT', b'')), A.disk_file(k, 'RES2.TXT')))
+    # Shift-Return (exec_raw, the kernel's INT 24h for the program) with the Executive's screen as it was: asked
+    k = ktest.KPC(A.image('mt_dk4.img', *files), b1, ems_pages=88)
+    k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc; d1 = pc.drives[1]
+    ret(k, 'MTKEEP.COM', 1.0); front(k, 0)
+    d1.empty = True; d1.changed = True
+    k.select('MTADLY.COM'); pc.wr(0x40, 0x17, b'\x02'); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    pc.wr(0x40, 0x17, b'\x00'); q = k.band()
+    d1.empty = False; d1.changed = True
+    if asks(q): k.key(ktest.ENTER, settle=False)
+    k.run_for(5.0); k.settle()
+    n = [t for t, s_, nm in tstate(k)[0] if nm.startswith('MTKEEP')]
+    if n: front(k, n[0])
+    pc.keys.append(ord(' ')); k.run_for(4.0)
+    f = fatcheck.read_files(bytes(d1.img))
+    check('MTKEEP\'s B:K.TXT grown, B: emptied, MTADLY run with Shift-Return (exec_raw: the kernel\'s INT 24h for '
+          'it): the Executive asks first, for the program\'s attributes with its own handler in ("Put the disk back in '
+          'drive B:"), not the load failed for nobody; the disk back, RETURN: MTADLY runs (RES.TXT), MTKEEP\'s write '
+          'and close go, K.TXT 4,200 bytes', asks(q) and A.disk_file(k, 'RES.TXT') == b'ok'
+          and len(f.get('A:\\K.TXT', b'')) == 4200 and not fatcheck.check(bytes(d1.img))[0],
+          (q, A.disk_file(k, 'RES.TXT'), len(f.get('A:\\K.TXT', b''))))
+    # MTKEEP in front (a text task, no INT 24h of its own: mt_i24 asks), another disk in B:
+    k = ktest.KPC(A.image('mt_dk2.img', *files), b1, ems_pages=88)
+    k.start(10); k.mcb0 = k.u16('first_mcb'); pc = k.pc
+    ret(k, 'MTKEEP.COM', 1.0)
+    o = pcemu.Floppy(bytearray(b2)); o.changed = True; pc.drives[1] = o
+    pc.keys.append(ord(' ')); k.run_for(3.0)
+    scr = pc.text_screen()
+    pc.keys.append(ord('f')); k.run_for(3.0)
+    check('... MTKEEP in front, another disk in B:, its write: asked "Invalid disk change writing drive B: Abort, '
+          'Retry, Fail?"; Fail: the write refused (5), its changes dropped, the other disk untouched',
+          'Invalid disk change writing drive B: Abort, Retry, Fail?' in scr and bytes(o.img) == b2
+          and (A.disk_file(k, 'RES2.TXT') or b'').startswith(b'-0005'), (scr[-300:], A.disk_file(k, 'RES2.TXT')))
+
 if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST', 'MTCLI'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST', 'MTCLI',
+              'MTKEEP', 'MTKEEP2', 'MTADLY'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/', '-i', HERE + '/',     # (MTLIB.INC)
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

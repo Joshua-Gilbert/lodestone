@@ -143,8 +143,13 @@ def t_window():
         check('... MT_WAKE asked: the wake is its task\'s (mt_wkt)', h.mb('mt_wkt') not in (0, 0xFF), h.mb('mt_wkt'))
         ok = h.run_until(lambda: 'CODE-Q quits' in h.band24(), 1)    # (a tick may switch CLAUDE out mid-band)
         check('... the status band in its shadow\'s row 24, published with the rest', ok, h.band24())
-        # the mascot: CLAUDE's own glyphs, drawn by TERM from its memory
+        # the window's rows at the Pi (EVENT 08h) and the stand-in's screen laid out again for them (SIGWINCH,
+        # its tick every 0.1 s) before the mascot goes in: its redraw after would wipe the mascot out
         t = h.router.term
+        ok = h.run_until(lambda: t.rows < 24, 10); seen = time.monotonic()
+        ok = ok and h.run_until(lambda: time.monotonic() - max(t.last_byte, seen) >= 0.3 and in_step(h), 20)
+        check('... the window\'s rows at the Pi (%d), Claude Code\'s screen laid out again for them' % t.rows, ok, t.rows)
+        # the mascot: CLAUDE's own glyphs, drawn by TERM from its memory
         with t.lock:
             t.stream.feed(('\x1b[2J\x1b[H' + ' \u2590\u259b\u2588\u2588\u2588\u259c\u258c\r\n'
                            '\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598\r\n').encode())

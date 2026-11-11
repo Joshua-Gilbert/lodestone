@@ -47,6 +47,11 @@ def build():
 
 def rom(): return open(ROM1, 'rb').read()
 def rom2(): return open(ROM2, 'rb').read()
+def rom2_files():
+    """ROM 2's files as build.sh puts them on it: [(name, path)]"""
+    b = open(os.path.join(GOS, 'build.sh')).read().replace('\\\n', ' ')
+    line = next(l for l in b.split('\n') if 'LODE2.BIN --data' in l)
+    return [(os.path.basename(f).upper(), os.path.join(GOS, f)) for f in line.split('--data', 1)[1].split()]
 
 def floppy(name, *files):
     return mkimg.build(os.path.join(OUT, name), list(files))
@@ -169,7 +174,7 @@ def mdir(img, name):
     return d, got
 
 def t_rom2():
-    """ROM 2 (LODE2.BIN: mkrom.py --data, DEFRAG.COM, TERM.FNT, PAINT.RUN and CLAUDE.COM on it) joined to R:
+    """ROM 2 (LODE2.BIN: mkrom.py --data, build.sh's files on it: DEFRAG, the fonts, Paint, CLAUDE.COM, the disk utilities) joined to R:
     beside ROM 1's files, in either socket; either ROM alone; the saver's
     DEFRAG from it; what it costs."""
     print('== ROM 2, joined to R:')
@@ -199,12 +204,13 @@ def t_rom2():
     p1 = img[254 * 512:255 * 512]
     check('ROM 2\'s spare sector 254: R:\'s FAT sector 1 with no ROM 1 (F8h, then all bad)',
           fat_get(p1, 0) == 0xFF8 and fat_get(p1, 1) == 0xFFF and all(fat_get(p1 + b'\xFF', n) == 0xFF7 for n in range(2, 342)), p1[:12].hex())
-    for tag, vol, want in (('with ROM 1', mkrom.joined(r1, img), 19), ('ROM 2 alone', mkrom.joined(None, img), 6)):
+    r2f = rom2_files(); n2 = len(r2f)
+    for tag, vol, want in (('with ROM 1', mkrom.joined(r1, img), 13 + n2), ('ROM 2 alone', mkrom.joined(None, img), n2)):
         d, got = mdir(vol, 'rom_join.bin')
-        check('mtools reads R: %s (built as KROM.INC maps it): %d files, 0 bytes free, DEFRAG.COM, TERM.FNT, PAINT.RUN, CLAUDE.COM, GRIDFONT.FNT and TERMINUS.FNT as built%s'
-              % (tag, want, ', LODE.SYS too' if want > 6 else ''), len(got) == want and ' 0 bytes free' in d
-              and got.get('DEFRAG.COM') == defrag and got.get('TERM.FNT') == fnt and got.get('PAINT.RUN') == paint
-              and got.get('CLAUDE.COM') == ccom and got.get('GRIDFONT.FNT') == gfnt and got.get('TERMINUS.FNT') == tfnt and (want == 6 or got.get('LODE.SYS') == open(os.path.join(GOS, 'src', 'LODE.SYS'), 'rb').read()), (sorted(got), d[-300:]))
+        check('mtools reads R: %s (built as KROM.INC maps it): %d files, 0 bytes free, ROM 2\'s (%s) as built%s'
+              % (tag, want, ', '.join(n for n, _ in r2f), ', LODE.SYS too' if want > n2 else ''), len(got) == want and ' 0 bytes free' in d
+              and all(got.get(n) == open(f, 'rb').read() for n, f in r2f)
+              and (want == n2 or got.get('LODE.SYS') == open(os.path.join(GOS, 'src', 'LODE.SYS'), 'rb').read()), (sorted(got), d[-300:]))
     big = bytes((i * 7 + i // 512) & 0xFF for i in range(60000))
     small = [('F%02d.TXT' % i, b'file %d\r\n' % i) for i in range(18)]    # (ROM 2's root past 16 entries: R:'s sector 6)
     r2 = mkrom.volume([('DEFRAG.COM', defrag), ('BIG.BIN', big)] + small, data=True)[0]
@@ -266,9 +272,9 @@ def t_rom2():
     prompt(k, 'copy r:\\claude.com a:\\')
     b = r_module(k); dt = b is not None and k.pc.rd(0x60, b + k.Y['r_dt'], 32)
     lo = b is not None and bytes(k.pc.rd(0x60, b + k.Y['r_lo'], 14)); img2 = b is not None and k.pc.rd(0x60, b + k.Y['r_img'], 2)
-    check('a floppy start with ROM 2 alone (its image the second, another ROM the first): R: is it (DEFRAG.COM, TERM.FNT, PAINT.RUN, '
-          'CLAUDE.COM and the two fonts, 6 files, 0 bytes free), read as built', 'DEFRAG   COM' in o and 'TERM     FNT' in o and 'PAINT    RUN' in o
-          and 'CLAUDE   COM' in o and 'GRIDFONT FNT' in o and 'TERMINUS FNT' in o and '6 File(s)' in o and ' 0 bytes free' in o
+    check('a floppy start with ROM 2 alone (its image the second, another ROM the first): R: is it (%s, %d files, 0 bytes free), '
+          'read as built' % (', '.join(n for n, _ in r2f), n2), all(('%-8s %-3s' % tuple((n + '.').split('.')[:2])) in o for n, _ in r2f)
+          and '%d File(s)' % n2 in o and ' 0 bytes free' in o
           and 'LODE     SYS' not in o and A.disk_file(k, 'DEFRAG.COM') == defrag and A.disk_file(k, 'TERM.FNT') == fnt and A.disk_file(k, 'PAINT.RUN') == paint and A.disk_file(k, 'CLAUDE.COM') == ccom, o)
     check('... R: the joined volume\'s geometry but its root ROM 2\'s half alone (sectors 5-6, 32 entries), its FAT sector 1 '
           'ROM 2\'s spare (254), the module kept whole', dt and struct.unpack_from('<H', dt, 8)[0] == 599 and dt[16] == 5 and dt[6] == 32
@@ -320,9 +326,10 @@ def t_rom2():
     for n in ('defrag.com', 'term.fnt', 'tasks.run', 'lode.ini'): prompt(k, 'copy r:\\%s a:\\' % n)
     got = [A.disk_file(k, n) == open(os.path.join(GOS, s), 'rb').read() for n, s in (('DEFRAG.COM', 'src/DEFRAG.COM'),
            ('TERM.FNT', 'fonts/TERM.FNT'), ('TASKS.RUN', 'apps/TASKS.RUN'), ('LODE.INI', 'rom/LODE.INI'))]
-    check('0.6\'s ROM 1 (its gap entries free) beside the new ROM 2, from a floppy: joined (19 files, 0 bytes free), ROM 1\'s '
-          'and ROM 2\'s files read as built, a write to R: refused, 36h for R: 0 free of 504',
-          '19 File(s)' in o and ' 0 bytes free' in o and all(got) and ('0 File(s) copied' in ow or 'File(s) copied' not in ow)
+    n2 = len(rom2_files())
+    check('0.6\'s ROM 1 (its gap entries free) beside the new ROM 2, from a floppy: joined (%d files, 0 bytes free), ROM 1\'s '
+          'and ROM 2\'s files read as built, a write to R: refused, 36h for R: 0 free of 504' % (13 + n2),
+          '%d File(s)' % (13 + n2) in o and ' 0 bytes free' in o and all(got) and ('0 File(s) copied' in ow or 'File(s) copied' not in ow)
           and re.findall(r'F36 ax=(\w+) bx=(\w+) cx=(\w+) dx=(\w+)', of)[:1] == [r1] and not k.crashed, (o, ow, of, got))
     # the saver's round of the disks: DEFRAG.COM from R: (the start-up drive's root) with ROM 2 in; without it, the clock
     seen = []
@@ -401,7 +408,7 @@ def t_boot():
         k = boot(**kw)
         hd = 'ata' in kw
         check('%s: the Executive, on %s' % (tag, 'C:' if hd else 'R:'), not k.crashed and k.pc.mode() == 0x40
-              and has(k, 'Lodestone 1.0') and has(k, 'Hard disk C:' if hd else 'ROM R:'), A.screen(k))
+              and has(k, 'Lodestone 1.1') and has(k, 'Hard disk C:' if hd else 'ROM R:'), A.screen(k))
         check('%s: started from R: (3305h), INT 21h 0Eh counts to R:' % tag, u8(k, 'bootdrv') == 17 and u8(k, 'lastdrv') == 18)
         e = env(k)
         ems = 'ems_pages' in kw
@@ -418,8 +425,7 @@ def t_rom2_free():
     file that grows (CLAUDE.COM, PAINT.RUN) changes the check until the doc is changed with it."""
     print('== ROM 2\'s room left, as the doc says')
     sh = open(os.path.join(GOS, 'build.sh'), 'rb').read().decode().replace('\r', '')
-    names = re.search(r'mkrom\.py LODE2\.BIN --data (.*)', sh).group(1).split()
-    img, left = mkrom.volume([(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names], data=True)
+    img, left = mkrom.volume([(n, open(f, 'rb').read()) for n, f in rom2_files()], data=True)
     doc = open(os.path.join(GOS, '..', 'docs', 'lodestone-rom.md'), encoding='utf-8').read()
     m = re.search(r'with ([0-9,]+) bytes \((\d+) sectors\) left', doc)
     said = (int(m.group(1).replace(',', '')), int(m.group(2))) if m else None
@@ -670,7 +676,7 @@ def t_menu():
     check('Shift held: the menu', '1  Lodestone' in s and "2  Lodestone with the ROM's own settings" in s and '4  The floppy in A:' in s, s)
     check('no other boot ROM: no GRiD MS-DOS in it', '3  GRiD MS-DOS' not in s)
     k.key(ord('1')); k.settle(20)
-    check('1: Lodestone', k.pc.mode() == 0x40 and has(k, 'Lodestone 1.0'))
+    check('1: Lodestone', k.pc.mode() == 0x40 and has(k, 'Lodestone 1.1'))
     k = boot(ata=sysinfo_hd(('LODE.INI', b'SPLASH=0\r\n')), shift=True, keys=[ord('2')])
     check('2: the ROM\'s own settings (C:\\LODE.INI not read)', u8(k, 'setdrv') == 0 and TS.ON in [m[0] for m in k.pc.marks])
     if os.path.exists(MSDOS):
@@ -828,11 +834,34 @@ def t_memory():
     return got
 
 
+def t_rom2_utils():
+    """The disk utilities from ROM 2: started from the ROM, PATH finds CHKDSK and FORMAT on R:, and FORMAT /S
+    takes the system from R:, the start-up drive."""
+    print('== The disk utilities from ROM 2')
+    b = os.path.join(OUT, 'rom_fb.img'); open(b, 'wb').write(bytes(1474560))
+    k = boot(floppy('rom_u.img', LCMD), sock=1, roms={0: rom2(), 1: rom()}, b=b)
+    to_prompt(k)
+    o = prompt(k, 'chkdsk a:', 20)
+    check('CHKDSK A: from the ROM: R:\\CHKDSK.COM by PATH, the floppy checked', 'bytes total disk space' in o
+          and '1 user files' in o and 'Bad command' not in o, o)
+    k.key('cls'); k.key(ktest.ENTER); k.key('format b: /s'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: 'strike ENTER' in k.pc.text_screen(), 20)
+    k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: 'another (Y/N)?' in k.pc.text_screen(), 300)
+    k.key('n'); k.settle(10)
+    o = k.pc.text_screen()
+    img = bytes(k.pc.drives[1].img)
+    got = A.fatcheck.read_files(img)
+    want = {n: open(os.path.join(GOS, 'src', n), 'rb').read() for n in ('LODE.SYS', 'LODEMT.SYS', 'LODE.PIC', 'LCMD.COM')}
+    check('FORMAT B: /S from the ROM: R:\\FORMAT.COM by PATH, the system from R: (the start-up drive), as built',
+          'System transferred' in o and all(got.get('A:\\' + n) == v for n, v in want.items()), (o, sorted(got)))
+
+
 if __name__ == '__main__':
     t0 = time.time()
     if 'nobuild' not in sys.argv: build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_free, t_rom2_paint, t_rom2_fonts, t_rom2_claude, t_pipe):
+    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_free, t_rom2_paint, t_rom2_fonts, t_rom2_claude, t_rom2_utils, t_pipe):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

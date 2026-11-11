@@ -92,10 +92,22 @@ MD_IBUF equ 0F000h                      ; md_boot: LODE.INI, past the load image
 %endmacro
 
 section mdt
-md_tstart:                              ; (the template: from here)
-md_res:
-md_dt:  times DRVSZ db 0                ; M:'s drive table entry
-md_cwd: times CWDLEN db 0               ; its current directory
+%if CWDLEN != MD_CWDL
+%error "MD_CWDL: CWDLEN"
+%endif
+md_tstart equ   $ - CWDLEN              ; (the template: from here; the section
+md_res  equ     md_tstart               ;  starts past md_cwd: LODE.ASM)
+md_cwd  equ     md_res                  ; its current directory (not in the
+                                        ;  file: md_load writes "\")
+md_dt:  db      80h + MD_DRV, 1, 1 << MD_SHIFT, 1   ; M:'s drive table entry:
+        dw      1, 0, 0, 0, 255, 1      ;  what md_geom doesn't work out (D_UNIT:
+        dw      0, 0, 0, 0, 0           ;  fixed, no change line; D_SPT: write
+        db      MD_SHIFT, 1             ;  runs, no tracks), its template
+        dw      2
+        db      0F8h, 0
+%if $ - md_dt != DRVSZ
+%error "md_dt: DRVSZ"
+%endif
 
 ; use_drive: M:'s entry
 md_use: cmp     al, MD_DRV
@@ -468,9 +480,14 @@ md_load:
         push    ds
         push    cs
         pop     ds
-        mov     si, md_res
-        xor     di, di
-        mov     cx, md_res_end - md_res
+        xor     di, di                  ; md_cwd: "\"
+        mov     ax, '\'
+        stosw
+        xor     ax, ax
+        mov     cx, (CWDLEN - 2) / 2
+        rep     stosw
+        mov     si, md_res + CWDLEN
+        mov     cx, md_res_end - md_res - CWDLEN
         rep     movsb
         mov     si, md_relp             ; + that
 .p:     lodsw
@@ -497,7 +514,6 @@ md_load:
         mov     di, md_dt - md_res
         mov     cx, DRVSZ
         rep     movsb
-        mov     word [es:md_cwd - md_res], '\'
         pop     ds
         ret
 
@@ -508,10 +524,14 @@ md_geom:
         push    es
         push    cs
         pop     es
+        push    ds
+        push    cs
+        pop     ds
+        mov     si, md_dt               ; (the template)
         mov     di, md_dte
         mov     cx, DRVSZ
-        xor     al, al
-        rep     stosb
+        rep     movsb
+        pop     ds
         mov     al, [cs:md_pg]
         xor     ah, ah
         shl     ax, 5
@@ -539,17 +559,6 @@ md_geom:
         inc     ax
         inc     ax
         mov     [cs:md_dte + D_NCL], ax
-        mov     byte [cs:md_dte + D_UNIT], 80h + MD_DRV ; (fixed: no change line)
-        mov     byte [cs:md_dte + D_MNT], 1
-        mov     byte [cs:md_dte + D_SPC], 1 << MD_SHIFT
-        mov     byte [cs:md_dte + D_SHIFT], MD_SHIFT
-        mov     byte [cs:md_dte + D_NFAT], 1
-        mov     byte [cs:md_dte + D_RSV], 1
-        mov     byte [cs:md_dte + D_SPT], 255   ; (write runs: no tracks)
-        mov     byte [cs:md_dte + D_HEADS], 1
-        mov     byte [cs:md_dte + D_PRES], 1
-        mov     byte [cs:md_dte + D_HINT], 2
-        mov     byte [cs:md_dte + D_MEDIA], 0F8h
         mov     di, MD_SCR              ; the boot sector
         mov     cx, 256
         xor     ax, ax
@@ -833,20 +842,6 @@ md_hooks:
         dw      dio, dio.hk, md_dio, md_dio.t
         dw      0
 
-; ---- the installer's own (here, in EMS) ----
-md_kb       dw  0                       ; the setting: KB (0 off, FFFFh all)
-md_pg       db  0                       ; M:'s pages (0: off)
-md_h        dw  0                       ;  in this handle
-md_mode     db  0                       ; 1 set, 2 at start-up
-md_mseg     dw  0                       ; its block
-md_delta    dw  0                       ; md_res's move: its block's offset from
-                                        ;  KSEG - md_res
-md_env      dw  0                       ; the master environment
-md_envp     dw  0                       ;  and its size before the split
-md_keep     times 3 db 0                ; (a place hooked without a .t: none now)
-md_ld       db  0                       ; INT 21h 0Eh's count before M:
-md_dte      times DRVSZ db 0            ; M:'s drive table entry, made here
-
 ; the words in md_res that move with it (from md_res), each list ended
 ; by FFFFh: its own addresses (+), its near jumps to the kernel (-)
 md_relp:
@@ -872,8 +867,25 @@ md_relh:                                ; (and in handle 0's record: + 4 * M:'s)
         dw      0FFFFh
 md_tend:
 MD_TLEN equ md_tend - md_tstart
+; ---- the installer's own (here, in EMS, after the template: not in the
+; file; ems_init's zeros) ----
+[absolute md_tend]
+md_kb       resw 1                      ; the setting: KB (0 off, FFFFh all)
+md_pg       resb 1                      ; M:'s pages (0: off)
+md_h        resw 1                      ;  in this handle
+md_mode     resb 1                      ; 1 set, 2 at start-up
+md_mseg     resw 1                      ; its block
+md_delta    resw 1                      ; md_res's move: its block's offset from
+                                        ;  KSEG - md_res
+md_env      resw 1                      ; the master environment
+md_envp     resw 1                      ;  and its size before the split
+md_keep     resb 3                      ; (a place hooked without a .t: none now)
+md_ld       resb 1                      ; INT 21h 0Eh's count before M:
+md_dte      resb DRVSZ                  ; M:'s drive table entry, made here
+md_bend:
+MD_BLEN equ md_bend - md_tend
 [absolute 0]
-        times MD_SCR - MD_TPG - MD_TLEN resb 1  ; (it fits before the scratch)
+        times MD_SCR - MD_TPG - MD_TLEN - MD_BLEN resb 1  ; (it fits before the scratch)
 section mdt
 ; each place must have room for the jump: 3 bytes or more (whole
 ; instructions that don't jump, or KHD.INC's jump), and the stub must fit

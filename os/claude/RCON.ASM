@@ -1256,7 +1256,8 @@ bg_count:                               ; a request run in the background (the
         inc     byte [bg_n]
 .x:     ret
 
-rc_i24: mov     al, 3                   ; a critical error: fail the call
+rc_i24: mov     al, 83h                 ; a critical error: fail the call,
+                                        ;  nobody asked (the kernel's rule 4)
 rc_i23: iret                            ; ^C: nothing (the call goes on)
 
 %include "OPS.INC"

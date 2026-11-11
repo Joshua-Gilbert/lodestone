@@ -1,6 +1,6 @@
 # Lodestone
 
-A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display), with GRiD's own look and feel. The whole base suite fits in one 128 KB EPROM: the kernel, the Executive, the command prompt, System, Write, the calculator and the terminal window. A second EPROM adds DEFRAG, Paint and Claude. It boots from that EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them. It can also multitask: several DOS programs run at once, preemptively, each full screen or in a window beside the Executive (`MULTITASK=1`).
+A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display), with GRiD's own look and feel. The whole base suite fits in one 128 KB EPROM: the kernel, the Executive, the command prompt, System, Write, the calculator and the terminal window. A second EPROM adds DEFRAG, the disk utilities, Paint and Claude. It boots from that EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them. It can also multitask: several DOS programs run at once, preemptively, each full screen or in a window beside the Executive (`MULTITASK=1`).
 
 Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB bus, Claude Code runs on the GRiD's screen and works with its files, its programs and the instruments on the bus.
 
@@ -16,6 +16,8 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 | System: where the 640 KB goes, and the EMS | System: the floppy, the internal hard disk as C: (the 1520's own 121 MB Conner layout) and M:, the RAM disk |
 | ![Write](os/screens/readme/write.png) | ![BENCH](os/screens/readme/bench.png) |
 | Write, a GRiDWrite-style editor | BENCH 1.4 on Lodestone with EMS |
+| ![CHKDSK](os/screens/readme/chkdsk.png) | ![FORMAT B: /S](os/screens/readme/format.png) |
+| CHKDSK at the prompt, as DOS 3.30's (ROM 2's utilities) | FORMAT B: /S on a disk never formatted: each track verified, the system copied |
 | ![The calculator](os/screens/readme/calculator.png) | ![CALC at the prompt](os/screens/readme/calc_prompt.png) |
 | The calculator over the Executive (CODE-K); the coprocessor lit in the info line (the emulator's is 387-class, so it reads as a 287XL) | `CALC` at the command prompt: sums, errors with ERRORLEVEL, `name=` for batch files |
 | ![Claude Code on the GRiD](os/screens/readme/claude_code.png) | ![A plot from Claude Code](os/screens/readme/claude_plot.png) |
@@ -38,7 +40,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 **Drives**
 - **A:** and **B:**, the internal and external floppy drives.
 - **C:**, any IDE drive or CompactFlash card with a FAT16 partition up to 2 GB (DOS's limit, with 32 KB clusters). Lodestone drives it through its own registers, because the 1520's BIOS only knows a few Conner models. Without a drive, nothing is loaded.
-- **M:**, a RAM disk in EMS (256 KB by default, up to all the free EMS). It costs DOS programs no memory. Its files are gone at power-off or restart.
+- **M:**, a RAM disk in EMS (256 KB by default, up to all the free EMS). It costs DOS programs no memory. Its files are gone at power-off, and at a restart on the 1520, whose BIOS rewrites EMS (a board that keeps EMS keeps them over a warm restart).
 - **R:**, the ROM drive, when Lodestone's EPROM is fitted. It is read-only, and is mapped in only while a sector is read.
 
 **The Executive and its programs.** These run on one shared UI core, in Lodefont, Lodestone's own 8×16 font (GRiD's system font and others load from `.FNT` files).
@@ -76,6 +78,17 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - Every built-in that can fail sets ERRORLEVEL, so scripts can check each step. Claude writes scripts too.
 
 **Tools**
+- **`FORMAT`:** formats a floppy in A: or B:, as DOS 3.30's FORMAT: 1.44 MB or 720 KB in the 1520's drive (360 KB and 1.2 MB in a 5¼-inch one), each track verified and bad sectors fenced off. `/S` makes it start Lodestone (the system read before the new disk goes in, so it works with one drive), `/V` gives it a label, `/Q` is a quick format of a disk formatted before. Every floppy gets Lodestone's boot sector. `FORMAT C:` formats the hard disk after MS-DOS's warning: the partition C: is on keeps its layout, so the kernel goes on using it at once; a disk the kernel found no file system on (a new CompactFlash card, a damaged boot sector) gets a new FAT16 layout in its first FAT16 partition, then a restart. The whole disk is read before anything is written, and Esc there leaves it as it was. It is on ROM 2.
+- **`CHKDSK`:** checks a disk's file system as DOS 3.30's CHKDSK: A:, B:, C: or M:. Every chain is followed from its directory entry: cross links, chains into free or impossible clusters, loops, sizes that don't match, a subdirectory's `.` and `..`, the two FATs, lost clusters. `/F` writes the corrections (lost chains become `FILE0000.CHK`, ...; not on M:), `/V` lists the files. ERRORLEVEL 0 clean, 1 errors found, 2 couldn't check.
+- **`FDISK`:** the hard disk's partition table, as DOS 3.30's FDISK: the DOS partition made (the kind C: takes, 3 MB to 2 GB, to whole cylinders), set active, deleted; other systems' left alone. `FDISK /STATUS` shows it and `/PRI[:MB]` makes it without questions, for scripts. A change under the kernel's C: restarts Lodestone. A new disk: FDISK, FORMAT C:, restart.
+- **`SYS`:** makes a floppy with files on it start Lodestone: the boot sector, and the system from the start-up drive (R: from the ROM) or the one named, read first so one drive will do. Each file goes on under another name before the old one goes, so a failed write leaves the old system; the room is worked out before anything is written.
+- **`LABEL`:** shows and sets a disk's volume label (A:, B:, C:), in the root and in the boot sector's DOS 4 BPB; Enter alone offers to delete it.
+- **`DISKCOPY` and `DISKCOMP`:** copy and compare floppies track for track, as DOS 3.30's: two drives, or one with the disks swapped as asked (and the wrong disk put back in said). A target that isn't of the source's layout is formatted as it is written; the copy gets a new serial number (DOS 4's), so the kernel knows it for another disk. Unreadable source sectors are said and the copy goes on; `/V` reads each track back.
+- **`ATTRIB`**, **`XCOPY`**, **`TREE`:** DOS 3.30's, at the prompt and in batch files, beside the Executive's File form.
+  - `ATTRIB [+R|-R] [+A|-A] [+H|-H] [+S|-S] [name] [/S]` lists or sets attributes (hidden and system as DOS 5's: a hidden or system file is changed only by a command that changes H or S), never on directories or the label.
+  - `XCOPY source [destination] [/A /M /D:date /P /S /E /V /W]` reads as many files as fit in memory, then writes them; directories are made as needed. Each copy is made as a new file and takes its name only when all of it is there, as the Executive's Copy, so a full disk leaves the old destination as it was. `/V` reads each copy back. Paths are compared as the kernel reads them (8.3 parts), so no other spelling copies a file onto itself or a tree into itself.
+  - `TREE [d:] [/F]` lists the directories (and files), as DOS 3.30's.
+- **`FIND`, `MORE`, `SORT` and `COMP`:** DOS 3.30's filters and file compare. FIND (`/V /C /N`, files or its input), MORE (a screen at a time: its input or a file), SORT (`/R /+n`, 63 KB), COMP (byte for byte, wildcards, a directory or drive as the second name). Each sets ERRORLEVEL.
 - **`DEFRAG`:** defragments a floppy or C:. A power cut during any of its writes leaves the old file or the new one, never a damaged one. `DEFRAG /T` tests every free sector and fences off bad ones.
 - **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner. They drive the disk themselves, so with multitasking on they run only with no other task there.
 - **The rest:** BENCH, GRIDPROBE and others are in `tools/` and `os/bench/`.
@@ -108,19 +121,19 @@ On the 1520, BENCH from each kind of drive, in seconds:
 | Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
 | **All ten tests** | **87.6** | **9.1** | **2.1** |
 
-Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its memory figures 2026-11-04, with the Executive's right-click menu and a program's modes on it) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
+Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its memory figures 2026-11-09, with INT 21h F008h for a floppy its program wrote itself (given the sector as read and as written), a floppy's FAT written only after a look at its drive, a floppy's root's first sector part of what makes it the same disk, a disk changed under a transfer asked about there and then, a floppy's mount rules, the Executive's right-click menu, a program's modes on it, and MS-DOS's FCB search, names and CHDIR) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
 
 | | Lodestone | GRiD MS-DOS 3.30 | FreeDOS |
 |---|---:|---:|---:|
 | BENCH file-system total | **78.6** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **580.7 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 564.7 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **578.3 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 562.2 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
-- **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 15 KB more.
-- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 556.6 KB (557.5 before the Executive's right-click menu and a program's modes on it). The other 24.1 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
+- **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 16 KB more.
+- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 554.0 KB (554.2 before a Fail nobody was asked for was kept apart from the user's, the look at a floppy whose FAT is to go was asked as a write, a directory wasn't taken for the root when its disk can't be read, and a task's 0Fh prompt said "Invalid disk change"; 554.4 before INT 21h F008h checked what its program read and a floppy's FAT was written from another drive's call only after a look at its drive; 554.6 before a floppy's root's first sector was part of what makes it the same disk; 555.0 before a disk changed under a transfer was asked about there and then, each task's directories went with their mount and the 2-second rule for a drive without a change line; 555.6 before a floppy's mount rules: a file's mount number, "Invalid disk change" while files are open, the current directory found again by name; 556.1 before a failed write's rules and "Invalid disk change"; 556.6 before MS-DOS's FCB search, names and CHDIR; 557.5 before the Executive's right-click menu and a program's modes on it). The other 24.2 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
 - **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.4 KB when ROM 1 is there, 0.6 KB with ROM 2 as well.
 - **The Executive stays resident on purpose:** with multitasking on, it runs beside the tasks and windows.
 
@@ -130,11 +143,11 @@ The full tables, the method and every run on the 1520 are in `os/bench/RESULTS.T
 
 ### From an EPROM
 
-`os/build.sh` builds ROM 1, a 128 KB GRiD application ROM (a FAT12 volume in GRiD's own format). It holds the kernel, the command prompt, System, Write, the calculator, the terminal window (TERM.RUN) and the default settings. ROM 2 (`os/LODE2_EPROM.BIN`, a data ROM in the other socket) holds DEFRAG, the terminal window's font, Paint, CLAUDE.COM and the two other screen fonts (GRiD's and Terminus); its files show in R: beside ROM 1's.
+`os/build.sh` builds ROM 1, a 128 KB GRiD application ROM (a FAT12 volume in GRiD's own format). It holds the kernel, the command prompt, System, Write, the calculator, the terminal window (TERM.RUN) and the default settings. ROM 2 (`os/LODE2_EPROM.BIN`, a data ROM in the other socket) holds DEFRAG, the disk utilities (FORMAT, CHKDSK, FDISK, SYS, LABEL, DISKCOPY, DISKCOMP), ATTRIB, XCOPY, TREE, FIND, MORE, SORT and COMP, the terminal window's font, Paint, CLAUDE.COM and the two other screen fonts (GRiD's and Terminus); its files show in R: beside ROM 1's.
 
 1. Burn **`os/LODE1_EPROM.BIN`** to a 27C010 (the 1520's original part is a TMS27C010A). Don't burn `LODE1.BIN`: the 1520 inverts address line A16 to its ROM sockets, so the file to burn has its two halves swapped. The two have the same programmer checksum, so check the bytes: address 10000h starts `EB 3C 90` then `LODE ROM`.
 2. Fit it in the **second** socket, where GRiD MS-DOS's EPROM sits. The BIOS boots the last bootable ROM it finds. GRiD MS-DOS can move to the first socket, if ROM 2 isn't there.
-3. Burn **`os/LODE2_EPROM.BIN`** (ROM 2: DEFRAG.COM, TERM.FNT, PAINT.RUN, CLAUDE.COM) the same way and fit it in the **first** socket: a data ROM is never booted. GRiD MS-DOS then has no socket. Without ROM 2 everything works but DEFRAG, terminal windows, Paint and Claude: the screen saver shows only the dark clock, text programs start full screen, Return on a `.BMP` says PAINT.RUN is not on this disk, and CLAUDE.COM must be copied to `C:\LODE` (with no hard disk, run it from A:). **Burn both ROMs from one build** (`docs/lodestone-rom.md`, "Re-burning for O10"): a new ROM 1 doesn't join an older ROM 2 (`L2`, as 0.6's images), so it would lose DEFRAG, TERM.FNT, Paint and CLAUDE.COM.
+3. Burn **`os/LODE2_EPROM.BIN`** (ROM 2: DEFRAG.COM, FORMAT.COM, CHKDSK.COM, FDISK.COM, SYS.COM, LABEL.COM, DISKCOPY.COM, DISKCOMP.COM, ATTRIB.COM, XCOPY.COM, TREE.COM, FIND.COM, MORE.COM, SORT.COM, COMP.COM, TERM.FNT, PAINT.RUN, CLAUDE.COM) the same way and fit it in the **first** socket: a data ROM is never booted. GRiD MS-DOS then has no socket. Without ROM 2 everything works but DEFRAG, the disk utilities, terminal windows, Paint and Claude: the screen saver shows only the dark clock, text programs start full screen, Return on a `.BMP` says PAINT.RUN is not on this disk, and CLAUDE.COM and the disk utilities must be copied to `C:\LODE` (with no hard disk, run them from A:). **Burn both ROMs from one build** (`docs/lodestone-rom.md`, "Re-burning for O10"): a new ROM 1 doesn't join an older ROM 2 (`L2`, as 0.6's images), so it would lose DEFRAG, TERM.FNT, Paint and CLAUDE.COM.
 4. Hold **Shift** while the 1520 starts for the boot menu: Lodestone, Lodestone with the ROM's own settings, GRiD MS-DOS (from the other socket, without ROM 2), or the floppy.
 
 From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C:\LODE;R:\`. So a newer program copied to `C:\LODE` is used before the ROM's copy, and an update needs no new ROM. CLAUDE.COM is on ROM 2: a newer CLAUDE.COM in `C:\LODE` is used before it. See `docs/lodestone-rom.md`.
@@ -144,7 +157,8 @@ From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C
 1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODEMT.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `TASKS.RUN`, `CALC.COM`, `PAINT.RUN`, `SCREEN.PRN` (Shift-PrtSc's file writer), `TERM.RUN` and `TERM.FNT` (the terminal window, with `MULTITASK=1`: without them text programs start full screen) and whatever programs you want. The current release's files are in `os/releases/`.
 2. Under GRiD MS-DOS, run `LODEBOOT` on it once (`B:LODEBOOT B` when booted from the EPROM, where the floppy is B:).
 3. Restart and tap **F** as the memory count finishes, or choose the floppy from Lodestone's boot menu.
-4. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`) reads it at start-up and stays off if it doesn't match.
+4. Once Lodestone runs, `FORMAT B: /S` (or `A:`) makes another start-up floppy in one step: format, boot sector and the system files; copy the programs after.
+5. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`) reads it at start-up and stays off if it doesn't match.
 
 See `docs/lodestone-floppy-dev.md`.
 
@@ -152,7 +166,7 @@ See `docs/lodestone-floppy-dev.md`.
 
 | Folder | What |
 |---|---|
-| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
+| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `FORMAT.COM`, `CHKDSK.COM`, `FDISK.COM`, `SYS.COM`, `LABEL.COM`, `DISKCOPY.COM` (and `DISKCOMP.COM`, the same source), `ATTRIB.COM`, `XCOPY.COM`, `TREE.COM`, `FIND.COM`, `MORE.COM`, `SORT.COM`, `COMP.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
 | `os/splash` | The start-up picture's source: the source image, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
 | `os/rom` | `LODE.INI`, the settings burned into the ROM. The ROM images are `os/LODE1_EPROM.BIN` and `os/LODE2_EPROM.BIN` (to burn) and `os/LODE1.BIN` and `os/LODE2.BIN` (as the BIOS sees them), built by `os/build.sh` with `tools/mkrom.py` |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN` (the calculator's window), `TASKS.RUN` (the tasks, CODE-T), `PAINT.RUN` (Paint, and the BMP viewer) and `TERM.RUN` (a text program's terminal window, with `MULTITASK=1`) |
@@ -162,7 +176,7 @@ See `docs/lodestone-floppy-dev.md`.
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
 | `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys); resident Claude: `CLAUDE /R` (an INT 16h stub at the top of memory, its console `RCON.ASM` in EMS: Term's own code, Claude Code in the pop-up) and `CLAUDE /U`, with `M1TEST.BAT` for the 1520; `KEYCODE` (each key's INT 16h code, for the 1520); and the test programs `EMSUSE`, `GFXUSE`, `T1C`, `BUSY`, `MHAND`, `HOLE`, `HOOK16` and `PAGE1` |
 | `os/diag` | CRASHLOG, a diagnostic build for a crash that restarts the 1520: a flight recorder in MT and a catch for the restart through the BIOS's shutdown code, `CRASHRPT.COM` (the report to `CRASH.BIN`) and `crashdecode.py`; its own `README.md` says how to use it |
-| `os/releases` | Every release's files, 0.1 to 1.0 (0.6 and 1.0 have the ROM images too) |
+| `os/releases` | Every release's files, 0.1 to 1.1 (0.6, 1.0 and 1.1 have the ROM images too) |
 | `os/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `os/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `lodefont.py` and `typfont.py` (build the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB bridge (Pico 2 or AR488 Nano) ↔ Pi ↔ Claude (Term: the real Claude Code in a pty, with an MCP server for the GRiD's tools, plots and pictures; chat: the Claude API), `gridfox` (Firefox for the GRiD), the AR488 patch, and the tests |
@@ -209,7 +223,7 @@ See `docs/serial-link.md`. `os/tests/test_serial_kernel.py` builds it and checks
 
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,560 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools (and `pyte` for the four that run claude-link's terminal: test_claude_kernel, test_claude_mouse, test_claude_window, test_resident_term). All 3,340 checks pass (the 25 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -227,6 +241,14 @@ python3 tests/test_mt.py              # multitasking (MULTITASK=1), and nothing 
 python3 tests/test_hdprobe.py         # HDPROBE
 python3 tests/test_hdscan.py          # HDSCAN
 python3 tests/test_headcln.py         # HEADCLN
+python3 tests/test_format.py          # FORMAT: floppy sizes, bad sectors, /Q, /S, C: both ways, the kernel seeing the new disk
+python3 tests/test_chkdsk.py          # CHKDSK: damaged disks found and put right, floppies, C:, M:
+python3 tests/test_fdisk.py           # FDISK: the partition made, set active, deleted; a new disk to C:
+python3 tests/test_sys.py             # SYS: a floppy's files kept, the system and boot sector put on
+python3 tests/test_label.py           # LABEL: floppies and C:, the kernel seeing the new label
+python3 tests/test_diskcopy.py        # DISKCOPY and DISKCOMP: two drives, one with swaps, formatting, bad sectors
+python3 tests/test_filetools.py       # ATTRIB, XCOPY, TREE: switches, trees, a full disk, a file bigger than memory, paths as the kernel reads them, a terminal window
+python3 tests/test_filters.py         # FIND, MORE, SORT, COMP
 python3 tests/test_modemid.py         # MODEMID, against no modem, Option 330 and Option 331
 python3 tests/test_serial_kernel.py   # the -dSERIAL kernel: its link driver, SERLINK=, the GPIB build untouched
 python3 tests/defrag_cut.py 2         # a power cut at every DEFRAG write (~20 min; "2 hd" for C:)
@@ -237,21 +259,21 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 ## Status and what's next
 
-**Lodestone 1.0** is the current release. It boots from an EPROM on the 1520, and from a floppy. On the 1520:
+**Lodestone 1.1** is the current release. It boots from an EPROM on the 1520, and from a floppy. On the 1520:
 - the kernel, the Executive and its programs, EMS, C:, M: and the calculator on a real 80287 all work;
 - Claude Code works through the Pico 2 bridge, including gridfox, pictures and plots;
 - resident Claude works over a running program, including fetching and plotting an instrument trace.
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
-Multitasking works on the 1520, tasks running from its hard disk included, and so do Paint in a window and resident Claude reading the program's screen in the background (CLAUDE 1.11) and drawing the mascot in its console (1.12). Pipes from the ROM work there too, with a hard disk. Built since 0.6 and not yet tried there: the ROM's `TEMP=M:\` (which applies only without a hard disk), and SysReq as the task switcher.
+Multitasking works on the 1520, tasks running from its hard disk included, and so do Paint in a window and resident Claude reading the program's screen in the background (CLAUDE 1.11) and drawing the mascot in its console (1.12). Pipes from the ROM work there too, with a hard disk. Built since 0.6 and not yet tried there: the ROM's `TEMP=M:\` (which applies only without a hard disk), SysReq as the task switcher, FORMAT, CHKDSK, FDISK, SYS, LABEL, DISKCOPY, DISKCOMP, ATTRIB, XCOPY and TREE.
 
 **Next:**
 - **On the 1520:** the list above tried on the machine, and what it finds fixed.
 - **GRIDMODE.COM:** the BIOS's display functions (INT 15h E420h-E422h) from the prompt, as GRiD's MS-DOS `MODE` gave them: the panel type, the internal panel or the external RGB port, the colour map (how CGA colours become plasma or LCD greys, at 40:A7h) and the hardware text font. A tool beside GRIDMEM, not in ROM 1; SYSTEM to show the panel type too.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.
-- **The FreeDOS kernel calls:** INT 21h 60h/6Ch and IOCTL 440Dh, so FreeDOS's FORMAT, LABEL, XCOPY and the like run.
+- **The FreeDOS kernel calls:** INT 21h 60h/6Ch and IOCTL 440Dh, so FreeDOS's LABEL, XCOPY and the like run.
 
 Third-party material in the repo (the Terminus font, FreeDOS for the benchmark, the AR488 patch, the bridge firmware's libraries, TM5000G) and its licenses: [`THIRD_PARTY.md`](THIRD_PARTY.md).
 

@@ -56,6 +56,9 @@
 ;      which forgets a background program's event handler as it ends.
 ;    - f_48, mem_largest and f_4B.xe (5 bytes each) become far jumps to
 ;      mt_48, mt_largest and mt_xenv: a task's region grows (T5a).
+;    - f_3A.mt (RMDIR's CMP BYTE [r_name],0) becomes a far jump to mt_rd:
+;      another task's current directory is refused too (16, as MS-DOS).
+;  (mt_hooks, in mt_boot's section, lists the places.)
 ;    - gp_isr.e, the GPIB driver's EOI (MOV AL,20h / OUT 20h,AL / POP DS)
 ;      becomes a far jump to mt_srqi: a task woken by SRQ (MT_WAKE, T5c)
 ;      switched to at once, as at a tick's end.
@@ -123,8 +126,12 @@ V_DCWD      equ V_MCB + 2
 V_CWD       equ V_DCWD + 2 * NDRV
 V_DTA       equ V_CWD + (cur_drv + 1 - cwdstr)
 V_PSP       equ V_DTA + (rw_t0 + 1 - dta)
-TX_KSTK     equ (V_PSP + (term_keep + 2 - cur_psp) + 1) & ~1    ; (even, as
-                                        ;  kstack_top is: its words aligned)
+TX_MG       equ (V_PSP + (term_keep + 2 - cur_psp) + 1) & ~1    ; each
+                                        ;  floppy's mount its directories are
+                                        ;  of (mt_vsave, mt_vload)
+TX_ML       equ TX_MG + 2 * NFLOP       ; mlook as it was (mt_vsave, mt_vload)
+TX_KSTK     equ TX_ML + 2               ; (even, as kstack_top is: its words
+                                        ;  aligned)
 KSLICE      equ 256                     ; room for the kernel stack's slice
 TX_FPV      equ TX_KSTK + KSLICE        ; 1: its coprocessor state kept (0: FNINIT)
 TX_FPU      equ (TX_FPV + 2) & ~1       ; the state (FNSAVE's 94 bytes, even)
@@ -454,11 +461,6 @@ mt_ranges:  dw      indos, 1
             dw      dta, rw_t0 + 1 - dta
             dw      cur_psp, term_keep + 2 - cur_psp
             dw      0
-
-mt_tab:     dw      TS_RUN, 0, 0, 0, 0  ; task 0: the Executive (PSP, TX: mt_boot)
-            db      'Executive', 0, 0, 0
-            times   MT_ENT - (TE_NAME + TR_NAMELEN) db 0
-            times   (MT_TASKS - 1) * MT_ENT db 0
 
 ; the stub, copied to its PSP:0100h (DS = ES = SS = the PSP)
 st_code:
@@ -1438,10 +1440,32 @@ mt_emsget:
         jnc     .l
         ret
 
-; the kernel's variables (DS = KSEG) to the TX at ES, or back.  .r: the
+; the kernel's variables (DS = KSEG) to the TX at ES, or back (AX too
+; changed).  .r: the
 ; ranges at CS:BX, DS:x to ES:DI (mw_save's too), or ES:x from DS:SI with
 ; DS and ES swapped back after (mw_load_ctx's)
+; Each floppy's mount (mgen) goes with the task's current directories
+; (TX_MG): not that mount's if a look is due that finds them again (D_CHK
+; 2); and the count of looks that took a disk for the same one, which may
+; have changed elsewhere (mlook: TX_ML).  Back, another mount's, or any
+; such look since (16 bits: 65536 of them while the task waits would be
+; taken for none), and its floppies' are unknown, found again by name at
+; the next path call (resolve's cwd_find, KDISK.INC rule 1), else the
+; root: no look forced
 mt_vsave:
+        mov     ax, [mlook]
+        mov     [es:TX_ML], ax
+        mov     bx, 2 * (NFLOP - 1)
+.g:     mov     ax, [mgen+bx]
+        mov     si, bx
+        shl     si, 4                   ; (DRVSZ / 2)
+        cmp     byte [drvtab+si+D_CHK], 2
+        jb      .g1                     ; (3: unmount's, rule 9)
+        not     ax
+.g1:    mov     [es:TX_MG+bx], ax
+        dec     bx
+        dec     bx
+        jns     .g
         mov     bx, mt_ranges
         mov     di, V_INDOS
 .r:     mov     si, [cs:bx]
@@ -1459,7 +1483,22 @@ mt_vload:
         pop     es                      ; (to KSEG: ES)
         mov     bx, mt_ranges
         mov     si, V_INDOS
-.r:     mov     di, [cs:bx]
+        call    .r
+        mov     cx, [es:TX_ML]          ; (after: D_CWD is the task's now)
+        sub     cx, [mlook]
+        mov     bx, 2 * (NFLOP - 1)
+.g:     mov     ax, [es:TX_MG+bx]
+        cmp     ax, [mgen+bx]
+        jne     .gu
+        jcxz    .g1
+.gu:    mov     si, bx
+        shl     si, 4
+        or      word [drvtab+si+D_CWD], -1
+.g1:    dec     bx
+        dec     bx
+        jns     .g
+        ret
+.r:     mov     di, [cs:bx]             ; (KMW.INC's mw_load_ctx's too)
         or      di, di
         jz      .x
         mov     cx, [cs:bx+2]
@@ -1781,7 +1820,7 @@ mt_owners:
         mov     es, ax                  ; a program's: its files, then its EMS
         cmp     word [es:0], 20CDh      ;  and its blocks (this one and on: the
         jne     .f                      ;  walk goes on); its end told to the UI
-        KCALL   close_all               ;  as terminate does (ui_progend: its
+        KCALL   close_allt              ;  as terminate does (ui_progend: its
         push    ax                      ;  mouse handler forgotten, m33_busy
         push    bx                      ;  cleared if it ended inside it)
         push    es
@@ -2007,8 +2046,11 @@ mt_i24: sti
         mov     si, s_24e               ; what: by the error's code (DI)
         mov     ax, di
         cmp     al, 2
-        jne     .w
+        jne     .i
         mov     si, s_24n
+.i:     cmp     al, 0Fh                 ; (as MS-DOS's COMMAND says it)
+        jne     .w
+        mov     si, s_24i
 .w:     or      al, al
         jnz     .m
         mov     si, s_24w
@@ -2047,6 +2089,7 @@ mt_i24: sti
         pop     ds
         popa
         iret
+        nop                             ; (never run: what follows as it was)
 .pr:    lodsb
         or      al, al
         jz      .x
@@ -2065,6 +2108,7 @@ s_24c   db      13, 10, 0
 s_24e   db      'Disk error', 0
 s_24n   db      'Not ready', 0
 s_24w   db      'Write protect error', 0
+s_24i   db      'Invalid disk change', 0
 s_24r   db      ' reading drive ', 0
 s_24wr  db      ' writing drive ', 0
 s_24q   db      ': Abort, Retry, Fail? ', 0
@@ -3761,7 +3805,7 @@ mt_end: call    mt_cent                 ; (first: a call refused changes
                                         ;  it inside: mt_swing, mt_vbusy)
         call    mt_fdrain               ; (before mt_load's FRSTOR; then
         sti                             ;  interrupts on, as INT 21h had them)
-        KCALL   close_all
+        KCALL   close_allt              ; (an Abort in its closes: Fail)
         mov     ax, [last_exit]
         mov     es, [cs:bx+TE_PSP]      ; (its program not started: FFxxh)
         cmp     byte [es:ST_FAIL + 1], 0FFh
@@ -6176,7 +6220,10 @@ mt_vcall:
 
 ; crit_disk.c24: the kernel's INT 24h (the critical error's prompt),
 ; counted while it runs (mt_crit): mt_v10 puts what it prints on the real
-; screen, since everything waits for its answer
+; screen, since everything waits for its answer.  A background task's
+; behind a graphics screen is Fail, an invalid disk change's too: held
+; there, the others couldn't use a disk (the transfer's state is the
+; kernel's) and nobody could see the question
 mt_c24: push    ds                      ; (a task not in front, a graphics
         push    ax                      ;  screen in front: Fail, not a
         mov     al, [cs:mt_cur]         ;  prompt, its handler's or
@@ -6191,8 +6238,8 @@ mt_c24: push    ds                      ; (a task not in front, a graphics
         jbe     .p
         pop     ax
         pop     ds
-        mov     al, 3
-        retf
+        mov     al, 83h                 ; (Fail, nobody asked: the disk's
+        retf                            ;  changes kept, KDISK.INC rule 4)
 .p:     pop     ax
         pop     ds
 .f:     mov     si, crit_dev
@@ -6390,8 +6437,8 @@ mt_i77: push    ax
 mt_dready:
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_WAITD
-        jne     .x
-        mov     byte [cs:bx+TE_STATE], TS_RUN
+        jne     .x                      ; (called by 9101h and IRQ 6 both:
+.w:     mov     byte [cs:bx+TE_STATE], TS_RUN   ;  .w once a wait)
         mov     [cs:mt_want], al
         mov     byte [cs:mt_pend], 1
 .x:     ret
@@ -6456,7 +6503,7 @@ mt_dwait:
         call    mt_fdrain               ; (interrupts on a moment: IRQ 6 may
         call    mt_ddone                ;  come then)
         jnz     .x
-        call    mt_cent
+.out:   call    mt_cent                 ; (.out: a block's start, test_mt's)
         mov     [cs:mt_down], al        ; out: only those it allows run
         mov     byte [cs:mt_dto], MT_DTO
         mov     byte [cs:bx+TE_STATE], TS_WAITD
@@ -7728,6 +7775,74 @@ mt_48:  mov     bx, [bp+F_BX]
 .x:     mov     [bp+F_BX], bx
         jmp     KSEG:ret_cfax
 
+; RMDIR with MT on (f_3A.mt: JMP FAR over its CMP BYTE [r_name],0): the
+; directory (AX, its first cluster, on drive [act]) another task's current
+; one is refused with 16, as MS-DOS's (each CDS; the running task's the
+; kernel's own test).  A floppy's counts only if that task's are of this
+; mount, no look since having taken a disk for the same one (TX_MG,
+; TX_ML: else mt_vload has them found again by name, and a directory gone
+; is the root then); an unknown one (FFFFh) is no cluster.  A parked
+; task's TX: in window 0 meanwhile (mt_pmap; its pages gone: none).  Back
+; to f_3A past the CMP, done here; DS = KSEG, AX kept
+mt_rd:  push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    di
+        push    es
+        xchg    dx, ax                  ; DX = the cluster
+        xor     cx, cx                  ; CH: 1 if a task has it
+        mov     al, [act]
+        cmp     al, NDRV                ; (M:'s, R:'s: one for all tasks, no
+        jae     .e                      ;  TX's, the kernel's own test)
+        cbw
+        shl     ax, 1
+        xchg    di, ax                  ; DI = 2 * the drive
+        xor     ax, ax
+.t:     cmp     al, [cs:mt_cur]         ; (AL: the task)
+        je      .n
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        je      .n
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        je      .p
+        mov     es, [cs:bx+TE_TX]
+        call    .one
+        jmp     short .n
+.p:     pushf
+        cli
+        call    mt_pmap
+        jc      .pq
+        call    .one
+        call    mt_punmap
+.pq:    popf
+.n:     inc     al
+        cmp     al, MT_TASKS
+        jb      .t
+.e:     or      ch, ch
+        pop     es
+        pop     di
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        jnz     .cur
+        cmp     byte [r_name], 0
+        jmp     KSEG:f_3A.mt + 5
+.cur:   jmp     KSEG:f_3A.cur
+.one:   cmp     dx, [es:V_DCWD+di]      ; (the task's TX at ES)
+        jne     .o
+        cmp     di, 2 * NFLOP
+        jae     .y
+        mov     bx, [es:TX_ML]
+        cmp     bx, [mlook]
+        jne     .o
+        mov     bx, [es:TX_MG+di]
+        cmp     bx, [mgen+di]
+        jne     .o
+.y:     mov     ch, 1
+.o:     ret
+
 ; EXEC's block for the environment with MT on (f_4B.xe: JMP FAR over its
 ; MOV DX,[cur_psp] / CALL mem_alloc): as there; in a task, one its arena
 ; hasn't room for grows the region (mt_grow) and is asked again.  Back to
@@ -7860,12 +7975,14 @@ CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK + 256 ; (KCRASH.INC: the ring, t
 %else
 CR_BSS      equ     0
 %endif
-MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MW_BSS + MT_SSTK + CR_BSS + 15) / 16
+MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_TASKS * MT_ENT + MT_INIL + 20h + MW_BSS + MT_SSTK + CR_BSS + 15) / 16
                                         ; (then the lists, a header, KMW's
                                         ;  sessions, the stack)
 section mttbss
 mt_tx0      resb    TX0_PARAS * 16      ; (at MT_TX0P * 16; no TX_GSN: task 0
                                         ;  never ends)
+mt_tab      resb    MT_TASKS * MT_ENT   ; the tasks (task 0, the Executive:
+                                        ;  mt_boot)
 mt_ini      resb    MT_INIL             ; (mt_lists)
 mt_hdr      resb    20h                 ; (MT_UI: an .EXE's header)
 mw_ses      resb    (MW_MAX + 1) * SE_SIZE  ; (KMW.INC: the sessions)
@@ -7885,6 +8002,33 @@ mt_on   db      0                       ; md_boot: MULTITASK=1 is in LODE.INI
 mt_sum  dw      0                       ; LODEMT.SYS's checksum (mkmt.py)
 s_mteq  db      'MULTITASK', 1Dh, 0     ; (as "MULTITASK=" AND 0DFh)
 s_mtsys db      '@:\LODEMT.SYS', 0
+mt_s0   db      'Executive', 0          ; (task 0's TE_NAME)
+; the kernel's places MT hooks (mt_boot): where, the opcode (EAh: JMP
+; FAR, 9Ah: CALL FAR) and MT's routine there
+%macro HOOK 3
+        dw      %1
+        db      %2
+        dw      %3
+%endmacro
+mt_hooks:
+%ifndef NOM10HOOKS
+        HOOK    int21, 0EAh, mt_i21     ; INT 21h's entry (M10)
+%endif
+        HOOK    f_F0, 0EAh, mt_f0       ; INT 21h F0h
+        HOOK    f_25, 0EAh, mt_25       ; AH=25h and 35h
+        HOOK    f_35, 0EAh, mt_35
+        HOOK    f_3A.mt, 0EAh, mt_rd    ; RMDIR: another task's directory
+        HOOK    kbd_get.k, 0EAh, mt_kwait   ; the key wait
+        HOOK    done.sw, 0EAh, mt_exit  ; INT 21h's way out
+        HOOK    crit_disk.c24, 9Ah, mt_c24  ; INT 24h
+        HOOK    ui_progend, 0EAh, mt_pgend  ; a program's end
+        HOOK    f_48, 0EAh, mt_48       ; AH=48h, EXEC's largest block and
+        HOOK    mem_largest, 0EAh, mt_largest   ;  its environment's: a
+        HOOK    f_4B.xe, 0EAh, mt_xenv  ;  task's region grows (T5a)
+%ifndef SERIAL                          ; (-dSERIAL: pre-interrupt style, none)
+        HOOK    gp_isr.e, 0EAh, mt_srqi ; the GPIB driver's SRQ interrupt, at
+%endif                                  ;  its EOI: a task woken (T5c)
+        dw      0
 
 ; \LODEMT.SYS into a block at the top of memory, INT 08h, INT 21h F0h
 ; and the key wait through it.  No such file, not this LODE.SYS's, or no
@@ -7948,6 +8092,17 @@ mt_boot:
         loop    .s
         cmp     dx, [MDB(mt_sum)]
         jne     .fr
+        mov     di, MT_LEN              ; its BSS: zeros
+        mov     cx, MT_PARAS * 16 - MT_LEN
+        xor     al, al
+        rep     stosb
+        mov     di, mt_tab              ; task 0: the Executive (its PSP and
+        mov     al, TS_RUN              ;  TX below)
+        stosb
+        mov     si, MDB(mt_s0)
+        mov     di, mt_tab + TE_NAME
+        mov     cl, 5
+        rep     movsw
         mov     ah, 43h                 ; task 0's screen: 2 EMS pages (none:
         mov     bx, 2                   ;  it stays off)
         int     67h
@@ -7957,10 +8112,6 @@ mt_boot:
         mov     ah, 3Eh
         mov     bx, bp
         int     21h
-        mov     di, MT_LEN              ; its BSS: zeros
-        mov     cx, MT_PARAS * 16 - MT_LEN
-        xor     al, al
-        rep     stosb
         call    mt_lists                ; LODE.INI's BG=, FREEZE=, MTMEM=
         mov     dx, es
         mov     ah, 62h                 ; task 0: the Executive, the root
@@ -8140,48 +8291,23 @@ mt_boot:
         inc     si
         cmp     si, mt_vfr + MT_NFV
         jb      .fv
-        mov     ax, KSEG                ; INT 21h F0h: JMP FAR mt_f0
-        mov     ds, ax
-%ifndef NOM10HOOKS
-        mov     byte [int21], 0EAh      ; INT 21h's entry: JMP FAR mt_i21 (M10)
-        mov     word [int21 + 1], mt_i21
-        mov     [int21 + 3], es
-%endif
-        mov     byte [f_F0], 0EAh
-        mov     word [f_F0 + 1], mt_f0
-        mov     [f_F0 + 3], es
-        mov     byte [f_25], 0EAh       ; AH=25h and 35h: JMP FAR mt_25, mt_35
-        mov     word [f_25 + 1], mt_25
-        mov     [f_25 + 3], es
-        mov     byte [f_35], 0EAh
-        mov     word [f_35 + 1], mt_35
-        mov     [f_35 + 3], es
-        mov     byte [kbd_get.k], 0EAh  ; the key wait: JMP FAR mt_kwait
-        mov     word [kbd_get.k + 1], mt_kwait
-        mov     [kbd_get.k + 3], es
-        mov     byte [done.sw], 0EAh    ; INT 21h's way out: JMP FAR mt_exit
-        mov     word [done.sw + 1], mt_exit
-        mov     [done.sw + 3], es
-        mov     byte [crit_disk.c24], 9Ah       ; INT 24h: CALL FAR mt_c24
-        mov     word [crit_disk.c24 + 1], mt_c24
-        mov     [crit_disk.c24 + 3], es
-        mov     byte [ui_progend], 0EAh ; a program's end: JMP FAR mt_pgend
-        mov     word [ui_progend + 1], mt_pgend
-        mov     [ui_progend + 3], es
-        mov     byte [f_48], 0EAh       ; AH=48h, EXEC's largest block: JMP FAR
-        mov     word [f_48 + 1], mt_48  ;  mt_48, mt_largest (a task's region
-        mov     [f_48 + 3], es          ;  grows: T5a)
-        mov     byte [mem_largest], 0EAh
-        mov     word [mem_largest + 1], mt_largest
-        mov     [mem_largest + 3], es
-        mov     byte [f_4B.xe], 0EAh    ; (and EXEC's environment's block)
-        mov     word [f_4B.xe + 1], mt_xenv
-        mov     [f_4B.xe + 3], es
-%ifndef SERIAL                          ; (-dSERIAL: pre-interrupt style, none)
-        mov     byte [gp_isr.e], 0EAh   ; the GPIB driver's SRQ interrupt, at
-        mov     word [gp_isr.e + 1], mt_srqi ;  its EOI: a task woken (T5c)
-        mov     [gp_isr.e + 3], es
-%endif
+        mov     dx, es                  ; the kernel's hooks (mt_hooks):
+        mov     ax, KSEG                ;  each a JMP FAR (CALL FAR) to MT
+        mov     es, ax
+        push    cs
+        pop     ds
+        mov     si, MDB(mt_hooks)
+.hk:    lodsw
+        xchg    di, ax
+        or      di, di
+        jz      .hx
+        movsb                           ; (the opcode)
+        movsw                           ; (MT's routine)
+        xchg    ax, dx
+        stosw
+        xchg    ax, dx
+        jmp     .hk
+.hx:    mov     es, dx
         sti
         push    cs
         pop     ds

@@ -87,11 +87,24 @@ INI_BUF equ 0F000h                      ; ini_read: the settings, in the load
 %endmacro
 
 section rmt
-r_tstart:
-r_tbl:  times 80 db 0                   ; the BIOS's ROM data (E401): first,
+R_TBL   equ     80 + CWDLEN             ; (r_tbl and r_cwd: not in the file,
+%if R_TBL != R_ZERO                     ;  the section starts past them:
+%error "R_ZERO: R_TBL"                  ;  LODE.ASM's vstart; rom_init: zeros)
+%endif
+r_tstart equ    $ - R_TBL
+r_tbl   equ     r_tstart                ; the BIOS's ROM data (E401): first,
                                         ;  so it starts on a paragraph
-r_dt:   times DRVSZ db 0                ; R:'s drive table entry
-r_cwd:  times CWDLEN db 0               ; its current directory
+r_cwd   equ     r_tbl + 80              ; R:'s current directory ("\")
+r_dt:   db      80h + R_DRV, 1, 1, 1    ; R:'s drive table entry (D_UNIT: fixed,
+        dw      1, R_NROOT, R_SECS, 1   ;  no change line; D_SPT: no tracks),
+        dw      255, 1, R_ROOT, R_NROOT / 16    ; ROM 1's alone (rom_init:
+        dw      R_DATA, R_NCL, 0        ;  with ROM 2)
+        db      0, 1
+        dw      2
+        db      0F8h, 0
+%if $ - r_dt != DRVSZ
+%error "r_dt: DRVSZ"
+%endif
 r_tseg  dw      0                       ; r_tbl's segment
 r_img   db      0                       ; R:'s image (E402's ordinal)
 r_img2  db      0FFh                    ; ROM 2's, joined to it (FFh: none)
@@ -371,8 +384,12 @@ rom_init:
         and     al, 0F0h
         mov     [cs:MDB(r_place)], ax
         mov     di, ax                  ; the module there (its BIOS data
-        mov     si, RTB(r_tstart)       ;  must be where it stays)
-        mov     cx, R_TLEN
+        xor     ax, ax                  ;  must be where it stays)
+        mov     cx, R_TBL / 2
+        rep     stosw
+        mov     byte [di - CWDLEN], '\'
+        mov     si, RTB(r_tstart + R_TBL)
+        mov     cx, R_TLEN - R_TBL
         push    ds
         push    cs
         pop     ds
@@ -417,25 +434,7 @@ rom_init:
         mov     [di + r_cur - r_tstart], ah     ; (without ROM 2, for good)
         mov     ax, [cs:MDB(r_seg)]
         mov     [di + r_tseg - r_tstart], ax
-        mov     byte [di + r_cwd - r_tstart], '\'
         lea     bx, [di + r_dt - r_tstart]
-        mov     byte [bx + D_UNIT], 80h + R_DRV ; (fixed: no change line)
-        mov     byte [bx + D_MNT], 1
-        mov     byte [bx + D_SPC], 1
-        mov     byte [bx + D_NFAT], 1
-        mov     byte [bx + D_RSV], 1
-        mov     byte [bx + D_NROOT], R_NROOT
-        mov     word [bx + D_TOT], R_SECS
-        mov     byte [bx + D_SPF], 1
-        mov     byte [bx + D_SPT], 255          ; (no tracks)
-        mov     byte [bx + D_HEADS], 1
-        mov     byte [bx + D_ROOT], R_ROOT
-        mov     byte [bx + D_RSEC], R_NROOT / 16
-        mov     byte [bx + D_DATA], R_DATA
-        mov     byte [bx + D_NCL], R_NCL
-        mov     byte [bx + D_PRES], 1
-        mov     byte [bx + D_HINT], 2
-        mov     byte [bx + D_MEDIA], 0F8h
         cmp     byte [di + r_img2 - r_tstart], 0FFh
         jne     .two
         push    di                      ; no ROM 2: r_dio.lp's call of .map
@@ -913,7 +912,7 @@ rs_aini:
         pop     dx
         pop     es
         ret
-rs_i24: mov     al, 3                   ; fail
+rs_i24: mov     al, 83h                 ; fail, nobody asked (KDISK rule 4)
         iret
 
 s_aini  db      'A:\LODE.INI', 0

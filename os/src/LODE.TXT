@@ -1,4 +1,4 @@
-Lodestone 1.0 - boot floppy and ROM
+Lodestone 1.1 - boot floppy and ROM
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\LODEBOOT and answer Y. It adds the Lodestone loader to this disk
@@ -441,6 +441,17 @@ SysReq or CODE-Tab to the next task; other tasks run while one waits on
 the floppy or the hard disk.  Without the GPIB cartridge, SERLINK.COM
 carries Claude's link over the internal modem or a serial cable, and a
 kernel can be built with the serial link in place of the GPIB driver.
+
+1.1: the DOS 3.30 utilities, on ROM 2: FORMAT (A:, B: and C:), CHKDSK
+(/F repairs), FDISK, SYS, LABEL, DISKCOPY, DISKCOMP, ATTRIB, XCOPY,
+TREE, FIND, MORE, SORT and COMP.  A floppy swapped while files on it
+are open or changed asks for it back ("Invalid disk change"), as MS-DOS
+does, instead of writing one disk's FAT onto another; a drive without
+a change line is looked at by MS-DOS's 2-second rule.  COPY joins and
+pairs files as MS-DOS's does, names with a space inside work in COPY,
+REN, XCOPY, CHKDSK and the Executive, and batch files are read a line
+at a time, as COMMAND reads them.  2.4-2.5 KB less for DOS programs
+(578.3 KB with EMS, 562.2 KB without).
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

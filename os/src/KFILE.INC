@@ -17,6 +17,7 @@ S_SIZE  equ 12                  ; dword
 S_DLBA  equ 16                  ; directory entry: sector,
 S_DOFF  equ 18                  ;   offset (as d_lba, d_off)
 S_NAME  equ 20                  ; 11
+S_GEN   equ 31                  ; its floppy's mount (mgen: KDISK.INC rule 9)
 S_POS   equ 32                  ; dword
 S_CCL   equ 36                  ; cached cluster (0 = none)
 S_CIX   equ 38                  ;   and its index in the chain
@@ -28,6 +29,10 @@ SF_DEV  equ 80h
 SF_DIRTY equ 40h                ; written: update the directory at close
 SF_RAW  equ 20h                 ; device in raw (binary) mode
 SF_STAMP equ 10h                ; time/date set by the program
+SF_LOST equ 08h                 ; its drive's changed FAT dropped (fat_drop,
+                                ;  KDISK.INC rule 4), or another mount's
+                                ;  (rule 9): no more reads or writes, its
+                                ;  entry left as the disk has it
 DEV_CON equ 0
 DEV_NUL equ 1
 DEV_AUX equ 2
@@ -68,9 +73,12 @@ sft_init:
         mov     byte [si+S_DEV], DEV_PRN
         ret
 section .text
-
+        times (($ - $$) & 1) ^ 1 db 90h ; (hot: h2sft even, h2sft_bp odd;
+                                        ;  after KFAT.INC's last JMP)
 ; handle BX (current process) -> SI = SFT entry, AL = its number.
-; CF: AX = 6.  Keeps BX.
+; CF: AX = 6.  Keeps BX.  h2sft_bp: the call's BX's
+h2sft_bp:
+        mov     bx, [bp+F_BX]
 h2sft:  cmp     bx, 20
         jae     .bad
         push    es
@@ -163,8 +171,8 @@ sft_busy:
         mov     cx, NSFT
 .l:     cmp     byte [bx+S_REF], 0
         je      .n
-        test    byte [bx+S_FLAGS], SF_DEV
-        jnz     .n
+        test    byte [bx+S_FLAGS], SF_DEV | SF_LOST     ; (another mount's
+        jnz     .n                      ;  are SF_LOST: the mount's, rule 9)
         mov     al, [act]
         cmp     [bx+S_DRV], al
         jne     .n
@@ -193,6 +201,10 @@ sft_fill:
         mov     byte [si+S_REF], 1
         mov     al, [act]
         mov     [si+S_DRV], al
+        push    ax
+        call    gen_of
+        mov     [si+S_GEN], ah
+        pop     ax
         mov     al, [de+11]
         mov     [si+S_ATTR], al
         push    si
@@ -429,26 +441,30 @@ do_create:
         jnz     .acc
         call    sft_busy
         jc      .acc
-        mov     ax, [si+26]             ; truncate the old file: its chain
-        call    free_chain              ;  freed, its entry a fresh one (the
-        jmp     short .ne               ;  name the same: no wildcards)
-.new:   cmp     ax, 2
-        jne     .err
-        mov     ax, [r_dir]
-        call    dir_slot
+        mov     ax, [si+26]             ; truncate the old file: its entry a
+        jmp     short .ne               ;  fresh one (the name the same: no
+.new:   cmp     ax, 2                   ;  wildcards), and only then, that on
+        jne     .err                    ;  the disk, its chain freed: a
+        mov     ax, [r_dir]             ;  refused write frees nothing that
+        call    dir_slot                ;  the disk's entry still names
         jc      .x
-.ne:    mov     cl, [bp+F_CX]
+        xor     ax, ax                  ; (no chain to free)
+.ne:    push    ax
+        mov     cl, [bp+F_CX]
         and     cl, 7                   ; (CREATE TEMPORARY: 8 and the rest too)
         or      cl, A_ARC               ; new, or made anew: archive, as MS-DOS
         xor     ax, ax
         call    new_entry
+        pop     dx                      ; (AX: the error, if any)
         jc      .x
+        mov     ax, dx                  ; (two bytes: what follows even)
+        call    free_chain              ; (the old chain; 0: none)
         push    si
         mov     di, de
         mov     cx, 16
         rep     movsw
         pop     si
-.open:  call    fat_flush
+.open:  call    fat_flush_act
         jc      .x
         call    sft_alloc
         jc      .x
@@ -547,32 +563,43 @@ tmp_ins     resw 1
 tmp_n       resw 1
 section .text
 
-f_3E:   mov     bx, [bp+F_BX]           ; CLOSE
-        call    h2sft
+f_3E:   call    h2sft_bp                ; CLOSE
         jc      .e
-        mov     al, 0FFh
-        call    jft_set
-        call    sft_release
+        call    sft_release             ; the handle let go after: an Abort
+        push    ax                      ;  in its INT 24h leaves it to
+        mov     al, 0FFh                ;  terminate's close_all (else the
+        mov     bx, [bp+F_BX]           ;  SFT stayed in use till a reboot)
+        call    jft_set                 ; (flags kept)
+        pop     ax
         jmp     ret_cf
 .e:     jmp     fail
 
-; one user less for SFT SI; the last one writes the directory entry back
+; one user less for SFT SI; the last one writes the directory entry back,
+; while it still counts as open: another disk in by then is "Invalid disk
+; change" (drv_pend), as MS-DOS's, so Retry with this one back writes it.
+; CF: AX = error (the file let go all the same)
 sft_release:
-        cmp     byte [si+S_REF], 0
-        je      .x
-        dec     byte [si+S_REF]
-        jnz     .x
-        test    byte [si+S_FLAGS], SF_DEV
-        jnz     .x
-        jmp     sft_commit
-.x:     clc
+        cmp     byte [si+S_REF], 1
+        jb      sft_commit.ok           ; (none: nothing to do)
+        clc                             ; (JA: ZF alone now)
+        ja      .d
+        test    byte [si+S_FLAGS], SF_DEV       ; (CF clear)
+        jnz     .d
+        call    sft_commit
+.d:     dec     byte [si+S_REF]         ; (CF kept)
         ret
 
 ; written file SI: directory entry and FAT to disk.  CF: AX = error
 sft_commit:
         test    byte [si+S_FLAGS], SF_DIRTY
         jz      .ok
-        push    bx
+        call    sft_chk                 ; (the disk it was opened on still)
+        jnc     .go
+        test    byte [si+S_FLAGS], SF_LOST
+        jnz     .lost                   ; (else kept changed: the same disk
+        stc                             ;  back, Retry or a later close
+        ret                             ;  writes it)
+.go:    push    bx
         push    dx
         push    di
         mov     al, [si+S_DRV]
@@ -587,6 +614,13 @@ sft_commit:
         mov     di, si
         pop     si
         jc      .e
+        mov     bx, 10                  ; (not this file's name there: the
+.nm:    mov     al, [si+S_NAME+bx]      ;  entry's write Ignored, its sector
+        cmp     al, [di+bx]             ;  read again, the slot unused or
+        jne     .dn                     ;  another file's since: left alone,
+        dec     bx                      ;  not made a nameless one or the
+        jns     .nm                     ;  other's, rule 6.  Open, its name
+                                        ;  is kept: RENAME refuses it)
         mov     ax, [si+S_CLU]          ; (field by field: a rep movsw would
         mov     [di+26], ax             ;  need ES set up, close_all's PSP
         mov     ax, [si+S_SIZE]         ;  here, and be no faster)
@@ -610,7 +644,7 @@ sft_commit:
         call    buf_put
         pop     si
         jc      .e
-        and     byte [si+S_FLAGS], ~(SF_DIRTY | SF_STAMP)
+.dn:    and     byte [si+S_FLAGS], ~(SF_DIRTY | SF_STAMP)
         pop     di
         pop     dx
         pop     bx
@@ -620,6 +654,84 @@ sft_commit:
         pop     dx
         pop     bx
         stc
+        ret
+.lost:  and     byte [si+S_FLAGS], ~(SF_DIRTY | SF_STAMP)
+        mov     ax, 5                   ; (its entry as on the disk: the
+        stc                             ;  chain its changes named is gone)
+        ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
+
+; SFT SI (a file) still on the disk it was opened on?  A floppy's drive
+; is looked at first (drv_ready: its change line; another disk with this
+; one's files open is INT 24h's "Invalid disk change", KDISK.INC rule 4);
+; one without a change line only if not used for ~2 s (MS-DOS's rule: the
+; BIOS says "changed" every time, and each look reads the disk; path calls
+; look every time).  Another mount's file, or one SF_LOST: SF_LOST, CF,
+; AX = 5 (rule 9).  The look failing (INT 24h's Fail, "Invalid disk
+; change" or not ready): CF, AX = 5 too, the file as it was (KDISK.INC
+; rule 9: a handle call's code for it).  SI kept
+sft_chk:
+        test    byte [si+S_FLAGS], SF_LOST
+        jnz     .lost
+        mov     al, [si+S_DRV]
+        cmp     al, NFLOP
+        jae     .ok
+        push    si
+        push    es
+        call    drv_look
+        pop     es
+        pop     si
+        jc      .lost                   ; (another mount's: SF_LOST then)
+        mov     al, [si+S_DRV]
+        call    gen_of
+        cmp     ah, [si+S_GEN]
+        je      .ok
+        or      byte [si+S_FLAGS], SF_LOST
+.lost:  mov     ax, 5
+        stc
+        ret
+.ok:    clc
+        ret
+
+        times ($ + 1 - $$) & 1 db 90h   ; (what follows odd: its hot
+                                        ;  labels even)
+; floppy AL without a change line (D_PRES 3), no look due (D_CHK), its
+; last transfer (dio.bok: a read or write that reached the disk, a look's
+; too) less than 2 s ago (36 ticks)?  NC if so.  Only compares: calls
+; answered from the caches don't hold the 2 s open, as MS-DOS's driver
+; times from its own last access.  All kept
+cl_fresh:
+        pusha
+        push    es
+        call    cl_at
+        sub     ax, [di]                ; ticks since (all 32 bits: an hour
+        sbb     cx, [di+2]              ;  later isn't 0 ticks later, nor
+        jcxz    .t                      ;  is a day's end: the high part not
+        mov     ah, 1                   ;  0, 256 or more)
+.t:     shl     bx, 5                   ; (DRVSZ)
+        cmp     byte [drvtab+bx+D_PRES], 3
+        jb      .x                      ; (a change line: CF, looked at)
+        cmp     byte [drvtab+bx+D_CHK], 0
+        stc                             ; (a look due: D_CHK)
+        jne     .x
+        cmp     ax, 36
+        cmc
+.x:     pop     es
+        popa
+        ret
+%if DRVSZ != 32
+%error "cl_fresh: DRVSZ"
+%endif
+; AL a floppy: BX = AL, DI = its cl_tick, CX:AX = the BIOS tick, ES = 0
+cl_at:  push    0
+        pop     es
+        cbw
+        mov     bx, ax
+        xchg    di, ax
+        shl     di, 2
+        add     di, cl_tick
+        mov     ax, [es:46Ch]
+        mov     cx, [es:46Eh]
         ret
 
 ; use_drive for AL keeping SI
@@ -642,24 +754,21 @@ sft_write:
         jnz     dev_write
         jmp     file_write
 
-f_3F:   mov     bx, [bp+F_BX]           ; READ
-        call    h2sft
-        jc      .e
+f_3F:   call    h2sft_bp                ; READ
+        jc      f_40.e
         mov     al, [si+S_MODE]
         and     al, 3
         cmp     al, 1
-        je      .acc
+        je      f_40.acc
         mov     cx, [bp+F_CX]
         mov     es, [bp+F_DS]
         mov     di, [bp+F_DX]
         call    sft_read
-        jc      .e
+        jc      f_40.e
         jmp     ok_ax
-.acc:   mov     ax, 5
-.e:     jmp     fail
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
-f_40:   mov     bx, [bp+F_BX]           ; WRITE
-        call    h2sft
+f_40:   call    h2sft_bp                ; WRITE
         jc      .e
         mov     al, [si+S_MODE]
         and     al, 3
@@ -672,11 +781,16 @@ f_40:   mov     bx, [bp+F_BX]           ; WRITE
         jmp     ok_ax
 .acc:   mov     ax, 5
 .e:     jmp     fail
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; a read or write of CX bytes for SFT SI begins: the memory pointer ES:DI
 ; as segment + offset < 16 in rw_seg / rw_off; the file's drive, with
 ; its FAT.  CF: AX = error
 rw_start:
+        push    cx
+        call    sft_chk
+        pop     cx
+        jc      .x
         mov     [rw_sft], si
         mov     [rw_left], cx
         mov     word [rw_done], 0
@@ -691,6 +805,7 @@ rw_start:
         mov     al, [si+S_DRV]          ; its drive, and that drive's FAT
         call    use_drive_si
         jmp     fat_load
+.x:     ret
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; advance by AX bytes
 rw_step:
@@ -750,6 +865,7 @@ sft_cluster_alloc:
         xor     dx, dx                  ; empty file: its first cluster
         call    clu_alloc
         jc      .e
+        call    .took
         mov     [si+S_CLU], ax
         or      byte [si+S_FLAGS], SF_DIRTY
         mov     word [si+S_CCL], 0
@@ -764,6 +880,8 @@ sft_cluster_alloc:
         mov     cx, [si+S_CIX]
 .l:     mov     dx, ax
         call    fat_get
+        cmp     ax, 2                   ; (free or reserved: a broken chain,
+        jb      .bad                    ;  not its end: KDISK.INC rule 7)
         cmp     ax, 0FFF0h
         jae     .add
         inc     cx
@@ -772,15 +890,25 @@ sft_cluster_alloc:
         mov     [si+S_CIX], cx
         call    clu_alloc               ; after DX
         jc      .e
+        call    .took
         jmp     .ext
 .ok:    pop     dx
         pop     cx
         clc
 .x:     ret
+.bad:   mov     ax, 5
 .e:     pop     dx
         pop     cx
         stc
         ret
+; cluster AX taken after DX (0: the first): the write's first such kept
+; (rw_a1, after rw_ap) for its undoing.  All kept
+.took:  cmp     word [rw_a1], 0
+        jne     .tx
+        mov     [rw_a1], ax
+        mov     [rw_ap], dx
+.tx:    ret
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: rw_where.one even)
 
 ; position -> BX = cluster index, CX = sector in cluster, DX = offset
 rw_where:
@@ -856,24 +984,11 @@ file_read:
         call    rw_where                ; BX index, CX sector, DX offset
         call    sft_cluster
         jc      .done
-        mov     [rw_cl], ax
         mov     [rw_cix], bx
-        push    cx
-        call    clu2lba
-        pop     cx
-        add     ax, cx
-        adc     byte [lba_hi], 0        ; (taken by disk_io or buf_getd below)
-        mov     [rw_lba], ax
-        or      dx, dx
-        jnz     .part
-        cmp     word [rw_left], 512
-        jb      .part
+        call    rw_lba_of
+        jc      .part
         ; whole sectors straight into memory, across touching clusters
-        mov     di, [actp]
-        mov     al, [di+D_SPC]
-        xor     ah, ah
-        sub     ax, cx                  ; sectors left in this cluster
-        mov     [rw_run], ax
+        call    rw_run0
         mov     ax, [rw_left]
         shr     ax, 9
         mov     [rw_want], ax
@@ -888,11 +1003,7 @@ file_read:
         inc     dx
         cmp     ax, dx
         jne     .go
-        mov     [rw_cl], ax
-        inc     word [rw_cix]
-        mov     al, [di+D_SPC]
-        xor     ah, ah
-        add     [rw_run], ax
+        call    rw_adv
         jmp     .ext
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .go:    mov     ax, [rw_cl]             ; the next lookup starts from here
@@ -925,21 +1036,9 @@ file_read:
         jmp     .loop
 .part:  call    pos_sec
         call    rw_setra
-        push    dx
-        mov     al, [act]
-        mov     dx, [rw_lba]
-        push    si
-        call    buf_getd
-        mov     bx, si
-        pop     si
-        pop     dx
+        call    rw_part
         jc      .err
-        mov     cx, 512
-        sub     cx, dx
-        cmp     cx, [rw_left]
-        jbe     .c
-        mov     cx, [rw_left]
-.c:     push    si
+        push    si
         push    cx
         mov     si, bx
         add     si, dx
@@ -964,6 +1063,57 @@ sec_of: shr     ax, 9
         shl     dx, 7
         or      ax, dx
         ret
+; file_read's and file_write's: DI = the drive's entry, [rw_run] = the
+; sectors left in the cluster from sector CX
+rw_run0:
+        mov     di, [actp]
+        mov     al, [di+D_SPC]
+        xor     ah, ah
+        sub     ax, cx
+        mov     [rw_run], ax
+        ret
+; the run goes on into cluster AX
+rw_adv: mov     [rw_cl], ax
+        inc     word [rw_cix]
+        mov     al, [di+D_SPC]
+        xor     ah, ah
+        add     [rw_run], ax
+        ret
+; cluster AX, sector CX of it, offset DX there: [rw_cl], and [rw_lba]
+; its sector (its high bits in lba_hi: taken by disk_io or buf_getd).  CF:
+; not a whole sector's (offset DX, or less than 512 to go: rw_part's)
+rw_lba_of:
+        mov     [rw_cl], ax
+        push    cx
+        call    clu2lba
+        pop     cx
+        add     ax, cx
+        adc     byte [lba_hi], 0
+        mov     [rw_lba], ax
+        or      dx, dx
+        stc
+        jnz     .x
+        cmp     word [rw_left], 512
+.x:     ret
+; [rw_lba] in a buffer, BX (SI kept); CX = the bytes of it from offset DX,
+; [rw_left] at most.  CF: AX = the error
+rw_part:
+        push    dx
+        mov     al, [act]
+        mov     dx, [rw_lba]
+        push    si
+        call    buf_getd
+        mov     bx, si
+        pop     si
+        pop     dx
+        jc      .r
+        mov     cx, 512
+        sub     cx, dx
+        cmp     cx, [rw_left]
+        jbe     .x
+        mov     cx, [rw_left]
+.x:     clc
+.r:     ret
         times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; AX = the sector of the file the position of SFT SI is in
 pos_sec:
@@ -1002,11 +1152,30 @@ rw_flast    resw 1
 rw_new      resw 1              ; free clusters joined to a write run
 rw_link     resw 1              ;   after this one (the chain's end)
 rw_t0       resb 1              ; sector in the track a write run starts at
+            alignb 2
+rw_a1       resw 1              ; the first cluster this write took (0: none),
+rw_ap       resw 1              ;   linked after this one (0: the first)
+rw_sz0      resw 2              ; the file's size as the write began,
+rw_p0       resw 2              ;  its position,
+rw_f0       resb 1              ;  and its flags
 section .text
 
 file_write:
-        call    rw_start
-        jc      .err
+        call    rw_start                ; (refused if SF_LOST: the chain it
+        jc      .ex                     ;  had is gone; rw_start's sft_chk)
+        call    fat_keep                ; (what a failed write gives back:
+        xor     ax, ax                  ;  the clusters it took, and the
+        mov     [rw_a1], ax             ;  FAT's changed state, KDISK.INC
+        mov     ax, [si+S_SIZE]         ;  rule 5)
+        mov     [rw_sz0], ax
+        mov     ax, [si+S_SIZE+2]
+        mov     [rw_sz0+2], ax
+        mov     ax, [si+S_POS]
+        mov     [rw_p0], ax
+        mov     ax, [si+S_POS+2]
+        mov     [rw_p0+2], ax
+        mov     al, [si+S_FLAGS]
+        mov     [rw_f0], al
         or      byte [si+S_FLAGS], SF_DIRTY
         or      cx, cx
         jnz     .loop
@@ -1016,18 +1185,9 @@ file_write:
         je      .done
         call    rw_where
         call    sft_cluster_alloc
-        jc      .done                   ; disk full: what fitted
-        mov     [rw_cl], ax
-        push    cx
-        call    clu2lba
-        pop     cx
-        add     ax, cx
-        adc     byte [lba_hi], 0        ; (taken by disk_io or buf_getd below)
-        mov     [rw_lba], ax
-        or      dx, dx
-        jnz     .part
-        cmp     word [rw_left], 512
-        jb      .part
+        jc      .full
+        call    rw_lba_of
+        jc      .part
         ; Whole sectors, across touching clusters, to the end of the track
         ; at most.  Where the chain ends, the free clusters right after it
         ; join the run.  They are linked into the chain before the write
@@ -1036,11 +1196,7 @@ file_write:
         ; decides whether the next sector is caught or a turn is lost.
         mov     [rw_cix], bx
         mov     word [rw_new], 0
-        mov     di, [actp]
-        mov     al, [di+D_SPC]
-        xor     ah, ah
-        sub     ax, cx                  ; sectors left in this cluster
-        mov     [rw_run], ax
+        call    rw_run0
         mov     ax, [rw_lba]
         mov     dx, [lba_hi]
         div     word [di+D_SPT]
@@ -1064,11 +1220,7 @@ file_write:
         inc     dx
         cmp     ax, dx
         jne     .wgo                    ; not next to it: another run
-        mov     [rw_cl], ax
-        inc     word [rw_cix]
-        mov     al, [di+D_SPC]
-        xor     ah, ah
-        add     [rw_run], ax
+        call    rw_adv
         jmp     .wext
 .wend:  mov     ax, [rw_want]           ; the chain ends: free ones after it
         sub     ax, [rw_run]            ; (sectors still wanted
@@ -1124,6 +1276,12 @@ file_write:
         jcxz    .lx
         mov     word [rw_new], 0
         mov     ax, [rw_link]
+        cmp     word [rw_a1], 0         ; (the write's first taken: KDISK.INC
+        jne     .lk                     ;  rule 5)
+        mov     [rw_ap], ax
+        inc     ax
+        mov     [rw_a1], ax
+        dec     ax
 .lk:    mov     dx, ax
         inc     dx
         call    fat_set
@@ -1135,21 +1293,9 @@ file_write:
         mov     [di+D_HINT], ax
 .lx:    pop     cx
         ret
-.part:  push    dx
-        mov     al, [act]
-        mov     dx, [rw_lba]
-        push    si
-        call    buf_getd
-        mov     bx, si
-        pop     si
-        pop     dx
+.part:  call    rw_part
         jc      .err
-        mov     cx, 512
-        sub     cx, dx
-        cmp     cx, [rw_left]
-        jbe     .c
-        mov     cx, [rw_left]
-.c:     push    si
+        push    si
         push    ds
         push    cx
         push    cs
@@ -1172,7 +1318,41 @@ file_write:
 .done:  mov     ax, [rw_done]
         clc
         ret
-.err:   stc
+.full:  cmp     ax, 39                  ; disk full: what fitted
+        je      .done
+.err:   push    ax                      ; a failed write gives back the
+        mov     ax, [rw_a1]             ;  clusters it took (KDISK.INC rule
+        or      ax, ax                  ;  5), and the size it grew to
+        jz      .ee
+        mov     dx, [rw_ap]
+        or      dx, dx
+        jnz     .ec
+        mov     [si+S_CLU], dx          ; (they were all the file had)
+        jmp     short .ef
+.ec:    xchg    ax, dx                  ; the chain ends where it did
+        push    dx
+        mov     dx, 0FFFFh
+        call    fat_set
+        pop     ax
+.ef:    call    free_chain
+        call    fat_back
+        mov     word [si+S_CCL], 0
+.ee:    mov     ax, [rw_sz0]            ; the size it had (grown inside a
+        mov     [si+S_SIZE], ax         ;  cluster the file had already, too:
+        mov     ax, [rw_sz0+2]          ;  no cluster taken, rw_a1 0),
+        mov     [si+S_SIZE+2], ax
+        mov     ax, [rw_p0]             ; the position it had (the write
+        mov     [si+S_POS], ax          ;  failed), and with nothing written
+        mov     ax, [rw_p0+2]           ;  its flags: no entry change to go
+        mov     [si+S_POS+2], ax
+        cmp     word [rw_done], 0
+        jne     .ed
+        mov     al, [rw_f0]
+        xor     al, [si+S_FLAGS]
+        and     al, SF_DIRTY
+        xor     [si+S_FLAGS], al
+.ed:    pop     ax
+.ex:    stc
         ret
 ; the file grew?
 .grow:  mov     ax, [si+S_POS]
@@ -1185,6 +1365,11 @@ file_write:
 .gs:    mov     [si+S_SIZE], ax
         mov     [si+S_SIZE+2], dx
 .gx:    ret
+; the size is the position (the chain looked up afresh).  DX:AX = it
+.psz:   mov     word [si+S_CCL], 0
+        mov     ax, [si+S_POS]
+        mov     dx, [si+S_POS+2]
+        jmp     .gs
 ; a zero-byte write: the file ends (or grows to) here
 .setsz: mov     ax, [si+S_POS]
         or      ax, [si+S_POS+2]
@@ -1203,20 +1388,52 @@ file_write:
         pop     ax
         cmp     dx, 0FFF0h
         jae     .sz
+        push    ax                      ; a shorter file: its entry, the new
+        push    dx                      ;  size, on the disk first (.tcommit)
+        call    .tcommit
+        jc      .ts
+        pop     dx
+        pop     ax
         push    dx
         mov     dx, 0FFFFh
         call    fat_set                 ; end the chain here
         pop     ax
-        call    free_chain              ; and drop the rest
-        jmp     .sz
+.tfree: call    free_chain              ; and drop the rest, then the FAT
+        mov     al, [si+S_DRV]          ;  out (refused: the frees go at the
+        call    fat_flush_drv           ;  next flush, their entry on the
+        jmp     .done                   ;  disk already)
 .zero:  mov     ax, [si+S_CLU]
-        call    free_chain
-        mov     word [si+S_CLU], 0
-.sz:    mov     word [si+S_CCL], 0
-        mov     ax, [si+S_POS]
-        mov     [si+S_SIZE], ax
-        mov     ax, [si+S_POS+2]
-        mov     [si+S_SIZE+2], ax
+        cmp     ax, 2
+        jb      .sz
+        push    ax
+        call    .tcommit
+        jc      .tz
+        pop     ax
+        jmp     .tfree
+.ts:    pop     cx                      ; (refused: AX the error)
+.tz:    pop     cx
+        jmp     .err
+; the entry of SI with its size S_POS (0: no cluster) on the disk, before
+; the clusters past it are freed: a refused write frees nothing the disk's
+; entry still names.  CF: AX, the SFT as it was
+.tcommit:
+        push    word [si+S_CLU]
+        push    word [si+S_SIZE+2]
+        push    word [si+S_SIZE]
+        call    .psz
+        or      dx, ax
+        jnz     .tc
+        mov     [si+S_CLU], dx
+.tc:    call    sft_commit.go           ; (rw_start looked at the disk: no
+                                        ;  second look to drop the FAT cache)
+        jc      .tb
+        add     sp, 6
+        ret
+.tb:    pop     word [si+S_SIZE]
+        pop     word [si+S_SIZE+2]
+        pop     word [si+S_CLU]
+        ret
+.sz:    call    .psz
         jmp     .done
 
 ; ---------------------------------------------------------------------
@@ -1444,8 +1661,7 @@ con_readline:
 ; ---------------------------------------------------------------------
 ;  seek, IOCTL, dup, time stamps, commit
 ; ---------------------------------------------------------------------
-f_42:   mov     bx, [bp+F_BX]           ; LSEEK
-        call    h2sft
+f_42:   call    h2sft_bp                ; LSEEK
         jc      .e
         mov     ax, [bp+F_DX]
         mov     dx, [bp+F_CX]
@@ -1479,8 +1695,7 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
         je      .okk
         cmp     al, 0Bh
         je      .okk
-        mov     bx, [bp+F_BX]
-        call    h2sft
+        call    h2sft_bp
         jc      .e
         mov     al, [bp+F_AX]
         cmp     al, 0
@@ -1562,8 +1777,7 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
 .map:   xor     ax, ax
         jmp     ok_ax
 
-f_45:   mov     bx, [bp+F_BX]           ; DUP
-        call    h2sft
+f_45:   call    h2sft_bp                ; DUP
         jc      .e
         push    ax
         call    jft_alloc
@@ -1574,8 +1788,7 @@ f_45:   mov     bx, [bp+F_BX]           ; DUP
         jmp     give_handle
 .e:     jmp     fail
 
-f_46:   mov     bx, [bp+F_BX]           ; DUP2: CX becomes a copy of BX
-        call    h2sft
+f_46:   call    h2sft_bp                ; DUP2: CX becomes a copy of BX
         jc      .e
         push    ax
         push    si
@@ -1595,8 +1808,7 @@ f_46:   mov     bx, [bp+F_BX]           ; DUP2: CX becomes a copy of BX
         mov     ax, 6
 .e:     jmp     fail
 
-f_57:   mov     bx, [bp+F_BX]           ; file date and time
-        call    h2sft
+f_57:   call    h2sft_bp                ; file date and time
         jc      .e
         cmp     byte [bp+F_AX], 0
         jne     .set
@@ -1615,8 +1827,7 @@ f_57:   mov     bx, [bp+F_BX]           ; file date and time
 .x:     jmp     ok
 .e:     jmp     fail
 
-f_68:   mov     bx, [bp+F_BX]           ; COMMIT
-        call    h2sft
+f_68:   call    h2sft_bp                ; COMMIT
         jc      .e
         test    byte [si+S_FLAGS], SF_DEV
         jnz     .x
@@ -1642,6 +1853,13 @@ close_all:
         pop     si
         pop     bx
         ret
+; close_all as terminate runs it: an INT 24h Abort in its closes is Fail
+; (KMT.INC's task ends: else each Abort ended the stub again, inside them)
+close_allt:
+        mov     byte [term_now], 1
+        call    close_all
+        mov     byte [term_now], 0
+        ret
 
 ; ---------------------------------------------------------------------
 ;  find first / next.  The DTA's first 21 bytes hold our search state:
@@ -1664,10 +1882,10 @@ f_4E:   call    get_path
         rep     stosb
         jmp     short .q
 .p:     rep     movsb
-.q:     mov     al, [bp+F_CX]
-        stosb
-        mov     ax, [r_dir]
-        stosw
+.q:     mov     al, [bp+F_CX]           ; (the label alone: where the path
+        stosb                           ;  points, as GRiD MS-DOS 3.30's,
+        mov     ax, [r_dir]             ;  NOMATCH_MS.TXT; only the FCB
+        stosw                           ;  search goes to the root)
         xor     ax, ax
         stosw
         push    cs
@@ -1678,6 +1896,140 @@ f_4E:   call    get_path
 f_4F:   call    find_next
         jmp     ret_cf
 
+; FCB find first / next (11h, 12h), as MS-DOS's: DS:DX an FCB, or an
+; extended one (FFh, 5 bytes, the attribute, the FCB).  In the drive's
+; current directory, '?' in the 11-byte name any character, the attribute
+; as 4Eh's (08h alone: the label, in the root).  The DTA gets the drive (1 = A) and the
+; entry's 32 bytes as on the disk, after the extended header (FFh, 0 x 5,
+; the attribute) if the call had one: so a label's 11 characters come
+; back as they are, spaces and all (COMMAND's VOL reads it so).  Between
+; calls the search is in the FCB from 0Ch (drive + 1, the directory's
+; cluster, the next entry), the bytes MS-DOS keeps it in.  AL = 0, or FFh:
+; nothing more (or no such drive, or a separator or control character in
+; the name: as MS-DOS 3's TransFCB, but for '.', which it would take into
+; the path it makes and Lodestone counts out with the rest)
+FCB_D   equ path2_buf                   ; (K2: a DTA for find_next, 43)
+f_11:   call    fcb_ptr
+        mov     al, [es:di]             ; its drive (0: the current one):
+        push    cs                      ;  there, read, its current
+        pop     es                      ;  directory (resolve "X:")
+        call    drv_dflt
+        add     al, 'A'
+        mov     ah, ':'
+        mov     [path_buf], ax
+        mov     byte [path_buf + 2], 0
+        call    resolve
+        jc      f_fcb
+        call    fcb_ptr
+        mov     dx, [r_dir]
+        and     al, A_HID | A_SYS | A_DIR | A_VOL
+        cmp     al, A_VOL               ; (the label alone: the root's,
+        jne     .d                      ;  wherever the current directory
+        xor     dx, dx                  ;  is, as MS-DOS's)
+.d:     mov     al, [act]
+        inc     ax
+        mov     [es:di + 0Ch], al
+        mov     [es:di + 0Dh], dx
+        mov     word [es:di + 0Fh], 0
+f_12:   call    fcb_ptr                 ; its search -> FCB_D, as 4Eh's DTA
+        mov     [FCB_D + 12], al
+        push    ds
+        push    es
+        pop     ds
+        lea     si, [di + 1]
+        push    cs
+        pop     es
+        mov     di, FCB_D + 1
+        mov     cx, 11
+        rep     movsb
+        lodsb
+        mov     [es:FCB_D], al
+        lodsw
+        mov     [es:FCB_D + 13], ax
+        lodsw
+        mov     [es:FCB_D + 15], ax
+        pop     ds
+        mov     si, FCB_D + 1           ; the name as MS-DOS 3's takes it
+        xor     dx, dx                  ;  (made a path): capitals, a *
+.u:     mov     al, [si]                ;  fills the rest of its part with
+        cmp     si, FCB_D + 9           ;  ?, a first E5h is 05h
+        jne     .s
+        xor     dx, dx
+.s:     or      dx, dx
+        jnz     .q
+        cmp     al, '*'
+        jne     .lc
+        inc     dx
+.q:     mov     al, '?'
+        jmp     short .p
+.lc:    cmp     al, ' '                 ; (a control character or a
+        jb      .bad                    ;  separator: no name, FFh, as
+        push    cx                      ;  MS-DOS's TransFCB)
+        push    di
+        mov     di, sepchars
+        mov     cx, NSEP
+        repne   scasb
+        pop     di
+        pop     cx
+        je      .bad
+        call    up_al
+.p:     mov     [si], al
+        inc     si
+        cmp     si, FCB_D + 12
+        jb      .u
+        cmp     byte [FCB_D + 1], 0E5h
+        jne     .e5
+        mov     byte [FCB_D + 1], 05h
+.e5:    push    word [dta + 2]          ; find_next on FCB_D
+        push    word [dta]
+        mov     word [dta], FCB_D
+        mov     [dta + 2], cs
+        call    find_next               ; -> SI the entry (DS = ES = CS)
+        pop     word [dta]
+        pop     word [dta + 2]
+        jc      f_fcb
+        push    si
+        call    fcb_ptr                 ; its next entry kept
+        mov     ax, [FCB_D + 15]
+        mov     [es:di + 0Fh], ax
+        pop     si
+        les     di, [dta]               ; the answer
+        or      bl, bl
+        jz      .n
+        mov     al, 0FFh
+        stosb
+        xor     ax, ax
+        stosw
+        stosw
+        stosb
+        mov     al, [FCB_D + 12]
+        stosb
+.n:     mov     al, [FCB_D]
+        stosb
+        mov     cx, 16
+        rep     movsw
+        cmp     byte [es:di - 32], 05h  ; (E5h's place on the disk)
+        jne     .x
+        mov     byte [es:di - 32], 0E5h
+.x:     push    cs
+        pop     es
+        xor     al, al
+        jmp     ret_al
+.bad:   jmp     f_fcb
+; the caller's FCB -> ES:DI (past an extended header), AL its attribute
+; (0 without one), BL = 1 if it had one
+fcb_ptr:
+        mov     es, [bp + F_DS]
+        mov     di, [bp + F_DX]
+        xor     ax, ax
+        xor     bl, bl
+        cmp     byte [es:di], 0FFh
+        jne     .x
+        mov     al, [es:di + 6]
+        add     di, 7
+        inc     bx
+.x:     ret
+
 find_next:
         les     di, [dta]               ; (kept by drv_present and fat_load,
         mov     al, [es:di]             ;  their M:, R: and C: hooks too)
@@ -1686,7 +2038,12 @@ find_next:
         jc      .nomore
         cmp     byte [si+D_MNT], 0
         je      .nomore
-        call    fat_load
+        cmp     byte [si+D_CHK], 0      ; a look due (another disk seen and
+        je      .ld                     ;  kept, an automatic Fail; INT 21h
+        call    drv_ready               ;  0Dh): looked at first, as MS-
+        jc      .nomore                 ;  DOS's buffers do, so the search
+        les     di, [dta]               ;  never reads another disk's
+.ld:    call    fat_load                ;  sectors as its own
         jc      .x
         mov     word [it_dir], 0
         push    ds                      ; the pattern
@@ -1722,14 +2079,15 @@ find_next:
         mov     al, [si+11]
         cmp     al, 0Fh
         je      .n
-        mov     ah, [es:di+12]
-        cmp     ah, A_VOL
+        mov     ah, [es:di+12]          ; (as MS-DOS's: read-only and
+        and     ah, A_HID | A_SYS | A_DIR | A_VOL  ;  archive asked for count
+        cmp     ah, A_VOL               ;  nothing)
         jne     .nv
         test    al, A_VOL               ; label search: labels only
         jz      .n
         jmp     .m
-.nv:    test    al, A_VOL
-        jnz     .n
+.nv:    test    al, A_VOL               ; (a label: out of the way, below)
+        jnz     .lab
         and     al, A_HID | A_SYS | A_DIR
         not     ah
         test    al, ah
@@ -1762,6 +2120,9 @@ find_next:
         jae     .l
         add     si, 32
         jmp     .e
+.lab:   test    ah, A_VOL               ; a label with others asked for:
+        jz      .n                      ;  when 08h is one of them, as
+        jmp     .m                      ;  MS-DOS's
 .derr:  cmp     ax, 18
         je      .nomore
         push    cs                      ; a disk error

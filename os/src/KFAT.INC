@@ -36,6 +36,14 @@ it_cl       resw 1
 it_ci       resw 1
 section .text
 
+; AL: a small letter (a-z) made a capital.  Flags changed
+up_al:  cmp     al, 'a'
+        jb      .x
+        cmp     al, 'z'
+        ja      .x
+        sub     al, 20h
+.x:     ret
+
 ; copy the caller's ASCIIZ path DS:DX (frame) to path_buf (uppercase,
 ; '/' -> '\').  CF: AX = 3 if empty or too long
 get_path:
@@ -45,11 +53,7 @@ gpath:  push    ds
         mov     ds, [bp+F_DS]
         mov     cx, 128
 .l:     lodsb
-        cmp     al, 'a'
-        jb      .n
-        cmp     al, 'z'
-        ja      .n
-        sub     al, 20h
+        call    up_al
 .n:     cmp     al, '/'
         jne     .s
         mov     al, '\'
@@ -100,9 +104,12 @@ parse_comp:
         call    .field
         jc      .bad
         cmp     di, nm11                ; nothing at all?
-        jne     .ext0
+        jne     .sp
         cmp     byte [si], '.'
         jne     .bad
+        jmp     short .ext0
+.sp:    cmp     byte [nm11], ' '        ; (a space inside a name, as MS-DOS:
+        je      .bad                    ;  not first)
 .ext0:  cmp     byte [si], '.'
         jne     .ok
         inc     si
@@ -111,7 +118,10 @@ parse_comp:
         call    .field
         jc      .bad
         jmp     short .dots             ; (then \ or 0: a second dot is no
-.ok:    mov     al, ah                  ;  name, as MS-DOS)
+.ok:    cmp     byte [nm11], 0E5h       ;  name, as MS-DOS)
+        jne     .ok5                    ; (a first E5h is 05h on the disk:
+        mov     byte [nm11], 05h        ;  E5h there is a free entry)
+.ok5:   mov     al, ah
         clc
         jmp     .x
 .bad:   stc
@@ -145,7 +155,7 @@ parse_comp:
         pop     di
         je      .err
         cmp     al, ' '
-        jbe     .err
+        jb      .err
 .put:   jcxz    .fl                     ; too long: the rest is ignored
         mov     [di], al
         inc     di
@@ -185,6 +195,17 @@ new_name:                               ; (the same after a resolve; one that
 .f:     stc
         ret
 
+; the drive of the path at SI (get_path's: capitals) -> AL, SI past its
+; "X:" (none: the current drive)
+path_drv:
+        mov     al, [cur_drv]
+        cmp     byte [si+1], ':'
+        jne     .x
+        mov     al, [si]
+        sub     al, 'A'
+        add     si, 2
+.x:     ret
+
 ; resolve path_buf (or SI) -> r_drv, r_dir, r_name, r_wild.
 ; Gets the drive ready and its FAT loaded.  CF: AX = error (3 or 15)
 resolve:
@@ -194,25 +215,27 @@ resolve_si:
         mov     [it_dir], ax
         mov     [r_wild], al            ; (before the drive: nf_last and
         mov     [r_name], al            ;  RMDIR read them)
-        mov     al, [cur_drv]
-        cmp     byte [si+1], ':'
-        jne     .d
-        mov     al, [si]
-        sub     al, 'A'
-        add     si, 2
-.d:     push    si
-        call    drv_ready
+        call    path_drv
+        push    si
+        call    drv_look
         mov     bx, si
         pop     si
         jc      .dr                     ; (invalid, or not ready: 3, MS-DOS's)
         mov     al, [act]
         mov     [r_drv], al
         call    fat_load                ; (keeps BX: the drive's entry)
-        jc      .x
-        mov     ax, [bx+D_CWD]
-        cmp     byte [si], '\'
+        jc      .dr                     ; (another floppy's FAT stuck: 3 too,
+.cw:    cmp     word [bx+D_CWD], -1     ;  KDISK.INC rule 4)
+        jne     .k                      ; (FFFFh: the current directory
+        call    cwd_find                ;  unknown: found now, by its name,
+        mov     byte [r_name], 0        ;  for any path, as MS-DOS's
+        jnc     .k                      ;  ValidateCDS (r_name none again:
+        cmp     byte [si], '\'          ;  nm11 cwd_find's); unreadable: a
+        jne     .np                     ;  relative path 3, an absolute one
+.k:     mov     ax, [bx+D_CWD]          ;  goes on, it unknown still.  Found
+        cmp     byte [si], '\'          ;  never FFFFh, so once)
         jne     .c
-        xor     ax, ax
+.abs:   xor     ax, ax
         inc     si
 .c:     mov     [r_dir], ax
 .comp:  cmp     byte [si], 0
@@ -278,7 +301,8 @@ resolve_si:
         times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; entry BX of directory AX -> SI (in a sector buffer), d_lba, d_off.
-; CF: past the end of the directory (AX = 18) or a disk error
+; CF: past the end of the directory (AX = 18), a disk error, or AX = 5 (a
+; chain longer than the disk: a loop)
 dir_entry:
         push    bx
         push    cx
@@ -334,6 +358,8 @@ dir_entry:
         add     cl, 4
         mov     dx, bx
         shr     dx, cl                  ; cluster number in the chain
+        cmp     dx, [di+D_NCL]          ; (more than the disk has: a loop,
+        jae     .brk                    ;  rule 7)
         cmp     ax, [it_dir]
         jne     .walk0
         cmp     dx, [it_ci]
@@ -341,8 +367,14 @@ dir_entry:
         mov     ax, [it_cl]
         mov     cx, [it_ci]
         jmp     .walk
-        times ($ + 5 - $$) & 1 db 90h   ; (hot: .walk and what follows even)
-.walk0: mov     [it_dir], ax
+.b3:    mov     ax, 3                   ; (.walk0's: 3)
+        jmp     near .bs
+        times ($ + 15 - $$) & 1 db 90h  ; (hot: .walk and what follows even)
+.walk0: cmp     ax, [di+D_NCL]          ; a first cluster the disk hasn't (a
+        jae     .b3                     ;  broken entry's: FFFFh, past the
+        cmp     ax, 1                   ;  end, 1): 3, nothing read or
+        je      .b3                     ;  written where it points
+        mov     [it_dir], ax
         xor     cx, cx
 .walk:  cmp     cx, dx
         je      .there
@@ -388,6 +420,9 @@ dir_entry:
         mov     [d_off], bx
         clc
         jmp     .x
+.brk:   mov     ax, 5
+.bs:    stc
+        jmp     short .x
 .end0:  mov     word [it_dir], 0
 .end:   mov     ax, 18
         stc
@@ -551,15 +586,23 @@ dir_slot:
         ; append a cluster to the subdirectory: find its last cluster
 .last:  mov     dx, ax
         call    fat_get
+        cmp     ax, 2                   ; (free or reserved: a broken chain,
+        jb      .brk                    ;  KDISK.INC rule 7)
         cmp     ax, 0FFF0h
         jb      .last
         call    fat_keep
-        call    clu_alloc               ; linked after DX
+        push    dx                      ; unlinked: zeroed first, then linked
+        xor     dx, dx                  ;  (an Abort between: one cluster
+        call    clu_alloc               ;  lost, nothing stale named)
+        pop     dx
         jc      .err
         push    ax
         call    clu_zero
         pop     cx                      ; (CX = the new cluster)
         jc      .unl
+        mov     ax, dx                  ; the last one -> the new one
+        mov     dx, cx
+        call    fat_set
         mov     word [it_dir], 0
         pop     ax
         push    ax
@@ -568,16 +611,14 @@ dir_slot:
         pop     ax
         clc
         ret
-.unl:   push    ax                      ; it can't be written: unlinked (DX
-        mov     ax, dx                  ;  the end again) and given back
-        mov     dx, 0FFFFh
-        call    fat_set
+.unl:   push    ax                      ; it can't be written: given back
         mov     ax, cx
         xor     dx, dx
         call    fat_set
         call    fat_back                ; (the FAT as it was: unchanged)
         pop     ax
         jmp     short .err
+.brk:
 .full:  mov     ax, 5
 .err:   add     sp, 2
         stc
@@ -676,27 +717,31 @@ new_entry:
 
 ; DS:SI entry name -> ES:DI "NAME.EXT",0
 name_out:
-        push    cx
-        push    si
-        mov     cx, 8
-.n:     lodsb
-        cmp     al, ' '
-        je      .ne
-        stosb
-        loop    .n
-        jmp     .e
-.ne:    dec     cx
-        add     si, cx
-.e:     cmp     byte [si], ' '
+        push    cx                      ; (as MS-DOS's: only the trailing
+        push    si                      ;  spaces of each part go, so a
+        mov     cx, 8                   ;  label's inside ones are kept)
+        rep     movsb
+        cmp     byte [es:di-8], 05h     ; (a first 05h is E5h's place on the
+        jne     .nt                     ;  disk: E5h, as MS-DOS gives it)
+        mov     byte [es:di-8], 0E5h
+.nt:    cmp     byte [es:di-1], ' '
+        jne     .e
+        dec     di
+        inc     cx
+        cmp     cx, 8
+        jb      .nt
+.e:     cmp     word [si], '  '         ; an extension: any of its 3 not a
+        jne     .x                      ;  space
+        cmp     byte [si+2], ' '
         je      .z
-        mov     al, '.'
+.x:     mov     al, '.'
         stosb
         mov     cx, 3
-.x:     lodsb
-        cmp     al, ' '
-        je      .z
-        stosb
-        loop    .x
+        rep     movsb
+.xt:    cmp     byte [es:di-1], ' '
+        jne     .z
+        dec     di
+        jmp     .xt
 .z:     xor     al, al
         stosb
         pop     si
@@ -722,6 +767,30 @@ find_named:
         stc
 .x:     ret
 
+f_43:   call    get_path                ; get/set attributes
+        jc      f_41.e
+        call    find_file
+        jc      f_41.e
+        cmp     byte [bp+F_AX], 0
+        jne     .set
+        mov     al, [de+11]
+        xor     ah, ah
+        mov     [bp+F_CX], ax
+        jmp     ok
+.set:   cmp     byte [bp+F_AX], 1
+        jne     .bad
+        mov     al, [bp+F_CX]
+        test    al, A_DIR | A_VOL
+        jnz     f_41.acc
+        mov     ah, [si+11]
+        and     ah, A_DIR
+        or      al, ah
+        mov     [si+11], al
+        call    buf_put
+        jmp     ret_cf
+.bad:   mov     ax, 1
+        jmp     short f_41.e
+
 f_41:   call    get_path                ; DELETE
         jc      .e
         call    find_file
@@ -735,39 +804,13 @@ f_41:   call    get_path                ; DELETE
         jc      .e
         mov     ax, [de+26]
         call    free_chain
-        call    fat_flush
+        call    fat_flush_act
         jmp     ret_cf
 .nf:    cmp     ax, 2                   ; not there (its directory is): a
         jne     .e                      ;  device's name is 5, as MS-DOS
         call    dev_lookup
         mov     ax, 2                   ; (CF kept)
         jc      .e
-.acc:   mov     ax, 5
-.e:     jmp     fail
-
-f_43:   call    get_path                ; get/set attributes
-        jc      .e
-        call    find_file
-        jc      .e
-        cmp     byte [bp+F_AX], 0
-        jne     .set
-        mov     al, [de+11]
-        xor     ah, ah
-        mov     [bp+F_CX], ax
-        jmp     ok
-.set:   cmp     byte [bp+F_AX], 1
-        jne     .bad
-        mov     al, [bp+F_CX]
-        test    al, A_DIR | A_VOL
-        jnz     .acc
-        mov     ah, [si+11]
-        and     ah, A_DIR
-        or      al, ah
-        mov     [si+11], al
-        call    buf_put
-        jmp     ret_cf
-.bad:   mov     ax, 1
-        jmp     .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
@@ -799,7 +842,7 @@ f_39:   call    get_path                ; MKDIR
         call    fat_back
         pop     ax
         jmp     .e
-.z:     call    fat_flush               ; its cluster is taken before it is named
+.z:     call    fat_flush_act           ; its cluster is taken before it is named
         jc      .e3
         mov     dx, [d_lba]
         mov     ax, [d_off]
@@ -833,7 +876,7 @@ f_39:   call    get_path                ; MKDIR
         mov     cl, A_DIR
         call    new_entry
         jc      .e
-        call    fat_flush
+        call    fat_flush_act
         jmp     ret_cf
 .e3:    push    ax                      ; the cluster given back (a failed
         mov     ax, [new_dir]           ;  write: else a lost cluster once
@@ -866,6 +909,8 @@ find_dir:
         test    byte [de+11], A_DIR
         jz      .np
         mov     ax, [de+26]
+        cmp     ax, -1                  ; (FFFFh: a broken entry, and an
+        je      .np                     ;  unknown current directory's)
 .ok:    clc
 .x:     ret
 .np:    mov     ax, 3
@@ -877,9 +922,12 @@ f_3A:   call    get_path                ; RMDIR
         call    find_dir
         jc      .nd
         mov     si, [actp]              ; the current directory (".", or the
-        cmp     ax, [si+D_CWD]          ;  root from it): 16, as MS-DOS
-        je      .cur
-        cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
+        cmp     word [si+D_CWD], -1     ;  root from it): 16, as MS-DOS
+        je      .np3                    ;  (unknown: resolve found it first,
+        cmp     ax, [si+D_CWD]          ;  by its name; still unknown, it
+        je      .cur                    ;  couldn't be read: 3, ValidateCDS's;
+                                        ;  another task's: MT's mt_rd, here)
+.mt:    cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
         je      .acc                    ;  doesn't look the name up, so
         cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
         je      .acc                    ;  (".." it finds, but is refused too)
@@ -918,7 +966,7 @@ f_3A:   call    get_path                ; RMDIR
         mov     ax, [new_dir]
         call    free_chain
         mov     word [it_dir], 0
-        call    fat_flush
+        call    fat_flush_act
         jmp     ret_cf
 .cur:   mov     ax, 16                  ; the current directory
         jmp     .e
@@ -931,6 +979,8 @@ f_3A:   call    get_path                ; RMDIR
         call    find_named              ; (nm11: the last name still)
         jnc     .acc
         call    dev_lookup
+        db      0B0h                    ; (MOV AL, imm8: skips the STC,
+.np3:   stc                             ;  flags dev_lookup's)
         mov     ax, 3                   ; (CF kept)
         jc      .e
 .acc:   mov     ax, 5
@@ -940,11 +990,19 @@ f_3B:   call    get_path                ; CHDIR
         jc      .e
         call    find_dir
         jc      .e
-        mov     si, [actp]
-        mov     [si+D_CWD], ax
-        ; the new path string
+        mov     [cwd_cl], ax
+        ; the new path string, worked out whole in cwd_new, then the
+        ; drive's own and its cluster changed if it fits: "\" and 63, as
+        ; MS-DOS's (DIRSTRLEN: 47h's answer and its NUL fill the caller's
+        ; 64 bytes).  Longer is 3, nothing changed; a path that goes down
+        ; past that and back up ("X\..") is only the end that counts
         mov     al, [act]
         call    cwd_of
+        mov     si, di
+        mov     di, cwd_new
+        mov     cx, CWDLEN / 2
+        rep     movsw
+        mov     di, cwd_new
         mov     si, path_buf
         cmp     byte [si+1], ':'
         jne     .nd
@@ -968,7 +1026,7 @@ f_3B:   call    get_path                ; CHDIR
         jne     .add
         ; up one level: cut at the last '\'
         mov     di, [cwd_p]
-        mov     cx, CWDLEN
+        mov     cx, CWNEW
         xor     al, al
         push    di
         repne   scasb
@@ -987,7 +1045,7 @@ f_3B:   call    get_path                ; CHDIR
         mov     word [di], '\'
         jmp     .comp
 .add:   mov     di, [cwd_p]             ; append "\NAME.EXT", as MS-DOS keeps
-        mov     cx, CWDLEN              ;  it: 8.3, whatever was typed
+        mov     cx, CWNEW               ;  it: 8.3, whatever was typed
         xor     al, al
         repne   scasb
         dec     di
@@ -998,32 +1056,58 @@ f_3B:   call    get_path                ; CHDIR
 .cp:    push    si
         push    di
         mov     si, nm11
-        mov     di, path2_buf           ; (free here)
+        mov     di, cwd_nm
         call    name_out
         pop     di
-        mov     si, path2_buf
-        mov     dx, [cwd_p]
-        add     dx, CWDLEN - 2
-.cpl:   cmp     di, dx
-        jae     .cpx
-        lodsb
-        stosb
+        mov     si, cwd_nm
+.cpl:   lodsb                           ; (it fits: each part comes out no
+        stosb                           ;  longer than typed, path_buf 128)
         or      al, al
         jnz     .cpl
-.cpx:   mov     byte [di], 0
         pop     si
         jmp     .comp
-.end:   jmp     ok
+.end:   mov     di, cwd_new             ; the whole: "\" and 63 at most
+        mov     cx, CWDMAX + 1
+        xor     al, al
+        repne   scasb
+        mov     ax, 3
+        jne     .e                      ; (no NUL by then: too long)
+        mov     al, [act]               ; it fits: the drive's
+        call    cwd_of
+        mov     si, cwd_new
+        mov     cx, CWDLEN / 2
+        rep     movsw
+        mov     si, [actp]
+        mov     ax, [cwd_cl]
+        mov     [si+D_CWD], ax
+        jmp     ok
 .e:     jmp     fail
 
 section .bss
 cwd_p       resw 1
 section .text
+CWDMAX  equ 64                          ; "\" and 63, as MS-DOS's
+CWNEW   equ 196                         ; (CWDMAX, then path_buf's 128 at
+cwd_new equ path2_buf                   ;  most: CHDIR's, in K2, with rename's
+cwd_nm  equ path2_buf + CWNEW           ;  and EXEC's places, which it never
+cwd_cl  equ path2_buf + CWNEW + 14      ;  meets: the new string, a name for
+        times -(CWNEW + 16 > KL_REL - KL_P2) db 0  ; it, the cluster)
+        times -(CWDMAX + 1 > CWDLEN) db 0
 
 f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         call    drv_dflt
         call    drv_present
         jc      .bad
+        mov     cx, [si+D_CWD]          ; unknown: found first, as MS-DOS's
+        inc     cx                      ;  ValidateCDS (unreadable: the name
+        jnz     .k                      ;  kept, as it was; its look failed,
+        push    ax                      ;  INT 24h's Fail: 15, as MS-DOS's
+        call    drv_ready               ;  $CURRENT_DIR, the name kept given
+        jc      .k0                     ;  all the same: LCMD's prompt, CD
+        call    cwd_find                ;  and COPY's relative names go on
+        clc                             ;  with it, not the root)
+.k0:    pop     ax
+.k:     pushf
         call    cwd_of
         lea     si, [di+1]              ; (without the leading '\')
         mov     es, [bp+F_DS]
@@ -1032,6 +1116,8 @@ f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         stosb
         or      al, al
         jnz     .c
+        popf
+        jc      .bad
         mov     ax, 0100h               ; (DOS returns this)
         jmp     ok_ax
 .bad:   mov     ax, 15
@@ -1077,7 +1163,7 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     ax, [r_dir]
         call    dir_slot
         jc      .e
-        call    fat_flush               ; a grown target linked before it is named
+        call    fat_flush_act           ; a grown target linked before it is named
         jc      .e
         mov     di, si                  ; the old entry, renamed, in the slot
         push    si
@@ -1091,15 +1177,42 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     cx, 11
         rep     movsb
         pop     si
+        mov     ax, [d_off]             ; the old one in the same sector:
+        xor     ax, [ren_off]           ;  deleted in the same write (else
+        and     ax, 0FE00h              ;  the two entries name one chain
+        jnz     .two                    ;  between the writes, as MS-DOS's)
+        mov     ax, [d_lba]
+        cmp     ax, [ren_lba]
+        jne     .two
+        mov     bx, si
+        mov     ax, [d_off]
+        and     ax, 511
+        sub     bx, ax
+        mov     ax, [ren_off]
+        and     ax, 511
+        add     bx, ax
+        mov     byte [bx], 0E5h
         call    buf_put
+        jmp     ret_cf
+.two:   call    buf_put
         jc      .e
         mov     dx, [ren_lba]           ; and the old one deleted
         mov     ax, [ren_off]
         call    dent_buf
-        jc      .e
+        jc      .un
         mov     byte [si], 0E5h
         call    buf_put
-        jmp     ret_cf
+        jnc     .ok
+.un:    push    ax                      ; (not: the new one taken out again,
+        mov     dx, [d_lba]             ;  if it can be, so no two entries
+        mov     ax, [d_off]             ;  name the chain)
+        call    dent_buf
+        jc      .unx
+        mov     byte [si], 0E5h
+        call    buf_put
+.unx:   pop     ax
+        stc
+.ok:    jmp     ret_cf
 .dev:   mov     ax, 17                  ; not the same device
         jmp     .e
 .acc:   mov     ax, 5

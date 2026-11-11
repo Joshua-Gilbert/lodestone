@@ -16,6 +16,7 @@
 ;  (KROM.INC).  Only what differs from the defaults is written.
 ; =====================================================================
 %include "UIAPI.INC"
+%include "FONTPACK.INC"                 ; (FONT_UNPACK: Lodefont back)
 RUN_API equ 4                           ; (UI_SAVER's tidying.  Its help's HT, n is API
                                         ;  10's, as CALC.ASM says: kept at 4 so an
                                         ;  older LODE.SYS still runs it)
@@ -434,7 +435,9 @@ disk_lines:
         mov     al, [drv]
         add     al, 'A'
         mov     [s_drive+6], al
-        mov     [s_vol], al
+        sub     al, 'A' - 1             ; (A = 1)
+        mov     [s_vfcb + 7], al
+        add     al, 'A' - 1
         call    UI_CRITERR              ; (forget any earlier one)
         mov     dl, [drv]
         inc     dl
@@ -453,6 +456,16 @@ disk_lines:
         mov     [d_total], dx
         call    vstart                  ; "Drive A:   label LODESTONE"
         push    di
+        mov     dx, s_vfcb              ; the label's 11 characters as on
+        mov     ah, 11h                 ;  the disk: an extended FCB's
+        int     21h                     ;  search, as DOS's COMMAND
+        pop     di
+        or      al, al
+        jz      .l11
+        mov     al, [drv]               ; FFh: no label, or a LODE.SYS before
+        add     al, 'A'                 ;  1.1 (no FCB calls: FFh for them
+        mov     [s_vol], al             ;  all): 4Eh's then, its dot left out
+        push    di
         mov     dx, s_vol
         mov     cx, 08h
         mov     ah, 4Eh
@@ -466,9 +479,18 @@ disk_lines:
         or      al, al
         jz      .labx
         cmp     al, '.'
-        je      .lab                    ; (a label's "extension" belongs to it)
+        je      .lab
         stosb
         jmp     .lab
+.l11:   mov     si, dta + 8 + 11        ; (its trailing spaces off;
+        xor     ch, ch                  ;  CH, CL apart: clus_line, which
+        mov     cl, 11                  ;  this runs on into, even)
+.t:     cmp     byte [si-1], ' '
+        jne     .p
+        dec     si
+        loop    .t
+.p:     mov     si, dta + 8
+        rep     movsb
 .labx:  jmp     .lab2
 .nolab: mov     si, s_nolabel
         call    UI_SBSTR
@@ -1319,7 +1341,12 @@ next_font:
 .nx:    mov     ah, 4Fh
         int     21h
         jmp     .l
-.lode:  mov     si, builtin_font
+.lode:  mov     si, builtin_font        ; (packed: FONTPACK.INC)
+        push    ds
+        pop     es
+        mov     di, fbuf
+        FONT_UNPACK
+        mov     si, fbuf
         mov     di, s_empty
         jmp     .set
 .file:  mov     si, fbuf
@@ -2318,6 +2345,8 @@ l_ems       db 'Expanded memory (EMS)',0
 l_ext       db 'Extended memory',0
 s_drive     db 'Drive A:',0
 s_vol       db 'A:\*.*',0
+s_vfcb      db 0FFh, 0, 0, 0, 0, 0, 08h, 0, '???????????'  ; (the label's
+            times 25 db 0               ;  extended FCB)
 s_nolabel   db '(no label)',0
 l_dsize     db '  Size',0
 l_dfree     db '  Free',0
@@ -2500,14 +2529,14 @@ s_inilong   db 'LODE.INI is too long to change here',0
 s_sample1   db 'The quick brown fox jumps over the lazy dog',0
 s_sample2   db '0123456789  ([{<>}])  .,;:!?  @#$%&*+-=/',0
 %include "FPU.INC"                      ; (Devices: which coprocessor)
-builtin_font:                           ; Lodefont, to switch back to
-%include "FONT.INC"
+%define FONTPACK_NAME builtin_font      ; Lodefont, to switch back to:
+%include "FONTPACK.INC"                 ;  packed, unpacked into fbuf
 
 ; the hot labels even (EVEN.INC: bench/hot.py's system and form)
 %include "EVEN.INC"
         EVEN    topic_name, vstart, pline, pline_r, ptext, pgap, ems_mgr, kb_line, sb_kb, sb_kb.s
         EVEN    t_memory.ok, t_memory.used, t_memory.notui, t_memory.notsys, t_memory.next, t_memory.cl
-        EVEN    t_memory.noother, t_memory.bios, t_memory.noems, t_memory.close, t_disks.x, disk_lines.lab
+        EVEN    t_memory.noother, t_memory.bios, t_memory.noems, t_memory.close, t_disks.x
         EVEN    clus_line, t_clock, now_time, t_devices.com, t_devices.nc, find_gpib.v, find_gpib.n
 
 section .bss
