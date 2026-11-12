@@ -17,7 +17,7 @@ uses the whole page (v7.5). Power the Nano before the plotter; on the Pi's USB i
 shares the bus's ground and its console is a `miniterm` away.
 
 **From the GRiD: `PLOT file [/A:n]`** (`os/src/PLOT.ASM`, on ROM 2, so the
-prompt finds it on R: through PATH; 2.8 KB). It sends an HP-GL file to the
+prompt finds it on R: through PATH; 3 KB). It sends an HP-GL file to the
 Nano at GPIB address n (default 1) through the GRiD's GPIB driver (INT 60h:
 Lodestone's built-in one, or GRIDGPIB.COM under GRiD MS-DOS). It keeps
 `grid_plotter`'s rules, so a file one plots the other plots too:
@@ -27,14 +27,20 @@ Lodestone's built-in one, or GRIDGPIB.COM under GRiD MS-DOS). It keeps
   there isn't one.
 - Each serial poll, it sends the whole commands that fit in the room the Nano
   reports: at least 64 bytes, or the drawing's end. A single command longer
-  than 200 bytes of room is sent a room's worth at a time. So no write waits
+  than 200 bytes of room is sent a room's worth at a time (a label's rest is
+  then read up to its ETX, whatever `;` its text holds). So no write waits
   on the bus, and the driver's own 2 s per byte time-out is left alone: it is
   one setting for every GPIB client, CLAUDE's link included.
 - While the Nano is full, PLOT waits on HLT, so it is idle under multitasking
   (a task in the background plots while you work). It gives up after 200 s
   with no progress. At the end it polls until the Nano is idle.
-- Esc or ^C stops it, and `PU;` goes after the last whole command, so the pen
-  lifts once the Nano and the plotter have drawn what they hold.
+- A status of 0 at the start is the Nano full and still drawing (after an
+  Esc, say): PLOT waits for room. No Nano at all is a time-out. An address
+  whose poll asks for service (bit 6, which the Nano never sets: the Claude
+  bridge with a frame waiting) is refused.
+- Esc or ^C stops it, and `PU;` goes after the last whole command, once a
+  poll gives room for it, so the pen lifts once the Nano and the plotter have
+  drawn what they hold. A read error part-way does the same.
 - Exit codes: 0 plotted, 1 stopped, 2 nothing sent (the file, the switches,
   no GPIB driver, no Nano answering), 3 failed part-way.
 
@@ -42,7 +48,10 @@ Lodestone's built-in one, or GRIDGPIB.COM under GRiD MS-DOS). It keeps
 the Nano on the bus model (`tools/sim7210.py`). The tests check:
 - the bytes the Nano gets, with each write within the room the poll before
   it gave and ending a whole command, as gridlink's `hpgl_ends` marks them;
-- a 2 KB command sent in parts, a Nano full for 40 polls, Esc, and the two
+- a 2 KB command and a 600-byte label with a `;` in its text sent in parts,
+  and Esc during either (no `PU;` inside them);
+- a Nano full (status 0) for 40 polls at the start, Esc and ^C, the `PU;`
+  within the room a poll gave, an address that asks for service, and the two
   200 s give-ups (never any room, the Nano unplugged part-way);
 - that every refused file is one gridlink's `hpgl_check` refuses too, and
   that what PLOT sends is what `hpgl_check` would.

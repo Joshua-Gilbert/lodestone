@@ -463,6 +463,14 @@ def test_plotter():
         # a long plot: sent in parts that fit, polled in between, whole commands
         big = ''.join('PD%d,%d;' % (i, i) for i in range(600)) + 'LBA;B;C\x03;PU;'
         open(os.path.join(h.cfg.term_dir, 'big.plt'), 'w').write(big)
+        # short commands before one longer than any room: the long one in parts, not a wait for ever
+        long = 'IN;PU0,0;PD' + ','.join('%d,%d' % (i, i * 3 % 1000) for i in range(200)) + ';PU;'
+        h.grid.plot_parts = []; h.grid.plot_held = 0
+        r = c.call('grid_plotter', hpgl=long)
+        assert not r['isError'], r
+        r = plot_to_end(h, c)
+        assert ': done' in r and b''.join(h.grid.plot_parts) == long.encode(), (r, h.grid.plot_parts)
+        assert not getattr(h.grid, 'plot_overrun', False), 'sent more than the Nano had room for'
         h.grid.plot_parts = []; h.grid.plot_held = 0
         r = c.call('grid_plotter', file='big.plt')
         assert not r['isError'], r

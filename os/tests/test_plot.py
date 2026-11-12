@@ -34,6 +34,7 @@ class Nano(sim7210.Device):
         s.got = bytearray(); s.held = 0; s.seen = 0; s.said = 0
         s.writes = []; s.over = []; s.polls = 0
         s.drain, s.full = drain, full
+        s.fixed = None                  # a status byte to give every poll (another device)
     def message(s, msg): s.got += msg               # (at each EOI or LF)
     def data(s): return bytes(s.got) + s.inbuf
     @property
@@ -45,8 +46,10 @@ class Nano(sim7210.Device):
             if w > s.said: s.over.append((w, s.said))
             s.held += w; s.seen = n
         s.polls += 1
-        if s.full:
-            s.full -= 1; room = 0
+        if s.fixed is not None: return s.fixed
+        if s.full:                     # (full and drawing: 0, as the firmware's statusByte gives it)
+            s.full -= 1; s.said = 0
+            return 0
         else:
             s.held = max(0, s.held - s.drain)
             room = (240 - s.held) // 4 if s.held < 240 else 0
@@ -130,13 +133,40 @@ def t_long():
     o, e = run(k, 'plot big.plt')
     check('a command of %d bytes (one PD, longer than the most room): sent in parts of the room, all of it, exit 0' % len(big),
           nano.data() == big and e == 0 and not nano.over and max(nano.writes) <= 240, (nano.writes, e, o[-300:]))
+    nano = Nano(drain=8)
+    k = boot([('BIG.PLT', big)], nano)
+    o, e = run(k, 'plot big.plt', esc_after=3)
+    d = nano.data()
+    check('... Esc while it is in parts: no "PU;" in the middle of the PD (only what was sent of it); exit 1',
+          big.startswith(d) and 9 < len(d) < len(big) and e == 1 and 'Stopped' in o, (d[-30:], e, o[-200:]))
 
 def t_full():
     nano = Nano(full=40)
     k = boot([('D.PLT', DRAWING)], nano)
     o, e = run(k, 'plot d.plt')
-    check('the Nano full for 40 polls at the start: PLOT waits (no write meanwhile), then plots it all; exit 0',
+    check('the Nano full for 40 polls at the start (status 0, still drawing, as after an Esc): PLOT starts all the same, '
+          'waits (no write meanwhile), then plots it all; exit 0', 'does not answer' not in o and
           nano.data() == hpgl_check(DRAWING) and e == 0 and nano.polls > 40 and not nano.over, (nano.polls, e, o[-300:]))
+
+LABEL = b'IN;PU0,0;LB' + b'a' * 300 + b';' + b'b' * 300 + b'\x03;PU;PA10,10;'   # (a ';' in a label's text)
+
+def t_label():
+    want = hpgl_check(LABEL)
+    ends = set(hpgl_ends(want))
+    nano = Nano()
+    k = boot([('L.PLT', LABEL)], nano)
+    o, e = run(k, 'plot l.plt')
+    check('a label of 600 bytes with a ";" in its text: sent in parts, all of it; exit 0', nano.data() == want and e == 0
+          and not nano.over, (nano.writes, e, o[-300:]))
+    for n in (1, 2, 3):                 # (its 4th write is its last)
+        nano = Nano(drain=8)
+        k = boot([('L.PLT', LABEL)], nano)
+        o, e = run(k, 'plot l.plt', esc_after=n)
+        d = nano.data()
+        pu = d.endswith(b'PU;') and (len(d) - 3) in ends and want.startswith(d[:-3])
+        check('... Esc after %d writes: "PU;" only after a whole command, never in the label\'s text (%d bytes, %s); exit 1'
+              % (n, len(d), 'PU;' if pu else 'no PU;'), (pu or want.startswith(d)) and len(d) < len(want) and e == 1
+              and 'Stopped' in o and not nano.over, (d[-30:], e, nano.over))
 
 def t_esc():
     nano = Nano(drain=8)
@@ -147,6 +177,24 @@ def t_esc():
     check('Esc part-way: "Stopped: n of %d bytes sent", the pen up ("PU;") after the last whole command; exit 1'
           % len(hpgl_check(DRAWING)), 'Stopped: ' in o and d.endswith(b'PU;') and (len(d) - 3) in ends
           and DRAWING.startswith(d[:-3]) and len(d) < len(DRAWING) and e == 1, (d[-40:], e, o[-300:]))
+    check('... the "PU;" sent within the room a poll gave (not held on the bus)', not nano.over, nano.over)
+    nano = Nano(drain=8)
+    k = boot([('D.PLT', DRAWING)], nano)
+    k.pc.tty.clear()
+    k.key('plot d.plt'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: len(nano.writes) >= 4, 60)
+    k.key(0x2E03, settle=False)          # (^C, typed)
+    k.pc.run_until(lambda: 'Stopped' in out(k), 30); k.settle(2)
+    o = out(k); d = nano.data()
+    check('^C part-way: stopped as Esc stops it, "PU;" after a whole command; exit 1', 'Stopped: ' in o and d.endswith(b'PU;')
+          and (len(d) - 3) in ends and code(k) == 1, (d[-40:], o[-300:]))
+
+def t_bridge():
+    nano = Nano(); nano.fixed = 0x60     # (RQS and a frame waiting: what the Claude bridge says)
+    k = boot([('D.PLT', DRAWING)], nano)
+    o, e = run(k, 'plot d.plt', sim=20)
+    check('an address that asks for service (the bridge): "GPIB 1 asks for service: it is not the Nano"; nothing sent; exit 2',
+          'GPIB 1 asks for service: it is not the Nano' in o and not nano.data() and e == 2, (e, o[-300:]))
 
 def t_stall():
     nano = Nano(full=10 ** 9)
@@ -177,6 +225,7 @@ def t_refused():
              ('HI.PLT', b'IN;\xb0;', 'byte B0h at 3 is not HP-GL'),
              ('OPEN.PLT', b'IN;LBno end;PU;', 'a label (LB, BL or WD) has no ETX'),
              ('OPEN2.PLT', b'IN;\x03 bl', 'a label (LB, BL or WD) has no ETX'),
+             ('OPEN3.PLT', b'IN;WDhello;PU;', 'a label (LB, BL or WD) has no ETX'),
              ('EMPTY.PLT', b' ;\r\n;\t', 'there is no HP-GL in the file')]
     for n, d, _ in cases:
         try: hpgl_check(d); g = 'sent'
@@ -225,7 +274,7 @@ def t_nogpib():
 
 if __name__ == '__main__':
     only = sys.argv[1:]
-    for t in (t_plot, t_long, t_full, t_esc, t_stall, t_refused, t_accepted, t_address, t_nogpib):
+    for t in (t_plot, t_long, t_full, t_label, t_esc, t_bridge, t_stall, t_refused, t_accepted, t_address, t_nogpib):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed' % (len(results), len(bad)))

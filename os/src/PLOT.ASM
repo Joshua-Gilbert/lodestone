@@ -17,14 +17,19 @@
 ;   in 4-byte units; bit 7 when it and the plotter's queue are empty).
 ;   Each poll, PLOT sends the whole commands that fit (at least 64 bytes,
 ;   or the drawing's end), or, for one command longer than 200 bytes of
-;   room, that room's worth of it.  So no write waits on the bus while the
-;   pen draws: the driver's own time-out (2 s a byte, shared with every
-;   GPIB client, so left alone) is plenty.
+;   room, that room's worth of it (a label's rest is then read as a
+;   label's, to its ETX, whatever ';' its text holds).  So no write waits
+;   on the bus while the pen draws: the driver's own time-out (2 s a byte,
+;   shared with every GPIB client, so left alone) is plenty.
+; - A status of 0 is the Nano full and drawing (after an Esc, say), not
+;   no Nano: that is a time-out.  One that asks for service (bit 6) isn't
+;   the Nano (the Claude bridge, with a frame for the GRiD): refused.
 ; - While the Nano is full it waits (HLT: idle under multitasking), and
 ;   gives up after 200 s with no progress.  At the end it polls until the
 ;   Nano is idle, the pen's last strokes.
-; - Esc (or ^C) stops it: "PU;" goes after the last whole command, so the
-;   pen lifts once the Nano and the plotter have drawn what they hold.
+; - Esc (or ^C) stops it: "PU;" goes after the last whole command, once a
+;   poll gives room for it, so the pen lifts once the Nano and the plotter
+;   have drawn what they hold.  So does a read error part-way.
 ;
 ; The GPIB driver is the first of INT 60h-66h with 'GRIDGPIB' at entry+2:
 ; Lodestone's built-in one, or GRIDGPIB.COM under GRiD MS-DOS.
@@ -42,6 +47,9 @@ T_WAIT  equ 9                           ; ticks between polls while the Nano is 
 T_POLL  equ 18                          ; after a poll that failed, and while the pen finishes
 T_STALL equ 3641                        ; 200 s with no progress: given up
 E_BUSY  equ 6                           ; the driver: in a call from another task
+%if LOW <= 252
+%error LOW must be more than the most room (252): fit takes the window's end for a command's
+%endif
 
 start:  cld
         mov     di, bss_start           ; (a .COM's memory isn't cleared)
@@ -91,8 +99,13 @@ start:  cld
         mov     cx, 1
         call    pause
         jmp     .p0
-.p1:    or      al, al                  ; (an empty status byte: no Nano either)
-        jnz     .go
+.p1:    test    al, 40h                 ; RQS: something else (the Claude bridge
+        jz      .go                     ;  with a frame waiting); the Nano never
+        mov     dx, s_rqs               ;  asks.  (Any other byte is the Nano: 0
+        call    print                   ;  is it full and drawing, as after Esc)
+        call    paddr
+        mov     dx, s_rqs2
+        jmp     fail2
 .nn:    mov     dx, s_nonano
         call    print
         call    paddr
@@ -114,8 +127,9 @@ start:  cld
 
 ; ---- the plot: poll, send what fits, wait while it's full ---------------
 send:   call    refill
-        mov     dx, s_rderr
-        jc      fail3
+        jnc     .f
+        jmp     rfail
+.f:
         mov     ax, [blen]
         cmp     ax, [pos]
         je      finish                  ; (only at the end of the file)
@@ -152,6 +166,8 @@ send:   call    refill
         jbe     .wait
         mov     cx, [room]
         mov     byte [whole], 0
+        mov     al, [lastlab]           ; (a label split: its rest is parsed as
+        mov     [inlab], al             ;  a label's, up to its ETX)
         jmp     short .wr
 .wait:  call    stalled
         mov     dx, s_full
@@ -160,6 +176,7 @@ send:   call    refill
         call    pause
         jmp     send
 .whole: mov     byte [whole], 1
+        mov     byte [inlab], 0
 .wr:    mov     si, buf
         add     si, [pos]
         call    gwrite
@@ -186,12 +203,14 @@ finish: mov     dx, s_fin
         test    al, 80h
         jnz     .done
 .e:     call    stalled
-        jc      .done
+        jc      .ni
         mov     cx, T_POLL
         call    pause
         jmp     .l
+.ni:    mov     dx, s_noidle            ; (all sent, but no idle for 200 s)
+        jmp     short .lf
 .left:  mov     dx, s_left
-        call    print
+.lf:    call    print
         mov     ax, 4C00h
         int     21h
 .done:  mov     dx, s_done
@@ -222,14 +241,8 @@ finish: mov     dx, s_fin
         int     21h
 
 ; Esc or ^C: the pen up after the last whole command
-cancel: cmp     byte [whole], 0
-        je      .n
-        cmp     word [writes], 0
-        je      .n
-        mov     si, s_pu
-        mov     cx, 3
-        call    gwrite                  ; (if it fails, it fails)
-.n:     mov     dx, s_stop
+cancel: call    penup
+        mov     dx, s_stop
         call    print
         call    pdone
         mov     dx, s_stop2
@@ -237,6 +250,35 @@ cancel: cmp     byte [whole], 0
         mov     ax, 4C01h
         int     21h
 
+; "PU;" after the last whole command (none if nothing was sent, or the last
+; write ended inside one), once a poll gives room for it: a write past the
+; room would hold the bus (NRFD) until the pen frees some.  ~2 s at most.
+penup:  cmp     byte [whole], 0
+        je      .x
+        mov     ax, [sent]
+        or      ax, [sent+2]
+        jz      .x
+        call    now
+        mov     [mark], ax
+.p:     call    spoll
+        jc      .w
+        test    al, 3Fh                 ; (4 bytes or more)
+        jz      .w
+        mov     si, s_pu
+        mov     cx, 3
+        jmp     gwrite                  ; (if it fails, it fails)
+.w:     call    now
+        sub     ax, [mark]
+        cmp     ax, 36
+        jae     .x
+        mov     cx, 1
+        call    pause
+        jmp     .p
+.x:     ret
+
+; the file failed part-way: the pen up, then fail3
+rfail:  call    penup
+        mov     dx, s_rderr
 ; DX = what went wrong, part-way: how far it got
 fail3:  push    dx
         mov     dx, s_crlf
@@ -418,8 +460,15 @@ fit:    mov     bx, [pos]
         ret
 
 ; DI = where the command at BX ends: after its ';', or after an LB label's
-; ETX and the ';' after that; [blen] if not in the window
-cmd_end: mov    di, bx
+; ETX and the ';' after that; [blen] if not in the window.  [lastlab] = 1
+; for a label.  At [pos] with [inlab] (a label split part-way) it is that
+; label's rest: up to its ETX, whatever ';' its text holds.
+cmd_end: mov    byte [lastlab], 0
+        mov     di, bx
+        cmp     bx, [pos]
+        jne     .s
+        cmp     byte [inlab], 0
+        jne     .lab
 .s:     cmp     di, [blen]
         jae     .x
         mov     al, [buf+di]
@@ -444,6 +493,7 @@ cmd_end: mov    di, bx
         jne     .semi
         inc     di
         inc     di
+.lab:   mov     byte [lastlab], 1
         mov     al, 3
         call    find
         jc      .x
@@ -787,6 +837,9 @@ s_pct   db ' ($'
 s_pct2  db '%)  $'
 s_fin   db 13, 10, 'All sent; the pen is finishing (Esc leaves it to finish).$'
 s_left  db 13, 10, 'Left to finish.', 13, 10, '$'
+s_noidle db 13, 10, 'All sent, but the Nano has not been idle for 200 s.', 13, 10, '$'
+s_rqs   db 'PLOT: GPIB $'
+s_rqs2  db ' asks for service: it is not the Nano.  Nothing was sent.', 13, 10, '$'
 s_done  db 13, 10, 'Done: $'
 s_done2 db ' bytes in $'
 s_done3 db ' writes, $'
@@ -823,6 +876,8 @@ whole   resb 1                          ; 1: the last write ended a command
 brk     resb 1
 any     resb 1
 lopen   resb 1
+inlab   resb 1                          ; 1: [pos] is inside a label split part-way
+lastlab resb 1                          ; 1: cmd_end's last command was a label
 lastc   resb 1
 prev    resb 1
         alignb 2
