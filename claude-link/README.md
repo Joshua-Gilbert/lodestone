@@ -133,6 +133,8 @@ numbers, ended by `;` or SUB (`plotter-nano/README.md`).
   (in labels), and ESC and SUB (the 4662's own commands); nothing else.
 - The Nano must run addressed (`LISTEN_ONLY false`, `GPIB_ADDRESS 1`): in
   listen-only mode it would take every byte on the bus, the link's included.
+- Without the Pi, `PLOT file` on the GRiD (Lodestone's ROM 2) sends an HP-GL
+  file to the Nano by the same rules (`plotter-nano/README.md`).
 
 A Claude Code older than `requiresUserInteraction` asks for the five until
 you allow them; to make it always ask, add to `~/grid/.claude/settings.json`:

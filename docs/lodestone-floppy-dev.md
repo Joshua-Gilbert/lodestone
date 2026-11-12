@@ -21,6 +21,7 @@ Lodestone was developed from a boot floppy before it moved to EPROM (`lodestone-
 - **TERMBOLD.FNT** (1,536 bytes) — a font from Terminus Font's glyphs, as a file for System's Display topic. Built from `fonts\TERMBOLD.ASM`; `typfont.py X.TYP --fnt X.FNT` makes one from any 8×16 GRiD .TYP font.
 - **DEFRAG.COM** — the disk tidier, and the screen saver's first act. It keeps going on worn disks (marks bad clusters, logs to DEFRAG.TXT), and `DEFRAG /T` tests the free space. See `lodestone-defrag.md`.
 - **HEADCLN.COM** — floppy head cleaning with a wet cleaning disk (0.2.3).
+- **PLOT.COM** — an HP-GL file to the pen plotter over GPIB (`PLOT file [/A:n]`; `plotter-nano/README.md`).
 - **LCMD.COM** — the command prompt (CODE-P) and CLAUDE's `COMSPEC /C`.
   - Deliberately **not** named COMMAND.COM; see the rule below.
 - **Emulator and tests:**
@@ -76,6 +77,7 @@ The files to boot from are listed in the top-level README ("From a floppy"); the
 | DEFRAG.COM | disk tidier / screen saver (`DEFRAG [B:]`, `DEFRAG [B:] /T` to test the free space, `DEFRAG /S` as the saver runs it) |
 | DEFRAG.TXT | DEFRAG's log |
 | HEADCLN.COM | floppy head cleaning with a wet cleaning disk |
+| PLOT.COM | an HP-GL file to the pen plotter over GPIB (`PLOT file [/A:n]`) |
 | TESTDOS.COM | kernel self-test (expect "0 failed") |
 | CACHETST.COM | disk-cache stress test (expect "0 errors"); logs to CACHETST.TXT, waits for a key |
 | BENCH.COM | file system benchmark, plus EMS tests (map, 57h moves) when there is EMS; runs under Lodestone, GRiD MS-DOS and FreeDOS; logs to BENCH.TXT, waits for a key |

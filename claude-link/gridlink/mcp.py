@@ -900,7 +900,8 @@ class PlotJob(threading.Thread):
                 k = bisect.bisect_right(s.ends, s.sent + room) - 1
                 end = s.ends[k] if k >= 0 and s.ends[k] > s.sent else s.sent
                 if end - s.sent < min(PLOT_MIN, left):
-                    nxt = s.ends[bisect.bisect_right(s.ends, s.sent)] if s.sent < s.ends[-1] else n
+                    j = bisect.bisect_right(s.ends, end)  # the command after the ones that fit (short
+                    nxt = s.ends[j] if j < len(s.ends) else n   #  ones before a long one: not the first's end)
                     if room >= 200 and nxt - s.sent > room:  # one command bigger than the Nano's room
                         end = s.sent + room
                     elif end - s.sent < left:           # wait for room (the GRiD is free meanwhile)
