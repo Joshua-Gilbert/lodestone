@@ -38,12 +38,12 @@ for a in SYSTEM WRITE CALC TASKS TERM PAINT; do python3 mkrun.py apps/$a.ASM app
 python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
 # ROM 1, the boot ROM (tools/mkrom.py): the kernel first, then the core set
 python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODEMT.SYS src/LODE.PIC src/LCMD.COM \
-    apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN apps/TASKS.RUN apps/TERM.RUN src/CALC.COM drivers/PS.PRN \
+    apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN apps/TASKS.RUN src/CALC.COM drivers/PS.PRN \
     drivers/SCREEN.PRN rom/LODE.INI
 # ROM 2, a data ROM joined to R: (KROM.INC): what ROM 1 has no room for, and the disk utilities.
 # (tests/test_rom.py reads this line for ROM 2's files)
 # CLAUDE.COM as committed: run claude/build.sh first after a change to it
-python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM fonts/TERM.FNT apps/PAINT.RUN claude/CLAUDE.COM fonts/GRIDFONT.FNT fonts/TERMBOLD.FNT fonts/OFL.TXT \
+python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM apps/TERM.RUN fonts/TERM.FNT apps/PAINT.RUN claude/CLAUDE.COM fonts/GRIDFONT.FNT fonts/TERMBOLD.FNT fonts/OFL.TXT \
     src/FORMAT.COM src/CHKDSK.COM src/FDISK.COM src/SYS.COM src/LABEL.COM src/DISKCOPY.COM src/DISKCOMP.COM \
     src/ATTRIB.COM src/XCOPY.COM src/TREE.COM \
     src/FIND.COM src/MORE.COM src/SORT.COM src/COMP.COM \

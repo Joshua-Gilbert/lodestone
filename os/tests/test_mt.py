@@ -7150,8 +7150,8 @@ def t_rom():
     check('... TASKS lists the Executive', re.search(r'0\s+Executive \(in front\)', o), o)
     r1, memsz, kb = R.rom(), open(A.MEMSZ, 'rb').read(), {}
     r96 = r1.replace(b'MTMEM=LCMD.COM:64', b'MTMEM=LCMD.COM:96')       # (the ROM's line, another size: seen)
-    for tag, roms, more in (('ROM 1 alone (no TERM.FNT)', None, b''),
-                            ('with ROM 2 (TERM.FNT on it)', {0: R.rom2(), 1: r1}, b''),
+    for tag, roms, more in (('ROM 1 alone (no TERM.RUN, no TERM.FNT)', None, b''),
+                            ('with ROM 2 (TERM.RUN and TERM.FNT on it)', {0: R.rom2(), 1: r1}, b''),
                             ('with ROM 2, the ROM\'s line made MTMEM=LCMD.COM:96', {0: R.rom2(), 1: r96}, b''),
                             ('... and C:\\LODE.INI MTMEM=FOO.COM:200', {0: R.rom2(), 1: r96}, b'MTMEM=FOO.COM:200\r\n')):
         k = R.boot(roms=roms, ata=R.sysinfo_hd(('LODE.INI', b'MULTITASK=1\r\n' + more), ('MEMSZ.COM', memsz)), ems_pages=88)
@@ -7163,7 +7163,7 @@ def t_rom():
                   st[1] != 0 and k.pc.mode() == 3 and n == 0, (st, k.pc.mode(), n))
             continue
         o = '\n'.join(l for y, l in k.ocr())
-        check('... %s: CODE-P: LCMD in a terminal window (TERM.RUN from ROM 1, TERM.FNT from ROM 2, by PATH), task 0 '
+        check('... %s: CODE-P: LCMD in a terminal window (TERM.RUN and TERM.FNT from ROM 2, by PATH), task 0 '
               'in front' % tag, st[1] == 0 and k.pc.mode() == 0x40 and n == 1 and 'LCMD.COM' in o and 'C:\\>' in o,
               (st, k.pc.mode(), n, o[-300:]))
         k.key('memsz', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
