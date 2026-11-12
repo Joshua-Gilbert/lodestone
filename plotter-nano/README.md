@@ -4,7 +4,8 @@
 that puts the Tektronix 4662 pen plotter on the GPIB bus. It is a GPIB device
 at address 1 (`GPIB_ADDRESS`) that takes HP-GL and sends it to the 4662 as
 Tek commands on RS-232 at 1200 baud. gridlink's `grid_plotter` drives it
-(`claude-link/README.md`, The pen plotter).
+(`claude-link/README.md`, The pen plotter), and so does `PLOT.COM` on the
+GRiD itself, without the Pi (below).
 
 **Wiring** (AR488's Nano pin map): DIO1-4 D2-D5, DIO5-8 A0-A3, DAV D7,
 NRFD D8, NDAC D9, ATN D10, IFC D11, SRQ D12, EOI A4, REN A5; the GPIB
@@ -14,6 +15,37 @@ the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
 1200 baud, address A); switch A without its Copy bit for standard mode, which
 uses the whole page (v7.5). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
+
+**From the GRiD: `PLOT file [/A:n]`** (`os/src/PLOT.ASM`, on ROM 2, so the
+prompt finds it on R: through PATH; 2.8 KB). It sends an HP-GL file to the
+Nano at GPIB address n (default 1) through the GRiD's GPIB driver (INT 60h:
+Lodestone's built-in one, or GRIDGPIB.COM under GRiD MS-DOS). It keeps
+`grid_plotter`'s rules, so a file one plots the other plots too:
+- The whole file is checked before anything is sent, as `hpgl_check` checks
+  it: printable ASCII, line ends, tabs, ETX, BS, SO, SI, ESC and SUB, and no
+  label (LB, BL or WD) without an ETX after it. A `;` goes on the end if
+  there isn't one.
+- Each serial poll, it sends the whole commands that fit in the room the Nano
+  reports: at least 64 bytes, or the drawing's end. A single command longer
+  than 200 bytes of room is sent a room's worth at a time. So no write waits
+  on the bus, and the driver's own 2 s per byte time-out is left alone: it is
+  one setting for every GPIB client, CLAUDE's link included.
+- While the Nano is full, PLOT waits on HLT, so it is idle under multitasking
+  (a task in the background plots while you work). It gives up after 200 s
+  with no progress. At the end it polls until the Nano is idle.
+- Esc or ^C stops it, and `PU;` goes after the last whole command, so the pen
+  lifts once the Nano and the plotter have drawn what they hold.
+- Exit codes: 0 plotted, 1 stopped, 2 nothing sent (the file, the switches,
+  no GPIB driver, no Nano answering), 3 failed part-way.
+
+`os/tests/test_plot.py` (36 checks) runs it in the emulator against a model of
+the Nano on the bus model (`tools/sim7210.py`). The tests check:
+- the bytes the Nano gets, with each write within the room the poll before
+  it gave and ending a whole command, as gridlink's `hpgl_ends` marks them;
+- a 2 KB command sent in parts, a Nano full for 40 polls, Esc, and the two
+  200 s give-ups (never any room, the Nano unplugged part-way);
+- that every refused file is one gridlink's `hpgl_check` refuses too, and
+  that what PLOT sends is what `hpgl_check` would.
 
 **v7.6: labels, and the 4662's own commands.** HP-GL's label commands now
 reach the plotter as its own alpha commands (070-4164-00 p. 4-16 to 4-23),

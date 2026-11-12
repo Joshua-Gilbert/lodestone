@@ -855,6 +855,13 @@ def t_rom2_utils():
     want = {n: open(os.path.join(GOS, 'src', n), 'rb').read() for n in ('LODE.SYS', 'LODEMT.SYS', 'LODE.PIC', 'LCMD.COM')}
     check('FORMAT B: /S from the ROM: R:\\FORMAT.COM by PATH, the system from R: (the start-up drive), as built',
           'System transferred' in o and all(got.get('A:\\' + n) == v for n, v in want.items()), (o, sorted(got)))
+    o = prompt(k, 'plot', 20)
+    check('PLOT from the ROM: R:\\PLOT.COM by PATH (its usage, alone)', 'PLOT file [/A:n]' in o and 'Bad command' not in o, o)
+    o = prompt(k, 'headcln', 20)
+    k.key(ktest.ESC); k.settle(5)
+    o2 = k.pc.text_screen()
+    check('HEADCLN from the ROM: R:\\HEADCLN.COM by PATH, asks for the cleaning disk; Esc: "Nothing done."',
+          'put the cleaning disk in' in o and 'Nothing done.' in o2 and not k.crashed, (o, o2))
 
 
 if __name__ == '__main__':
