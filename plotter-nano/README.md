@@ -41,15 +41,20 @@ Lodestone's built-in one, or GRIDGPIB.COM under GRiD MS-DOS). It keeps
 - Esc or ^C stops it, and `PU;` goes after the last whole command, once a
   poll gives room for it, so the pen lifts once the Nano and the plotter have
   drawn what they hold. A read error part-way does the same.
+- `/A:` should name the Nano. An idle instrument's poll (0) looks like a full
+  Nano: nothing is sent, and PLOT gives up after 200 s. The Pico bridge with
+  a reply waiting gives 20h, which reads as room, so HP-GL would go into
+  the Claude link.
 - Exit codes: 0 plotted, 1 stopped, 2 nothing sent (the file, the switches,
   no GPIB driver, no Nano answering), 3 failed part-way.
 
-`os/tests/test_plot.py` (36 checks) runs it in the emulator against a model of
+`os/tests/test_plot.py` (47 checks) runs it in the emulator against a model of
 the Nano on the bus model (`tools/sim7210.py`). The tests check:
 - the bytes the Nano gets, with each write within the room the poll before
   it gave and ending a whole command, as gridlink's `hpgl_ends` marks them;
 - a 2 KB command and a 600-byte label with a `;` in its text sent in parts,
-  and Esc during either (no `PU;` inside them);
+  and Esc during either (no `PU;` inside them); a label cut just after its
+  ETX, whole commands again after it;
 - a Nano full (status 0) for 40 polls at the start, Esc and ^C, the `PU;`
   within the room a poll gave, an address that asks for service, and the two
   200 s give-ups (never any room, the Nano unplugged part-way);

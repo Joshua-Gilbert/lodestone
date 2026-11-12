@@ -166,8 +166,23 @@ send:   call    refill
         jbe     .wait
         mov     cx, [room]
         mov     byte [whole], 0
-        mov     al, [lastlab]           ; (a label split: its rest is parsed as
-        mov     [inlab], al             ;  a label's, up to its ETX)
+        mov     byte [inlab], 0         ; a label split before its ETX: its rest
+        cmp     byte [lastlab], 0       ;  parsed as a label's, up to that ETX
+        je      .wr
+        mov     bx, [pos]               ; (DX: its end, from [pos]; its ETX is
+        add     bx, dx                  ;  the last byte, or the one before a
+        dec     bx                      ;  ';'; neither: not in the window, so
+        cmp     byte [buf+bx], 3        ;  past the cut)
+        je      .e
+        cmp     byte [buf+bx], ';'
+        jne     .in
+        dec     bx
+        cmp     byte [buf+bx], 3
+        jne     .in
+.e:     sub     bx, [pos]
+        cmp     bx, cx                  ; the ETX in this part: only the ';'
+        jb      .wr                     ;  (or nothing) left, a command's end
+.in:    mov     byte [inlab], 1
         jmp     short .wr
 .wait:  call    stalled
         mov     dx, s_full
@@ -822,8 +837,8 @@ s_nothing db 'PLOT: there is no HP-GL in the file', 13, 10, '$'
 s_label db 'PLOT: a label (LB, BL or WD) has no ETX at its end.  Nothing was sent.', 13, 10, '$'
 s_bad   db 'PLOT: byte $'
 s_bad2  db 'h at $'
-s_bad3  db ' is not HP-GL.  The file may hold printable ASCII, line ends, ETX, BS, SO, SI,', 13, 10
-        db 'and ESC and SUB for the 4662', 39, 's own commands, only.  Nothing was sent.', 13, 10, '$'
+s_bad3  db ' is not HP-GL (printable ASCII, line ends, ETX, BS, SO, SI, ESC, SUB).', 13, 10
+        db 'Nothing was sent.', 13, 10, '$'
 s_nonano db 'PLOT: the Nano at GPIB $'
 s_nonano2 db ' does not answer a serial poll: is it powered, and running', 13, 10
         db 'firmware v4 or later?  Nothing was sent.', 13, 10, '$'

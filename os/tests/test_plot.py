@@ -158,6 +158,16 @@ def t_label():
     o, e = run(k, 'plot l.plt')
     check('a label of 600 bytes with a ";" in its text: sent in parts, all of it; exit 0', nano.data() == want and e == 0
           and not nano.over, (nano.writes, e, o[-300:]))
+    # a label of 240 bytes, its ETX the room's last byte: the ';' after it left, then whole commands again
+    cut = b'IN;PU0,0;LB' + b'x' * 100 + b';' + b'y' * 127 + b'\x03'
+    tail = b''.join(b'PA%d,%d;' % (i, i) for i in range(150))
+    cw = hpgl_check(cut + b';' + tail)
+    nano = Nano()
+    k = boot([('C.PLT', cut + b';' + tail)], nano)
+    o, e = run(k, 'plot c.plt')
+    check('a label cut just after its ETX (%d bytes, the room\'s last): all of it; the writes after it whole commands again '
+          '(gridlink\'s ends), not room-sized parts; exit 0' % len(cut), nano.data() == cw and e == 0
+          and not ends_ok(nano, cw)[1:] and len(nano.writes) > 3, (nano.writes, ends_ok(nano, cw), e))
     for n in (1, 2, 3):                 # (its 4th write is its last)
         nano = Nano(drain=8)
         k = boot([('L.PLT', LABEL)], nano)
