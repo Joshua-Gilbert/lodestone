@@ -9,7 +9,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 | | |
 |---|---|
 | ![The start-up picture](os/screens/readme/splash.png) | ![System, Display](os/screens/readme/system_display.png) |
-| The start-up picture (`LODE.PIC`)¹ | System, Display: the font, and the start-up picture (Space turns it off) |
+| The start-up picture (`LODE.PIC`) | System, Display: the font, and the start-up picture (Space turns it off) |
 | ![The Executive](os/screens/readme/executive.png) | ![Copy with a wildcard](os/screens/readme/copy_wildcards.png) |
 | The Executive: GRiD's File form (Device, Subject, Title); the status line shows the memory free for programs and in EMS, the panel as the 1520 reports it, and the serial mouse | Copy, Move and Delete take wildcards, with Replace and Only newer |
 | ![Multitasking](os/screens/readme/multitasking.png) | ![Tasks](os/screens/readme/tasks.png) |
@@ -57,7 +57,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
   - It is also the BMP viewer: Return on a `.BMP` in the Executive shows it. It shows any 1-bit BMP up to 640 × 400, centred, with dark paper.
   - It takes 63 KB while it runs and 32 bytes when it doesn't. See `docs/lodestone-paint.md`.
 - **The screen saver:** runs DEFRAG on every disk in turn, then darkens the screen. It comes on inside CLAUDE.COM too (full screen, with the Pico bridge), and anything from Claude Code ends it.
-- **A start-up picture**¹, drawn from vectors (`LODE.PIC`, 2.5 KB).
+- **A start-up picture**, drawn from vectors (`LODE.PIC`, 1 KB): a terrella, the spherical lodestone William Gilbert describes in *De Magnete* (1600), turning on a tilted rod among its lines of force. The drawing is Lodestone's own, not one of the book's woodcuts.
 
 **Multitasking** (`MULTITASK=1` in LODE.INI; see `docs/lodestone-multitasking.md`)
 - **How it works:** ordinary DOS programs multitask preemptively, in the 286's real mode, much as under DESQview.
@@ -169,7 +169,7 @@ See `docs/lodestone-floppy-dev.md`.
 | Folder | What |
 |---|---|
 | `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `FORMAT.COM`, `CHKDSK.COM`, `FDISK.COM`, `SYS.COM`, `LABEL.COM`, `DISKCOPY.COM` (and `DISKCOMP.COM`, the same source), `ATTRIB.COM`, `XCOPY.COM`, `TREE.COM`, `FIND.COM`, `MORE.COM`, `SORT.COM`, `COMP.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `PLOT.COM` (an HP-GL file to the pen plotter over GPIB), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
-| `os/splash` | The start-up picture's source: the source image, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
+| `os/splash` | The start-up picture's source: `mksplash.py` works out the drawing (its numbers are at the top), packs it into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit |
 | `os/rom` | `LODE.INI`, the settings burned into the ROM. The ROM images are `os/LODE1_EPROM.BIN` and `os/LODE2_EPROM.BIN` (to burn) and `os/LODE1.BIN` and `os/LODE2.BIN` (as the BIOS sees them), built by `os/build.sh` with `tools/mkrom.py` |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN` (the calculator's window), `TASKS.RUN` (the tasks, CODE-T), `PAINT.RUN` (Paint, and the BMP viewer) and `TERM.RUN` (a text program's terminal window, with `MULTITASK=1`) |
 | `os/drivers` | Drivers for PrtSc (`.PRN`, up to 1 KB, read only when PrtSc is pressed): `PS.PRN`, PostScript on LPT1 (`PS.ASM` describes the interface); `SCREEN.PRN`, the screen saved as a file (Shift-PrtSc, and PrtSc with no printer chosen) |
@@ -225,7 +225,7 @@ See `docs/serial-link.md`. `os/tests/test_serial_kernel.py` builds it and checks
 
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools (and `pyte` for the four that run claude-link's terminal: test_claude_kernel, test_claude_mouse, test_claude_window, test_resident_term). All 3,400 checks pass (the 26 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools (and `pyte` for the four that run claude-link's terminal: test_claude_kernel, test_claude_mouse, test_claude_window, test_resident_term). All 3,392 checks pass (the 26 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -285,6 +285,3 @@ Lodestone is Copyright (C) 2026 Joshua Gilbert. It is free software under the GN
 Third-party material in the repo (the Terminus-derived fonts, GRiD's TC8X16 glyphs, FreeDOS for the benchmark, the AR488 patch, the bridge firmware's libraries, TM5000G) keeps its own license: [`THIRD_PARTY.md`](THIRD_PARTY.md).
 
 > **Name:** Lodestone was called Grid-OS up to 0.4.0. Since 0.4.1 the kernel is `LODE.SYS` (settings in `LODE.INI`), the shell `LCMD.COM` and the boot installer `LODEBOOT.COM`; they were `GRIDOS.SYS`, `GRIDOS.INI`, `GRIDCMD.COM` and `GOSBOOT.COM`. Release notes up to 0.4.0 keep the old names.
-
----
-¹ A drawing based on a public-domain illustration, Fig. 1 of F. A. Annett's *Electrical Machinery* (1921).

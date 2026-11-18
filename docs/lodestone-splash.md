@@ -1,14 +1,21 @@
 # Lodestone 0.4.3 — the start-up picture (2026-10-09)
 
-At start-up Lodestone shows Fig. 1 of F. A. Annett, *Electrical Machinery* (McGraw-Hill, 1921), "Lodestone attracting some iron nails" (public domain), redrawn from vectors, with LODESTONE underlined beside it. It stays 2 seconds or until a key.
+At start-up Lodestone shows a terrella, the "little earth" William Gilbert describes in *De Magnete* (1600): a lodestone turned into a sphere. Here it turns on a rod set 25° from upright, shaded with rings that are open to one side, among a dipole's lines of force. LODESTONE is underlined beneath it. It stays 2 seconds or until a key.
+
+The drawing is Lodestone's own, not a copy of any of the book's woodcuts. Its subject is Gilbert's; the rod, the rings and the lines of force, a modern dipole's, are this drawing's.
+
+Until 2026-11-21 the picture was Fig. 1 of F. A. Annett, *Electrical Machinery* (McGraw-Hill, 1921), "Lodestone attracting some iron nails", traced into a stone's outline and 235 nails. It was changed on reviewers' feedback. That picture's sources (`plate.png`, `trace.py`, `trace.txt`) and drawing code are in the history before that date.
 
 ![The start-up picture](../os/screens/readme/splash.png)
 
 ## Design decisions
 
 - **Monochrome:** 1 bit, lit or not, as mode 40h is anyway; no grey palette tricks.
-- **The plate as printed:** lit paper, a dark stone. Each nail is lit where it lies on the stone and dark where it crosses the paper. A dark-screen version (a lit stone with dark nails knocked out of it) was tried and read as a blob.
-- **Only the title**, LODESTONE underlined. The version and caption lines of the first draft are gone. Since 2026-11-05 its letters are Lodefont's capitals as thin strokes (`lodestone-font.md`): O and D tall with cut corners, N's diagonal ending high. They were chamfered 1920s drawing capitals before.
+- **A dark screen, everything drawn lit.** Nothing is drawn dark, so the order of drawing doesn't matter.
+- **The stone:** a circle of radius 84, its outline 2 pixels wide, on an axis 25° left of upright. A rod, 2 pixels wide, stands 18 pixels out past each pole.
+- **Its shading:** six rings, 12 pixels apart, each open on the right a little below the equator, the openings of different widths. Each ring's centre is 5 pixels nearer the upper pole than the last, so they gather round the rod's end and the stone reads as a ball turning on it.
+- **Lines of force:** a dipole's about that axis, r = k sin²θ, for five values of k, drawn where they are off the stone and on the screen above the title. An arrowhead each side shows the way the field runs.
+- **Only the title**, LODESTONE underlined. It is centred under the stone. The version and caption lines of the first draft are gone. Since 2026-11-05 its letters are Lodefont's capitals as thin strokes (`lodestone-font.md`): O and D tall with cut corners, N's diagonal ending high. They were chamfered 1920s drawing capitals before.
 - **Its own file:** the picture is `LODE.PIC`. The kernel keeps only a small bootstrap that reads it into memory, runs it and lets the memory go. In the first version the picture was part of `LODE.SYS`'s start-up code. That was already non-resident, but it made `LODE.SYS` 2.7 KB bigger on disk.
 - **Off from the Executive's side:** System, Display, Space writes `SPLASH=0` to `LODE.INI`, and the bootstrap then never opens `LODE.PIC`. With no `LODE.PIC` on the disk there is no picture either.
 - **Standing rule:** minimal resident bytes, reuse, speed. The picture costs 0 resident bytes, and DOS programs get 562.5 / 578.6 KB, as under 0.4.2.
@@ -17,36 +24,29 @@ At start-up Lodestone shows Fig. 1 of F. A. Annett, *Electrical Machinery* (McGr
 
 | File | What |
 |---|---|
-| `os/splash/plate.png` | The plate, 532 × 668, from the Wikimedia Commons scan |
-| `os/splash/trace.py` | How `trace.txt` was traced (OpenCV, scikit-image; not part of the build) |
-| `os/splash/trace.txt` | The drawing in plate pixels: the stone's outline (`R x y`, 69 points) and the nails (`N hx hy tx ty`, head then point, 235). Edit freely. |
-| `os/splash/mksplash.py` | Scales it by 9/16 to the screen, packs it into `src/SPLASH.INC`, and draws it in Python exactly as the 286 does (`splash.png`, and the tests' reference) |
-| `os/src/SPLASH.ASM` | → `LODE.PIC` (2,544 bytes): the drawing code and `SPLASH.INC` |
+| `os/splash/mksplash.py` | The drawing: its numbers (centre, tilt, rings, lines of force, title) are at the top. Works out the paths, packs them into `src/SPLASH.INC`, and draws them in Python exactly as the 286 does (`splash.png`, and the tests' reference) |
+| `os/src/SPLASH.ASM` | → `LODE.PIC` (1,020 bytes, 2 sectors of ROM 1; the nails were 2,544, 5 sectors): the drawing code and `SPLASH.INC` (607 bytes of it) |
 | `os/src/KSPLASH.INC` | The bootstrap, in section boot of `LODE.SYS` (336 bytes on disk, never resident) |
 | `os/apps/SYSTEM.ASM` | Display: "Start-up picture yes/no"; Space |
-| `os/tests/test_splash.py` | 62 checks |
-
-## Tracing (trace.py)
-
-1. **The stone:** the plate is blurred, thresholded (Otsu), opened to drop the nails and closed; the biggest blob is kept. Its bottom is cut along a hand-placed curve, because the hanging bundles of nails would otherwise count as stone. The outline is then simplified to within 2 pixels.
-2. **The nails as ridges:** CLAHE, then Sato's ridge filter, bright ridges on the stone and dark ones on the paper. The two are blended across the stone's edge so the edge itself isn't a ridge.
-3. **Lines:** a 25-pixel line integral of the ridge map at 45 angles. Its peaks, and at crossings every strong angle, seed lines. Each seed is refitted to its ridge's centre and extended along it over short gaps.
-   - A line is kept only if enough of it is ridge that the lines already kept don't explain. That stops fans of near-duplicates through crossings.
-   - Repeats of a kept line and lines running along the stone's edge are dropped.
-   - A gentler second pass then fills in, for 235 nails in all.
-4. **Heads:** the wider end of the ridge is the head. If neither end is clearly wider, the end nearer the middle of the stone is, since nails stick out from it point first, as in the plate.
+| `os/tests/test_splash.py` | 64 checks |
 
 ## The drawing (SPLASH.ASM, mksplash.py)
 
-- **Packing:**
-  - Each nail is 4 bytes, sorted by head row: x low byte | x bit 8 (bit 7) + rows down from the previous head (bits 0–6) | the point's dx | dy (signed bytes, ±127).
-  - The outline is its first vertex as words, then a signed-byte step to each next one.
-  - The title is per-letter strokes on a 20 × 32 grid, Lodefont's capitals drawn thin.
-- **The stone:** each outline edge that isn't level marks its rows y0 ≤ y < y1 at x = x0 + (x1 − x0)(y − y0)/(y1 − y0), by IMUL/IDIV, which truncates. Each row keeps its least x and its greatest x + 1, and the plate is filled row by row around that span.
-- **Nails:** Bresenham from the head. The shank is 3 pixels wide across the minor axis, narrowing to 2 and then 1 over the last three points, with a head 5 across and 2 deep.
-  - **The pixel (NPIX) has no branches:** whether it is on the stone is two compares turned into a mask (`CMP/CMC/SBB`, `CMP/SBB`, `AND`), then one read and one write of the screen byte.
-  - **The line loop never asks which way the line runs:** the major step, minor step and the step across are vectors set up first.
-  - The first version, with a call and four branches per pixel, took 1.47 s in pcemu's 286 model; this one takes 252 ms.
+- **Everything is a path:** a pen, a first point and a step to each next one. There are 28 paths with 238 steps.
+  - **THIN:** a line 1 pixel wide through the points (the rings, the lines of force, the arrowheads).
+  - **THICK:** the same with 2 × 2 pixels at each point (the stone's outline, the rod, the title and its rule). E, T and N go back over part of themselves so that each letter is one path.
+- **Packing:** per path, a header byte and the number of steps (below 128), then the first point, then each step as signed bytes (dx, dy, ±127). A header of 0 ends the list. mksplash splits a longer line into steps that fit.
+  - **The header:** 04h, always; 01h, the 2 × 2 pen; 08h, the first point is a step (signed bytes) from the last path's first point, else it is two words; 40h, 80h and 20h, the mirrorings below.
+- **Mirroring:** 40h draws the path again with each pixel mirrored left to right about the stone's centre, 80h top to bottom, and both bits draw it four times; with 20h as well, only both at once, which is the path turned half round. A mirrored pixel is at 2 CX − x, 2 CY − y; a 2 × 2 block, whose pixels reach 1 right and 1 down, at 1 less.
+  - The outline is its lower right quarter, mirrored four ways.
+  - A dipole's lines are the same turned half round, so only those right of the axis are kept, and one end of the rod. An arrowhead turned half round would point against the field, so both are kept.
+  - The rings are kept whole: on a tilted axis nothing mirrors them.
+- **The outline is exact:** mksplash works out a quarter of the circle as a chain of touching pixels, then keeps the fewest points whose lines are exactly those pixels.
+- **Rings and lines of force are fitted** to within 0.65 of a pixel: the fewest points whose polyline stays that close to the curve.
+- **Lines:** Bresenham from the first point, in registers. A steep line is drawn with x and y swapped, and the point routine swaps them back.
+- **A point:** its row's offset from a table built at start (each row at (y & 3) × 2000h + (y >> 2) × 80, 800 bytes of scratch), and its one or two bits put in with one word OR; the 2 × 2 pen does the same on the next row.
+- **Size:** `LODE.PIC` is 1,020 bytes, 2 sectors with 4 to spare: 607 of drawing and 413 of code. Another change to the picture may cost a sector.
+- **Speed:** 195 ms in pcemu's 286 model, from before the mode set to the last pixel. The nails took 252 ms.
 - **Python must match it bit for bit:** `mksplash.render` uses the same integer rules, and the tests compare all 256,000 pixels of the emulator's screen with it. mksplash also checks that no point falls off the screen, since the 286 code doesn't clip.
 
 ## Start-up (KSPLASH.INC)
@@ -63,7 +63,7 @@ At start-up Lodestone shows Fig. 1 of F. A. Annett, *Electrical Machinery* (McGr
   - It sets mode 40h, or does nothing if the BIOS doesn't give it, and draws.
   - It drops keys already typed, such as spare F taps from choosing the floppy at the BIOS's prompt, which would otherwise end it at once.
   - It waits 36 ticks on 0:46Ch with `STI; HLT`, or for a key, which it takes.
-  - Its scratch (row offsets and the stone's spans, 2.4 KB) is the rest of its segment.
+  - Its scratch (each row's offset in the screen, 800 bytes, and a few words for the drawing) is the rest of its segment.
 - **Test marks:** `INT 1Ah AH=0` with BX = BEF0h (start), BEF2h (drawn) and BEF1h (gone), BENCH's way of marking time; the BIOS ignores BX. Any midnight rollover flag that call returns is put back at 0:470h for the kernel's clock. `ktest.waiting()` doesn't count a halt between BEF0h and BEF1h as the machine waiting for input.
 
 ## System
@@ -73,10 +73,11 @@ At start-up Lodestone shows Fig. 1 of F. A. Annett, *Electrical Machinery* (McGr
 - Saving the saver delay or M:'s size before Display has been shown still keeps a `SPLASH=0` line.
 - If the save fails (write-protected disk, or a `LODE.INI` too long to rewrite), the switch goes back and the band says why. The messages no longer say "The font is set", which was wrong for the saver and M: too.
 
-## Tests (tests/test_splash.py, 62 checks)
+## Tests (tests/test_splash.py, 64 checks)
 
 - **The picture against `mksplash.render`, every pixel,** for every way the kernel starts: floppies only, EMS, the hard disk as C:, C: with EMS, and `-dNOTC` with and without EMS. The Executive follows; M: still gets its size; C: is there.
-- **Timing:** drawn in under 0.3 s (252 ms), and it stays 2 s.
+- **The drawing itself:** `src/SPLASH.INC` is what `mksplash.py` packs now, and `LODE.PIC` fits 2 sectors.
+- **Timing:** drawn in under 0.3 s (195 ms), and it stays 2 s.
   - A key ends it at once and the Executive never sees the key.
   - Keys typed before it don't end it and don't reach the Executive.
 - **`SPLASH=` in `LODE.INI`:**
@@ -121,11 +122,13 @@ Fixed before release:
    - the picture comes up and stays about 2 s, and tapping F during boot doesn't skip it;
    - a key ends it, and the Executive doesn't act on that key;
    - System, Display, Space makes it "no", and the next start has no picture.
-3. Note how long the drawing takes on the plasma; the emulator's 252 ms is a model.
+3. Note how long the drawing takes on the plasma; the emulator's 195 ms is a model.
 4. Rollback: delete `LODE.PIC`, or copy `os/releases/0.4.2/LODE.SYS` back.
 
 ## Changing the picture
 
-Edit `os/splash/trace.txt` by hand, or rerun `trace.py` on another plate. Then run `python3 os/splash/mksplash.py` and `os/build.sh`.
+Edit the numbers at the top of `os/splash/mksplash.py`, or the paths `drawing()` returns. Then run `python3 os/splash/mksplash.py` and `os/build.sh`.
 
-`mksplash.py` refuses a nail longer than 127 pixels on screen in x or y, a head more than 127 rows below the previous one, an outline edge longer than 127, or any point off the screen.
+`mksplash.py` refuses a path of more than 127 steps or any point off the screen.
+
+`LODE.PIC` is read from the drive Lodestone started from, so from the ROM it is ROM 1's copy. To see a changed picture on the 1520 without burning ROM 1, start from a floppy that carries it (F at the BIOS's prompt). The nails' `LODE.PIC` (2,544 bytes) is in `os/releases/1.1`.
