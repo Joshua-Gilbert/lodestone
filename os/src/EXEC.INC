@@ -2937,7 +2937,8 @@ puts_tmp:
 draw_form:
         mov     byte [rowmask], 0       ; (puts_tmp: normal)
         mov     dx, FORM_Y - 2          ; clear the values (cols 12..79)
-        mov     cx, 4 * ITEM_H - 4
+        mov     cx, 4 * ITEM_H - 2      ;  to Kind's cell's last row (the
+                                        ;  descenders' rows: g, j, p, q, y)
         mov     bx, 12
         mov     bp, 68
         xor     al, al

@@ -1602,6 +1602,14 @@ def t_form():
     check('the titles only (subjects are their own item); Title outlined', k.exec_list() == ['LODE.SYS', 'SYSTEM.RUN', 'TERMBOLD.FNT', 'WRITE.RUN']
           and focus(k) == 0 and outlined(k, 2) and not outlined(k, 0), k.exec_list())
     check('the form: Device Floppy A:, Subject Root, the title and its kind', form(k)[:3] == ['Floppy A:', 'Root', 'LODE'] and form(k)[3].startswith('System'), form(k))
+    # the values' cells all set, to Kind's last row (descenders): another title clears them
+    before = vram(k)
+    cells = range(FORM_Y - 2, FORM_Y + 3 * ITEM_H + 16)     # (the outline's top to Kind's last row)
+    for y in cells: k.pc.wr(0xB800, (y & 3) * 0x2000 + (y >> 2) * 80 + 12, b'\xff' * 68)
+    k.key(ktest.DOWN); k.key(ktest.UP)
+    after = vram(k)
+    check('the form drawn again: nothing left in its values (Kind\'s descender rows too)', after == before,
+          [y for y in cells if vrow(after, y) != vrow(before, y)])
     k.key(CODE['W']); k.key(ktest.ESC); k.key(ktest.ENTER)    # (a .RUN and back: the place is kept)
     k.key(ktest.DOWN)
     k.key(ktest.TAB)
