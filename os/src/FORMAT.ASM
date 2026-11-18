@@ -17,7 +17,12 @@
 ;   /Q          quick: a disk formatted before keeps its tracks and gets an
 ;               empty FAT and root (clusters marked bad stay bad)
 ;   /F:size     360, 720, 1200 or 1440 (1.2 and 1.44 too, a K or M after
-;               any); by default the drive's own: 1.44 MB in the 1520's
+;               any); by default the disk's own, read from its boot
+;               sector, when it is one the drive takes (MS-DOS 5's rule),
+;               else the drive's own: 1.44 MB in the 1520's.  The drive
+;               can't tell FORMAT a 720 KB disk from a 1.44 MB one (its
+;               density hole is the drive's alone), so a 720 KB disk never
+;               formatted, or formatted 1.44 MB, needs /F:720
 ;   /N:9 /T:80  the same by sectors per track and tracks (cylinders)
 ;   /4          360 KB in a 1.2 MB drive
 ;
@@ -250,7 +255,16 @@ one_disk:
         jcxz    .no
         stc
         ret
-.no:    mov     si, [med]
+.no:    cmp     byte [medset], 0        ; no format asked for: the disk's
+        jne     .g                      ;  own, else the drive's (each disk
+        mov     ax, [dmed]              ;  afresh)
+        mov     [med], ax
+        cmp     byte [quick], 0         ; (/Q: old_disk's to find)
+        jne     .g
+        mov     dx, s_check
+        call    print
+        call    own_fmt
+.g:     mov     si, [med]
         call    geometry
         call    new_fat
         cmp     byte [quick], 0
@@ -301,7 +315,7 @@ one_disk:
 
 ; ---------------------------------------------------------------------
 ; the drive's kind (INT 13h 08h) -> [dkind]; the format asked for, or the
-; drive's own -> [med].  CF: DX = message
+; drive's own -> [med] (and [dmed]).  CF: DX = message
 kind:   mov     dl, [unit]
         mov     ah, 08h
         push    es
@@ -328,6 +342,7 @@ kind:   mov     dl, [unit]
         jne     .k5
         mov     si, m_360
 .k5:    mov     [med], si
+        mov     [dmed], si
 .chk:   cmp     al, 0
         je      .ok
         mov     bl, al                  ; what this kind takes: a bit
@@ -675,10 +690,10 @@ esc_key:
         ret
 
 ; ---------------------------------------------------------------------
-; /Q: the disk's boot sector must be one of ours, of the format asked
-; for (or by default, whatever it is); its FAT's bad clusters are kept.
-; CF: DX = why
-old_disk:
+; the disk's boot sector (cylinder 0, head 0, sector 1) into the track
+; buffer, and which of our formats its BPB is -> DI.  CF: none of ours,
+; DX = 0, or why the drive can't be read (no disk)
+bpb_rec:
         mov     byte [cyl], 0
         mov     byte [head], 0
         mov     bp, TRIES
@@ -690,7 +705,7 @@ old_disk:
         call    reset
         dec     bp
         jnz     .r
-        jmp     .no
+        jmp     short .no
 .rd:    mov     si, [tbuf]
         cmp     word [si+510], 0AA55h
         jne     .no
@@ -722,10 +737,41 @@ old_disk:
         jne     .no
         cmp     word [si+1Ah], 2
         jne     .no
-        jmp     short .found
+        clc
+        ret
 .mn:    inc     bx
         inc     bx
         jmp     .m
+.no:    xor     dx, dx
+        stc
+.x:     ret
+
+; no format asked for: the disk's own, when it has one of ours that the
+; drive takes (a disk formatted 720 KB stays 720 KB in the 1.44 MB drive;
+; the drive can't say which kind of disk is in it), else [med] as it is
+own_fmt:
+        call    bpb_rec
+        jc      .x                      ; (none, or no disk: the format
+        mov     bl, [dkind]             ;  will say)
+        or      bl, bl                  ; (0: unknown, takes any)
+        jz      .use
+        xor     bh, bh
+        mov     al, [takes+bx-1]
+        test    al, [di+M_BIT]
+        jz      .x
+.use:   mov     [med], di
+.x:     ret
+
+; ---------------------------------------------------------------------
+; /Q: the disk's boot sector must be one of ours, of the format asked
+; for (or by default, whatever it is); its FAT's bad clusters are kept.
+; CF: DX = why
+old_disk:
+        call    bpb_rec
+        jnc     .found
+        or      dx, dx                  ; (no disk: the drive said so)
+        jnz     .x1
+        jmp     .no
 .found: cmp     byte [medset], 0        ; a format asked for: this one?
         je      .use
         cmp     di, [med]
@@ -2431,6 +2477,7 @@ s_noname db 'NO NAME', 0
 
 s_insert db 13, 10, 'Insert new diskette for drive '
 s_d1    db 'A:', 13, 10, 'and strike ENTER when ready (Esc: quit)$'
+s_check db 'Checking existing disk format.', 13, 10, '$'
 s_fmt   db 'Formatting $'
 s_qfmt  db 'QuickFormatting', 13, 10, '$'
 s_head  db 'Head: $'
@@ -2520,6 +2567,7 @@ sct     resb 1
 xop     resb 1
         alignb 2
 med     resw 1
+dmed    resw 1                          ; the drive's own format
 tbuf    resw 1
 rootlba resw 1
 datalba resw 1

@@ -129,6 +129,37 @@ def t_720():
     o = fmt(k, 'format b: /n:18 /t:80')
     check('/N:18 /T:80: back to 1.44 MB', 'Formatting 1.44M' in o and len(k.pc.drives[1].img) == 1474560, o)
 
+def t_disk_own():
+    p = mkimg.build(os.path.join(OUT, 'o.img'), [os.path.join(SRC, 'LCMD.COM')], size=720)
+    k = boot(p)
+    cmd(k, 'format b: && echo FORMAT-OK || echo FORMAT-FAILED')
+    wait(k, 'strike ENTER', 20)
+    k.key(ktest.ENTER, settle=False)
+    wait(k, 'another (Y/N)?', 400)
+    o1 = scr(k)
+    d = k.pc.drives[1]; img = bytes(d.img)
+    check('FORMAT B: (no size) on a disk formatted 720 KB, in the 1.44 MB drive: 720 KB again, every track',
+          'Checking existing disk format' in o1 and 'Formatting 720K' in o1 and '    730112 bytes total' in o1
+          and len(img) == 737280 and bpb(img) == (512, 2, 1, 2, 112, 1440, 0xF9, 3, 9, 2)
+          and d.formats == [(c, h) for c in range(80) for h in (0, 1)] and fatcheck.check(img) == ([], {}),
+          (o1, bpb(img)))
+    new = pcemu.Floppy(bytes(1474560)); new.noid = set(range(2880)); new.changed = True
+    k.pc.drives[1] = new                                # Format another: a disk never formatted
+    k.key('y', settle=False)
+    k.pc.run_until(lambda: scr(k).count('strike ENTER') == 2, 20)
+    k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: scr(k).count('another (Y/N)?') == 2, 400)
+    k.key('n'); k.settle(20)
+    o = scr(k)
+    check('... the next disk, never formatted, gets the drive\'s own: 1.44 MB',
+          'Formatting 1.44M' in o and said(o, 'FORMAT-OK') and len(new.img) == 1474560
+          and bpb(bytes(new.img)) == (512, 1, 1, 2, 224, 2880, 0xF0, 9, 18, 2), o)
+    p = mkimg.build(os.path.join(OUT, 'o.img'), [], size=1200)
+    k = boot(p)
+    o = fmt(k, 'format b:')
+    check('a disk formatted 1.2 MB (not one the 1.44 MB drive takes): the drive\'s own, 1.44 MB',
+          'Formatting 1.44M' in o and said(o, 'FORMAT-OK') and len(k.pc.drives[1].img) == 1474560, o)
+
 def t_525():
     k = boot(blank('b.img', 1228800))
     k.pc.drives[1].kind = 2                             # a 5.25-inch 1.2 MB drive
@@ -584,7 +615,7 @@ def t_hd_nopart():
 
 if __name__ == '__main__':
     t0 = time.time()
-    for t in (t_full, t_720, t_525, t_bad, t_wp_empty, t_quick, t_sys, t_own_drive, t_answers, t_refused,
+    for t in (t_full, t_720, t_disk_own, t_525, t_bad, t_wp_empty, t_quick, t_sys, t_own_drive, t_answers, t_refused,
               t_hd_full, t_hd_quick, t_hd_no, t_hd_own, t_hd_nopart, t_review, t_mt):
         if sys.argv[1:] and t.__name__ not in sys.argv[1:]: continue
         t()
