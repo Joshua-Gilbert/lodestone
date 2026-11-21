@@ -91,7 +91,9 @@ class PicoModel(AR488Model):
             s.quiet = bool(fl & CF_QUIET) and s.can_quiet
             if s.online and not was: s.gen += 1; s.ring.clear()
         elif t == F_PING:
-            s._send(bytes([F_PONG, 1 if s.online else 0]) + bytes(46))
+            # (as host_link.c's send_pong: 47 bytes, the u16 gen at 9 and the u32 consumed count at 11)
+            s._send(bytes([F_PONG, 1 if s.online else 0, s.addr]) + bytes(6)
+                    + struct.pack('<HI', s.gen & 0xFFFF, s.consumed) + bytes(32))
         elif t in (F_HOLD, F_HOLD_GLP) and s.holds:
             s.hold = (struct.unpack_from('<H', f, 1)[0], bytes(f[3:]), t == F_HOLD_GLP)
         elif t == F_TX and s.holds and f[3] & TXF_HELD:

@@ -107,6 +107,80 @@ def test_short_frames_logged_once():
     assert len(short) == 1 and b.proto.stats['bad_frames'] == 3, (log, b.proto.stats)
 
 
+def pong(consumed, gen=0, online=1):
+    return cobs_encode(bytes([pico.F_PONG, online, 7]) + bytes(6) + struct.pack('<HI', gen, consumed) + bytes(32))
+
+
+def full(p, out, consumed=1000):
+    """The bridge's ring full by our count (a CREDIT lost), and a reply waiting for room."""
+    p.tx_ring = 100; p.consumed = consumed; p.sent = (consumed + 100) & 0xFFFFFFFF
+    del out[:]
+    p.answer(b'R' * 50)
+    assert not out and p.pending
+
+
+def test_pong_consumed_count():
+    # PONG's u32 at offset 11 (host_link.c's send_pong) makes good a lost CREDIT: the reply goes
+    p, out = connected()
+    full(p, out)
+    p.feed(pong(1060))
+    assert p.consumed == 1060 and not p.pending and out, (p.consumed, p.pending)
+
+
+def credit(c):
+    return cobs_encode(struct.pack('<BI', pico.F_CREDIT, c))
+
+
+def talk_wait(c):
+    return cobs_encode(struct.pack('<BBHBII', pico.F_EVENT, 0x14, 0, 0, c, 0))
+
+
+def test_live_count_one_lower_taken():
+    # host_link.c's ann_flush: a stand-in EOI in the ring takes consumed_total() down by one (tx_dropped0--)
+    # until core 1 pops it, and the credit sender and PONG send the lower count at once.  That slot is not
+    # free: a CREDIT or PONG one below the held count is taken, or _pump would send a byte past the room
+    for frame in (credit, pong):
+        p, out = connected()
+        p.tx_ring = 100; p.consumed = 1000; p.sent = 1000 + 99    # one byte of room by the old count
+        p.feed(frame(999))
+        assert p.consumed == 999, (frame.__name__, p.consumed)
+        del out[:]
+        p.answer(b'R')                             # (one byte: no room now)
+        assert not out and p.pending, (frame.__name__, out)
+
+
+def test_talk_wait_consumed_count():
+    p, out = connected()
+    full(p, out)
+    p.feed(talk_wait(1050))
+    assert p.consumed == 1050 and not p.pending and out, (p.consumed, p.pending)
+    # TALK_WAIT's count is core 1's from when it happened: behind a CREDIT already here, it is not taken
+    p.feed(credit(1080)); p.feed(talk_wait(1060))
+    assert p.consumed == 1080, p.consumed
+
+
+def test_consumed_count_wraps():
+    p, out = connected()
+    full(p, out, consumed=0xFFFFFFF0)
+    p.feed(talk_wait(0x30))                       # (past the 32-bit wrap: ahead, so taken)
+    assert p.consumed == 0x30 and not p.pending, (p.consumed, p.pending)
+    p.feed(talk_wait(0xFFFFFFF8))                 # (before it: behind)
+    assert p.consumed == 0x30, p.consumed
+
+
+def test_pico_model_pong():
+    # the emulator's bridge answers PING as the firmware does: 47 bytes, gen at 9, the consumed count at 11
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from pico_model import PicoModel
+    got = []
+    m = PicoModel(lambda: 0, to_pi=lambda d, t: got.append(d))
+    m.gen, m.consumed = 0x1234, 0x89ABCDEF
+    m._frame(bytes([pico.F_PING]))
+    f = pico.cobs_decode(got[-1][:-1])
+    assert len(f) == 47 and f[0] == pico.F_PONG, f
+    assert struct.unpack_from('<HI', f, 9) == (0x1234, 0x89ABCDEF), f
+
+
 if __name__ == '__main__':
     names = [n for n in sorted(globals()) if n.startswith('test_')]
     if len(sys.argv) > 1: names = [n for n in names if any(a in n for a in sys.argv[1:])]

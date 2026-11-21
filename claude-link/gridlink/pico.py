@@ -174,22 +174,35 @@ class PicoProto:
                                (time.monotonic(), name, struct.unpack_from('<I', f, 9)[0]))
             if name == 'TX_DONE': s.tx_done_at = s.clock()
             elif name == 'SDC': s.sdcs += 1
+            elif name == 'TALK_WAIT': s._credit(arg, live=False)   # (arg: the consumed count, CREDIT's scale)
             if name == 'ONLINE': s.online = True
             elif name == 'OFFLINE':
                 s.online = False
                 s._config()                   # we still want it
             return b''
         if t == F_CREDIT:
-            s.consumed = struct.unpack_from('<I', f, 1)[0]; s._pump(); return b''
+            s._credit(struct.unpack_from('<I', f, 1)[0]); return b''
         if t == F_PONG:
             s.last_pong = time.monotonic(); s.pongs += 1   # (first: any PONG says the bridge is there)
             s.pong = dict(zip(('online', 'address', 'listener', 'talker', 'ren', 'llo', 'spms', 'rsv'), f[1:9]))
             if not f[1]:
                 s._config()
-            return b''
+            s._credit(struct.unpack_from('<I', f, 11)[0])  # (u16 gen at 9, then the consumed count: a lost
+            return b''                                      #  CREDIT is made good within a second)
         if t == F_LOG:
             s.log('bridge: ' + f[1:].decode('ascii', 'replace'))
         return b''
+
+    def _credit(s, c, live=True):
+        """The bridge's consumed count, and the queue pumped into the room it makes.  CREDIT and PONG are live
+        reads of consumed_total(), sent in order by core 0, so they are taken as they come, even one lower:
+        a stand-in EOI that ann_flush puts in the ring takes the count down by one until core 1 pops it, and
+        that slot is not free (as the daemon's credit handling).  TALK_WAIT's arg (live=False) is core 1's
+        tx_consumed from when it waited, plus core 0's tx_dropped0 when core 0 sent the event on (host_link.c),
+        so it may be older than a CREDIT already here: taken only if it isn't behind (by the wrap-safe
+        difference)."""
+        if live or ((c - s.consumed) & 0xFFFFFFFF) < 0x80000000:
+            s.consumed = c; s._pump()
 
     def _gen(s, g):
         if g != s.gen:
