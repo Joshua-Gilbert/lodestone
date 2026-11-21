@@ -1,0 +1,10 @@
+# gridlink's Python packages, pinned, for install.sh (venv/bin/pip install -r requirements.txt).
+# These are the versions the tests run with; the working Pi's pip freeze is to replace them.
+# pyte stays at 0.8.2: termscreen.CSI_ARITY is measured on it (test_term's test_csi_arity checks).
+# yt-dlp is not here: install.sh keeps it up to date on its own line, as YouTube changes.
+pyte==0.8.2
+wcwidth==0.9.2
+pillow==12.3.0
+pyserial==3.5
+# chat (agent.py); the tests use a stand-in, so no version is proven here yet
+anthropic

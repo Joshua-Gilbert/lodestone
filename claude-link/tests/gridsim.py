@@ -332,7 +332,13 @@ class GridSim:
                     held = max(0, held - getattr(s, 'plot_drain', 60))  # the pen works between polls
                     s.plot_held = held
                     room = min(63, max(0, 240 - held) // 4)
-                    return s.reply(rid, 0, bytes([(0x80 if held == 0 else 0) | room]))
+                    rqs = 0x40 if getattr(s, 'plot_rqs', False) else 0     # a test: something asks for service
+                    return s.reply(rid, 0, bytes([(0x80 if held == 0 else 0) | rqs | room]))
+                if gop == glp.GP_CLEAR:     # SDC: it drops what it holds (recorded: the parts written before it)
+                    if getattr(s, 'plot_clear_fail', False): return s.reply(rid, 1)   # a test
+                    s.plot_clears = getattr(s, 'plot_clears', []) + [len(getattr(s, 'plot_parts', []))]
+                    s.plot_held = 0
+                    return s.reply(rid, 0)
                 if gop != glp.GP_WRITE: return s.reply(rid, 1)
                 fail = getattr(s, 'plot_fail_after', None)            # a test: the Nano stops taking bytes
                 if fail is not None and len(getattr(s, 'plot_parts', [])) >= fail: return s.reply(rid, 1)

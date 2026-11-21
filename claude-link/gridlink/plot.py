@@ -7,7 +7,7 @@ Lit lines on a dark screen, the GRiD's way.  Horizontal grid lines are
 dotted; there are no vertical grid lines, only ticks (a vertical line
 changes every line of the picture, which costs the link the most).
 """
-import math
+import bisect, math
 from . import gridfont, render
 from . import picture as PIC
 
@@ -15,6 +15,7 @@ W, H = PIC.W, PIC.H
 BPL = PIC.BPL
 MAX_SERIES = 8
 MAX_POINTS = 200000             # in all series
+NEAR = 40                       # a click's nearest point: this many pixels away at most
 TOP, BOTTOM = 40, 343           # the plot box's frame (lines 0-31: title, axis name, legend)
 RIGHT = W - 9
 G_MICRO = render.G_MICRO
@@ -134,6 +135,10 @@ class Axis:
         return 10 ** t if s.log else t
 
 
+def too_wide(lo, hi):
+    return ValueError('the values span too much (or too little) to plot: %s to %s' % (num(lo), num(hi)))
+
+
 def auto_range(vals, log, pad):
     """(lo, hi) around the values; pad: a fraction of the span on each side."""
     v = [x for x in vals if x is not None and (not log or x > 0)]
@@ -143,7 +148,10 @@ def auto_range(vals, log, pad):
         a, b = math.log10(lo), math.log10(hi)
         if a == b: a, b = a - 0.5, b + 0.5
         sp = (b - a) * pad
-        return 10 ** (a - sp), 10 ** (b + sp)
+        try: r = 10 ** (a - sp), 10 ** (b + sp)
+        except OverflowError: r = (0, math.inf)
+        if not (r[0] > 0 and math.isfinite(r[1])): raise too_wide(lo, hi)   # ([1e-300, 1e300])
+        return r
     if lo == hi:
         d = abs(lo) * 0.1 or 1.0
         return lo - d, hi + d
@@ -155,7 +163,10 @@ def nice_ticks(lo, hi, n=6):
     """Round tick values in [lo, hi]: (ticks, step)."""
     span = hi - lo
     raw = span / n
-    mag = 10 ** math.floor(math.log10(raw))
+    # (a span that overflows to inf, or underflows to 0; or so small that
+    #  the step's power of ten underflows: [0, 6e-323])
+    mag = 10 ** math.floor(math.log10(raw)) if math.isfinite(span) and raw > 0 else 0
+    if not mag > 0: raise too_wide(lo, hi)
     for m in (1, 2, 2.5, 5, 10):
         step = m * mag
         if span / step <= n: break
@@ -423,6 +434,16 @@ class Plot:
         bm.hline(L, R, T); bm.hline(L, R, B); bm.vline(L, T, B); bm.vline(R, T, B)   # (over marks at the edge)
         s.bm = bm
         s.bits = bm.bytes()
+        # the points in x order, for at(): a click looks only at those near
+        # it in x (not all 200,000, on the link's thread)
+        fx, fy, fik = [], [], []
+        for i, (px, py) in enumerate(s.pts):
+            for k, (x, y) in enumerate(zip(px, py)):
+                if x is not None and y is not None and x == x and y == y:
+                    fx.append(x); fy.append(y); fik.append(k << 3 | i)   # (MAX_SERIES 8: i in 3 bits)
+        order = sorted(range(len(fx)), key=fx.__getitem__)
+        s.near_x = [fx[j] for j in order]; s.near_y = [fy[j] for j in order]
+        s.near_ik = [fik[j] for j in order]
 
     def inside(s, x, y):
         L, T, R, B = s.box
@@ -434,13 +455,22 @@ class Plot:
         out = {'pixel': [x, y], 'x': None, 'y': None, 'nearest': None}
         if s.inside(x, y):
             out['x'], out['y'] = s.ax.val(x), s.ay.val(y)
-        best = None
-        for i, (px, py) in enumerate(s.pts):
-            for k in range(len(px)):
-                if px[k] is None or py[k] is None: continue
-                d = (px[k] - x) ** 2 + (py[k] - y) ** 2
-                if best is None or d < best[0]: best = (d, i, k)
-        if best is not None and best[0] <= 40 ** 2:
+        # outwards from x, nearer in x first, until x alone is farther than
+        # the best so far (or than NEAR); ties go to the first point, as a
+        # scan of them all in order found
+        nx, ny, nik = s.near_x, s.near_y, s.near_ik
+        best = (NEAR ** 2, MAX_SERIES, 0)            # (nothing yet: any point within NEAR beats it)
+        n = len(nx); r = bisect.bisect_left(nx, x); l = r - 1
+        while True:
+            dl = x - nx[l] if l >= 0 else math.inf
+            dr = nx[r] - x if r < n else math.inf
+            if dl <= dr: j = l; dx = dl; l -= 1
+            else: j = r; dx = dr; r += 1
+            if dx * dx > best[0]: break
+            c = nik[j]
+            d = dx * dx + (ny[j] - y) ** 2
+            if d <= best[0] and (d, c & 7, c >> 3) < best: best = (d, c & 7, c >> 3)
+        if best[1] < MAX_SERIES:
             d, i, k = best
             sr = s.series[i]
             out['nearest'] = {'series': sr['name'] or 'series %d' % (i + 1), 'index': k,

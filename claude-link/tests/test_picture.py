@@ -169,10 +169,58 @@ def test_plot_and_clicks():
                 [{'y': [1], 'style': 'bars'}]):
         try: PL.Plot(bad); raise AssertionError(bad)
         except ValueError: pass
+    # spans that overflow or underflow, linear or log: refused as such (not math's own errors)
+    for bad, kw in (([{'y': [1e308, -1e308]}], {}), ([{'y': [0.0, 5e-324]}], {}), ([{'y': [0.0, 5e-323]}], {}),
+                    ([{'x': [1e308, -1e308], 'y': [1, 2]}], {}),
+                    ([{'y': [1e-300, 1e300]}], {'y_log': True}), ([{'y': [1e-320, 1e3]}], {'y_log': True}),
+                    ([{'y': [1e-5, 1e300]}], {'y_log': True})):
+        try: PL.Plot(bad, **kw); raise AssertionError((bad, kw))
+        except ValueError as e: assert 'span too much (or too little)' in str(e), (bad, kw, e)
+    for lo, hi in ((0, 6e-323), (0, 5e-324), (1, math.inf), (0, math.nan)):
+        try: PL.nice_ticks(lo, hi); raise AssertionError((lo, hi))
+        except ValueError as e: assert 'span too much (or too little)' in str(e), (lo, hi, e)
+    PL.Plot([{'y': [1e-310, 3e-310]}])                          # (a tiny span that still divides)
+    PL.Plot([{'y': [1e-200, 1e200]}], y_log=True)               # (wide, but it fits)
     try: PL.Plot([{'y': [1, 2]}], y_range=[2, 1]); raise AssertionError('range')
     except ValueError: pass
     # NaN and gaps don't break it
     PL.Plot([{'y': [1, float('nan'), None, 3]}])
+
+
+def test_click_search():
+    """at()'s nearest point is the one a scan of every point finds (ties:
+    the first), from an index by x: a click on 200,000 points is quick (P12)."""
+    import random
+    random.seed(5)
+    def scan(p, x, y):
+        best = None
+        for i, (px, py) in enumerate(p.pts):
+            for k in range(len(px)):
+                if px[k] is None or py[k] is None: continue
+                d = (px[k] - x) ** 2 + (py[k] - y) ** 2
+                if best is None or d < best[0]: best = (d, i, k)
+        return (best[1], best[2]) if best is not None and best[0] <= 40 ** 2 else None
+    p = PL.Plot([{'x': [random.uniform(0, 10) for _ in range(300)], 'y': [random.uniform(0, 5) for _ in range(300)],
+                  'style': 'points'},
+                 {'x': [1, 2, 2, 3, 4], 'y': [1, None, 2, 2, 1]},
+                 {'y': [3, 3, 3, 3, 3, 3]}, {'x': [5, 5, 6], 'y': [4, 4, 4]}, {'x': [5, 6], 'y': [4, 4]}])
+    c = p.at(int(p.ax.px(5)), int(p.ay.px(4)))['nearest']              # a tie: the first series' first
+    assert (c['series'], c['index']) == ('series 4', 0), c
+    for _ in range(300):
+        x, y = random.randint(0, PL.W - 1), random.randint(0, PL.H - 1)
+        n = p.at(x, y)['nearest']
+        got = None if n is None else ([sr['name'] or 'series %d' % (i + 1) for i, sr in enumerate(p.series)]
+                                      .index(n['series']), n['index'])
+        assert got == scan(p, x, y), (x, y, got, scan(p, x, y))
+    xs = [i / 1000 for i in range(200000)]
+    t = time.time()
+    big = PL.Plot([{'x': xs, 'y': [math.sin(v) for v in xs]}])
+    assert time.time() - t < 2.0, time.time() - t
+    clicks = [(int(big.ax.px(v)), int(big.ay.px(math.sin(v))) + 3) for v in range(5, 200, 20)]
+    t = time.time()
+    for x, y in clicks: assert big.at(x, y)['nearest'] is not None
+    assert (time.time() - t) / len(clicks) < 0.005, (time.time() - t) / len(clicks)   # (a scan of all: ~30 ms)
+    assert scan(big, *clicks[3]) == (0, big.at(*clicks[3])['nearest']['index'])
 
 
 def test_tick_labels():

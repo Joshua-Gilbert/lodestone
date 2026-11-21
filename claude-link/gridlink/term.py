@@ -9,6 +9,7 @@ SCREEN, GPIB) reach Claude Code through the MCP bridge (mcp.py), which
 talks to this process over a Unix socket.
 """
 import fcntl, os, select, shlex, shutil, struct, subprocess, termios, threading, time
+from collections import deque
 import pyte
 from . import glp
 from .grid import Grid, OPS_BG
@@ -24,7 +25,9 @@ SYNC_MAX = 0.5       # an unfinished ?2026 frame counts as done after this
 TERM_HOLD = 0.06     # the Pi's hold on a POLL in Term (250 ms in chat)
 TITLE_EVERY = 1.0
 ESC_GAP = 0.03       # after a lone Esc, before the next key
+WQ_MAX = 64 * 1024   # bytes held for a program that isn't reading its keys (more are dropped)
 STOP_WEB = 15.0      # gridfox's own wait for Firefox to quit is 10 s
+PYTE_SAY = 60.0      # s between log lines for data pyte can't take
 
 
 def _ctty():
@@ -60,6 +63,11 @@ class TermSession:
         s.enc = Encoder()
         s.link = None; s.grid = None
         s.child = None; s.fd = None; s.reader = None
+        # What the pty (non-blocking) didn't take yet, for _read to write when
+        # it can: chunks, in order, each [bytes, an Esc's gap after it]
+        s.wlock = threading.Lock(); s.wq = deque()
+        s.wake = None                   # (_read's wake-up pipe, when the queue starts)
+        s._wq_clear()
         s.rows = ROWS                   # the pty's rows: 24, or a GRiD window's (EV_SIZE, CLAUDE 1.16)
         s.cols = COLS                   # its columns: 80, or a window's 78 (TERM.RUN shows 78 of 80)
         s.dirty = True; s.last_byte = 0.0; s.first_dirty = 0.0
@@ -70,6 +78,7 @@ class TermSession:
         s.bg = False                    #  and its console goes on in the background (HF_BG)
         s.bg_sdc = 0                    #  (the bridge's count of SDCs then: the console's stop)
         s.stats = dict(keys=0, pty_in=0, pty_out=0)
+        s.pyte_bad = 0; s.pyte_said = float('-inf')   # (pyte raised: how often since it was said, and when)
         s.tools = None; s.sock = mcp.socket_path(cfg)
         # A picture over the text (picture.py): while one is up it is the
         # link's frame source, and pyte goes on keeping the text underneath.
@@ -90,7 +99,7 @@ class TermSession:
                 s.tools = mcp.ToolServer(s.sock, mcp.GridTools(s.grid, s.cfg, getattr(s.cfg, 'address', 7), root=s.cwd,
                                                                hello=lambda: s.hello, viewer=plotview.Viewer(s),
                                                                away=lambda: s.away and s.resident(),
-                                                               available=s.why_not),
+                                                               available=s.why_not, log=s.log),
                                          available=s.why_not, log=s.log).start()
             except OSError as e:
                 s.log('term: no MCP socket at %s: %s' % (s.sock, e))
@@ -461,12 +470,18 @@ class TermSession:
                                                'Firefox and gridfox' if s.web else 'Claude Code'))
             return False
         os.close(sl)
-        s.fd = m; s.exited = None
+        os.set_blocking(m, False)                     # (a program that stops reading never holds the link)
+        wake_r, wake_w = os.pipe()
+        os.set_blocking(wake_r, False); os.set_blocking(wake_w, False)
+        with s.wlock:
+            s._wq_clear(); s.fd = m; s.wake = wake_w
+        s.exited = None
         with s.lock:
             s.screen.reset(); s._mark()
             s.stream = pyte.ByteStream(s.screen)          # nothing half-parsed from before
             s.pre = PreFilter(lambda: s.screen.mode)
-        s.reader = threading.Thread(target=s._read, args=(m, s.child), daemon=True, name='term-pty')
+        s.reader = threading.Thread(target=s._read, args=(m, s.child, wake_r, wake_w), daemon=True,
+                                    name='term-pty')
         s.reader.start()
         s.log('term: started %s in %s (pid %d)' % (' '.join(s.command), s.cwd, s.child.pid))
         return True
@@ -481,37 +496,54 @@ class TermSession:
                 try: s.child.kill()
                 except Exception: pass
 
-    def _read(s, fd, child):
-        while True:
-            try:
-                r, _, _ = select.select([fd], [], [], 0.5)
-            except (OSError, ValueError):
-                break
-            if r:
-                try: data = os.read(fd, 65536)
-                except OSError: data = b''
-                if not data: break
-                s.feed(data)
-            s._send_title()
+    def _read(s, fd, child, wake_r, wake_w):
+        try:
+            while True:
+                wl, wait = s._flush(fd)
+                try:
+                    r, _, _ = select.select([fd, wake_r], wl, [], wait)
+                except (OSError, ValueError):
+                    break
+                if wake_r in r:
+                    try: os.read(wake_r, 512)
+                    except OSError: pass
+                if fd in r:
+                    try: data = os.read(fd, 65536)
+                    except BlockingIOError: data = None
+                    except OSError: data = b''        # (EIO: the program and its children are gone)
+                    if data == b'': break
+                    if data: s.feed(data)
+                s._send_title()
+        except Exception as e:                    # (never a reader gone with the program left running)
+            s.log('term: reading from %s: %r; stopping it' % (s.name, e))
+            try:                                  # (as stop(): SIGTERM, then a kill)
+                child.terminate(); child.wait(STOP_WEB if s.web else 3)
+            except Exception:
+                try: child.kill()
+                except OSError: pass
         code = child.wait()
+        with s.wlock:
+            if s.fd == fd:                        # (this reader's: not a pty started again since)
+                s.fd = None; s.wake = None; s._wq_clear()
         mine = s.child is child                   # (not one started again since)
-        if mine:
-            s.child = None; s.fd = None; s.exited = code
-            s.hide_picture('pty')                # (gridfox's picture: it can't take it away now)
-        try: os.close(fd)
-        except OSError: pass
+        if mine: s.hide_picture('pty')           # (gridfox's picture: it can't take it away now)
+        for f in (fd, wake_r, wake_w):
+            try: os.close(f)
+            except OSError: pass
         if mine:
             s.log('term: %s exited (%s)' % (s.name, code))
             why = ' (it lost Firefox)' if s.web and code == 3 else ''
             s._message('%s exited%s (code %s). Press Return to start it again, CODE-Q to leave.'
                        % (s.name, why, code))
+            if s.child is child:                  # (last: once it is None a Return starts another)
+                s.exited = code; s.child = None
 
     def feed(s, data):
         s.stats['pty_in'] += len(data)
         with s.lock:
             pics = []
             for kind, b in s.pre.parts(data):     # pyte answers DA as it goes: keep the order
-                if kind == 'data': s.stream.feed(b)
+                if kind == 'data': s._pyte(b)
                 elif kind == 'pic': pics.append(b)
                 else: s._write(b)
             s.last_byte = time.monotonic(); s._mark()
@@ -519,15 +551,84 @@ class TermSession:
         for b in pics: s._osc_picture(b)
         if s.link is not None: s.link.wake()
 
+    def _pyte(s, b):
+        """b into pyte.  Something it can't take (PreFilter fits the CSIs we
+        know) loses the rest of b, not the reader: logged at most once in
+        PYTE_SAY s (a program that redraws with it would log every redraw)."""
+        try:
+            s.stream.feed(b)
+        except Exception as e:
+            s.pyte_bad += 1; now = time.monotonic()
+            if now - s.pyte_said >= PYTE_SAY:
+                more = ' (and %d more since)' % (s.pyte_bad - 1) if s.pyte_bad > 1 else ''
+                s.log('term: pyte: %r in %d bytes ending %r%s' % (e, len(b), bytes(b[-40:]), more))
+                s.pyte_said = now; s.pyte_bad = 0
+
     def _answer_query(s, text):
         s._write(text.encode('latin1') if isinstance(text, str) else text)
 
+    def _wq_clear(s):
+        """(with wlock, or before the reader starts) Nothing waiting."""
+        s.wq.clear(); s.wq_bytes = 0; s.wnext = 0.0
+        s.wq_dropped = 0                # (bytes dropped since the queue filled: all are, till it empties)
+
     def _write(s, data):
-        if s.fd is None or not data: return
-        try:
-            os.write(s.fd, data); s.stats['pty_out'] += len(data)
-        except OSError:
-            pass
+        """data to the program.  What the pty doesn't take now waits, in
+        order, for _read to write.  Once one write doesn't fit in WQ_MAX,
+        every write is dropped until the queue has emptied (so nothing
+        later slips in ahead of a dropped key); logged then and when the
+        program reads again."""
+        if not data: return
+        with s.wlock:
+            fd = s.fd
+            if fd is None: return
+            if s.wq or time.monotonic() < s.wnext:
+                if s.wq_dropped or s.wq_bytes + len(data) > WQ_MAX:
+                    if not s.wq_dropped:
+                        s.log('term: %s is not reading its input: keys dropped' % s.name)
+                    s.wq_dropped += len(data)
+                    return
+            else:
+                try: n = os.write(fd, data)
+                except BlockingIOError: n = 0
+                except OSError: return
+                s.stats['pty_out'] += n
+                if n == len(data): return
+                data = data[n:]
+            if not s.wq and s.wake is not None:
+                try: os.write(s.wake, b'w')           # (_read now watches for room)
+                except OSError: pass
+            s.wq.append([bytes(data), False]); s.wq_bytes += len(data)
+
+    def _gap(s):
+        """A lone Esc was just written: nothing more for ESC_GAP."""
+        with s.wlock:
+            if s.wq: s.wq[-1][1] = True
+            else: s.wnext = time.monotonic() + ESC_GAP
+
+    def _flush(s, fd):
+        """Write what waits as the pty takes it (_read's thread).  -> select's
+        write list and time-out."""
+        with s.wlock:
+            if s.fd != fd: return [], 0.5
+            now = time.monotonic()
+            while s.wq and now >= s.wnext:
+                c = s.wq[0]
+                try: n = os.write(fd, c[0])
+                except BlockingIOError: return [fd], 0.5
+                except OSError:
+                    s._wq_clear(); break
+                s.stats['pty_out'] += n; s.wq_bytes -= n
+                if n < len(c[0]):
+                    c[0] = c[0][n:]; return [fd], 0.5
+                s.wq.popleft()
+                if c[1]: s.wnext = now + ESC_GAP
+            if not s.wq:
+                if s.wq_dropped:
+                    s.log('term: %s reading again; %d bytes of keys were dropped' % (s.name, s.wq_dropped))
+                    s.wq_dropped = 0
+                return [], 0.5
+            return [], s.wnext - now                  # (an Esc's gap, then the rest)
 
     def _message(s, text):
         with s.lock:
@@ -552,7 +653,7 @@ class TermSession:
         start = 0
         for i in range(0, len(body) - 1, 2):
             if body[i] == 0x1B and body[i + 1] == 0x01 and i + 2 < len(body):
-                s._write(term_keys(body[start:i + 2], s.screen.app_cursor))
+                s._write(term_keys(body[start:i + 2], s.screen.app_cursor)); s._gap()
                 time.sleep(ESC_GAP); start = i + 2
         s._write(term_keys(body[start:], s.screen.app_cursor))
 

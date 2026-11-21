@@ -4,11 +4,16 @@
 set -e
 DEST=/home/$USER/gridlink
 mkdir -p "$DEST" ~/.config/gridlink ~/gridlink/work ~/gridlink/memories ~/gridlink/sessions
-cp -r gridlink gridfox PROTOCOL.md README.md config.example.toml gridlink.service "$DEST"/ 2>/dev/null || true
+cp -r gridlink gridfox PROTOCOL.md README.md config.example.toml gridlink.service requirements.txt "$DEST"/ 2>/dev/null || true
 cd "$DEST"
 python3 -m venv venv
 venv/bin/pip install --upgrade pip
-venv/bin/pip install anthropic pyserial pillow pyte wcwidth
+venv/bin/pip install -r requirements.txt || {   # (pinned: two Pis built apart run the same code)
+    echo "install.sh: pip could not install requirements.txt's pinned versions." >&2
+    echo "  The pins come from a test machine, not a Pi: on a Pi where gridlink works, run" >&2
+    echo "  venv/bin/pip freeze and put its versions in requirements.txt, then run install.sh again." >&2
+    exit 1
+}
 # gridfox's Y (a YouTube video without YouTube's player); it wants deno or node for YouTube
 venv/bin/pip install -U "yt-dlp[default]" || echo "yt-dlp didn't install: gridfox's Y needs it (venv/bin/pip install yt-dlp)"
 # CLAUDE /W (gridfox) drives Firefox on this Pi

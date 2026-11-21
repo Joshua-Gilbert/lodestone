@@ -203,10 +203,13 @@ TOOLS = [
          "degrees), \\x1bABP2; (pen 2, Option 31). Native alpha commands (I, J, T, V) set what the next "
          "labels use; after any, HP-GL carries on from its own pen position. Start a drawing with "
          "IN;SP1; and end it with PU;. action draw (the default) checks that the Nano answers, then plots in the background and "
-         "returns at once: it serial-polls the Nano and sends only what its buffer has room for, so the "
+         "returns at once: it starts by clearing the Nano (anything it still holds from before is dropped), "
+         "serial-polls it and sends only what its buffer has room for, so the "
          "GRiD and your other tools stay free while the pen draws (a long plot takes minutes). action "
-         "status says how far a plot has got; cancel stops sending (what the Nano and the plotter hold "
-         "still draws). One plot at a time. Paper and pens are the user's: say what you will draw before "
+         "status says how far a plot has got; cancel while sending stops sending and clears the Nano too "
+         "(what it holds is dropped), then lifts the pen (with an ETX first if it stopped inside a label; "
+         "not inside a coordinate list), and a cancel once everything is sent lets the pen finish what the "
+         "Nano holds. One plot at a time. Paper and pens are the user's: say what you will draw before "
          "you draw it."),
      'inputSchema': {'type': 'object', 'properties': {
          'action': {'type': 'string', 'enum': ['draw', 'status', 'cancel']},
@@ -439,8 +442,8 @@ class GridTools:
     """The tools, on gridlink's side of the socket (a Grid to call).  Pi
     paths are kept inside root, the Term directory."""
     def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}, viewer=None, away=lambda: False,
-                 available=lambda tool: None):
-        s.G = grid; s.cfg = cfg; s.bridge = bridge
+                 available=lambda tool: None, log=lambda m: None):
+        s.G = grid; s.cfg = cfg; s.bridge = bridge; s.log = log
         s.away = away                       # the user is back in the program (resident Claude's background)
         s.available = available             # why a tool can't run now (TermSession.why_not), for a background plot
         s.root = root or getattr(cfg, 'term_dir', None) or '~/grid'
@@ -724,7 +727,7 @@ class GridTools:
             return [text('GRiD: %s. The plotter\'s Nano at %d does not answer a serial poll: is it powered, '
                          'and running firmware v4 or later? Nothing was sent.' % (e, addr))], True
         if not st: return [text('The Nano at %d gave an empty serial poll. Nothing was sent.' % addr)], True
-        s.plot = PlotJob(s, addr, data, tmo); s.plot.start()
+        s.plot = PlotJob(s, addr, data, tmo, first=st[0]); s.plot.start()
         return [text('Plotting %d bytes of HP-GL on the 4662 (GPIB %d) in the background. The Nano is '
                      'sent what its buffer has room for, and the GRiD is free between parts. '
                      'grid_plotter action status shows how far it has got.' % (len(data), addr))], False
@@ -897,11 +900,14 @@ class PlotJob(threading.Thread):
     """A plot sent in the background: poll the Nano, send what fits (whole
     commands), wait on the Pi when it's full. Each GRiD request takes the
     tools' lock, so Claude's other calls go between them."""
-    def __init__(s, tools, addr, data, tmo):
+    def __init__(s, tools, addr, data, tmo, first=0):
         threading.Thread.__init__(s, daemon=True, name='grid-plotter')
         s.tools, s.addr, s.data, s.tmo = tools, addr, data, tmo
+        s.first = first                 # the start's serial poll (t_grid_plotter's)
         s.ends = hpgl_ends(data)
         s.sent = 0; s.writes = 0; s.polls = 0
+        s.pairs = None                  # (cut(): a list's start, the last cut in it, the numbers before it)
+        s.cmd = None                    # (command(): the last command asked)
         s.state = 'sending'; s.error = None; s.cancel = False
         s.t0 = time.monotonic(); s.t1 = None
 
@@ -934,12 +940,100 @@ class PlotJob(threading.Thread):
         r = s.gpib(glp.GP_SPOLL)
         return r[0] if r else None
 
+    def clear(s):
+        """SDC to the Nano (CLAUDE's gp_clear, driver function 06h): a Nano
+        that knows it drops what it holds and ends a label left open.  An
+        older one ignores it, and a failed clear is not fatal. -> an error"""
+        try: s.gpib(glp.GP_CLEAR); return None
+        except GridError as e: return str(e)
+
+    def whole(s):
+        """The last write ended on a whole command (none cut in parts)."""
+        import bisect
+        i = bisect.bisect_left(s.ends, s.sent)
+        return s.sent == 0 or (i < len(s.ends) and s.ends[i] == s.sent)
+
+    def command(s, at):
+        """The command that index at is inside: (its start, past the
+        separators before it; its label's mnemonic (start, after), as
+        hpgl_ends reads it, or (-1, -1)).  Kept for the last command asked:
+        a long one is asked once a part."""
+        import bisect
+        k = bisect.bisect_right(s.ends, at) - 1
+        j = s.ends[k] if k >= 0 else 0
+        if s.cmd is not None and s.cmd[0] == j: return s.cmd[1:]
+        i, n = j, len(s.data)
+        while i < n and s.data[i] in b' \r\n\t;': i += 1
+        e = s.data.find(b';', i)
+        s.cmd = (j, i, hpgl_label(s.data, i, n if e < 0 else e))
+        return s.cmd[1:]
+
+    def in_label(s):
+        """The last write ended in a label's text: after its mnemonic,
+        before its ETX."""
+        if s.whole(): return False
+        j, (st, after) = s.command(s.sent)
+        return 0 <= after <= s.sent and s.data.find(b'\x03', after) >= s.sent
+
+    LISTS = (b'PA', b'PD', b'PR', b'PU')    # the commands whose numbers are x,y pairs
+    NUM = re.compile(rb'[A-Za-z]{1,2}|[^,\sA-Za-z;]+([,\s]?)')   # a mnemonic, or a number and the separator after it
+
+    def cut(s, end):
+        """Where a part that ends inside one command (bigger than the Nano's
+        room) may end: never between a label mnemonic's two letters (the
+        part ends before the first); in a PA, PD, PR or PU list only just
+        after the separator after a y, so neither a number nor an x,y pair
+        is split (a clear between the parts would end "PA100,2" at 2, or
+        leave an x that the next part's first number pairs with).  A
+        mnemonic with no ';' before it ("PU0,0PD1,2") starts the count
+        again, or, if not one of those four, ends the pairing.  Anywhere
+        else (a label's text, other commands): at end."""
+        j, (st, after) = s.command(end)
+        if 0 <= st < end:
+            if end < after and st > s.sent: return st      # (between the letters: before them)
+            return end
+        if s.data[j:j + 2].upper() not in s.LISTS: return end
+        # the numbers counted so far in this list (the last cut's), else from its start
+        at, n = s.pairs[1:] if s.pairs and s.pairs[0] == j else (j + 2, 0)
+        best = None
+        for m in s.NUM.finditer(s.data, at, end):
+            if m.group(1) is None:                          # a mnemonic (its letters read whole, past end too)
+                if s.data[m.start():m.start() + 2].upper() not in s.LISTS: s.pairs = None; return end
+                n = 0; continue
+            n += 1
+            if m.group(1) and n % 2 == 0 and m.end() > s.sent: best = (m.end(), n)
+        if best is None: s.pairs = None; return end   # (no pair ends in the room: numbers too long)
+        s.pairs = (j, best[0], best[1])
+        return best[0]
+
+    def halt(s):
+        """Cancelled while sending, as PLOT.COM does: clear the Nano first (a
+        Nano that knows SDC drops what it holds, so the pen-up bytes go after
+        the clear), then "PU;" after a whole command, ETX and "PU;" in a
+        label's text, and nothing inside any other command cut in parts (in
+        a PA or PD list "PU;" would end it early).  An older Nano, which
+        ignores SDC, draws what it holds and keeps the pen down after a list
+        cut in parts until the next plot."""
+        why = s.clear()
+        pu = None if s.sent == 0 else b'PU;' if s.whole() else b'\x03PU;' if s.in_label() else None
+        if pu:
+            try: s.gpib(glp.GP_WRITE, pu, flags=1)
+            except GridError as e: why = why or str(e)
+        if why: s.error = 'The plotter may not have stopped cleanly: %s.' % why
+        s.state = 'cancelled'
+
     def run(s):
         import bisect
         n = len(s.data); last = time.monotonic()
         try:
+            # a label an earlier plot left open would eat this one: a clear, once the start's poll found
+            # the Nano (RQS: something else, as PLOT.COM reads it; not cleared)
+            why = s.clear() if not s.first & 0x40 else 'the poll at the start asked for service'
+            if why:
+                s.error = 'The Nano was not cleared: %s; a label left open may eat the start.' % why
+                s.tools.log('plot: the Nano was not cleared: %s' % why)
             while s.sent < n:
-                if s.cancel: s.state = 'cancelled'; return
+                if s.cancel: s.halt(); return
                 try:
                     st = s.poll()
                 except GridError as e:          # (busy with a program, or the link is down: try again)
@@ -954,7 +1048,7 @@ class PlotJob(threading.Thread):
                     j = bisect.bisect_right(s.ends, end)  # the command after the ones that fit (short
                     nxt = s.ends[j] if j < len(s.ends) else n   #  ones before a long one: not the first's end)
                     if room >= 200 and nxt - s.sent > room:  # one command bigger than the Nano's room
-                        end = s.sent + room
+                        end = s.cut(s.sent + room)
                     elif end - s.sent < left:           # wait for room (the GRiD is free meanwhile)
                         if time.monotonic() - last > PLOT_STALL:
                             s.state = 'failed'; s.error = 'The Nano had no room for %d s.' % PLOT_STALL; return
