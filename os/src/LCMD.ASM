@@ -5090,12 +5090,16 @@ do_pause:
 
 do_exit:
         cmp     byte [oneshot], 0
-        jne     .x
+        jne     .q
         cmp     byte [perm], 0          ; the first shell can't go
         jne     .x
         mov     ax, 4C00h
         int     21h
 .x:     ret
+.q:     jmp     start.quit              ; /C: EXIT ends the command, whatever
+                                        ;  a batch file has left (start.quit
+                                        ;  lies in the history overlay, which
+                                        ;  /C never writes)
 
 ; SET, SET NAME=, SET NAME=value
 do_set: cmp     byte [si], 0
