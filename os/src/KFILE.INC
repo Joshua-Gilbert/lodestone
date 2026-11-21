@@ -899,8 +899,8 @@ sft_cluster_alloc:
 .bad:   mov     ax, 5
 .e:     pop     dx
         pop     cx
-        stc
-        ret
+..@fr_err: stc                          ; (also file_read's .err, in short
+        ret                             ;  reach of its first check)
 ; cluster AX taken after DX (0: the first): the write's first such kept
 ; (rw_a1, after rw_ap) for its undoing.  All kept
 .took:  cmp     word [rw_a1], 0
@@ -945,16 +945,18 @@ rw_where:
         pop     dx
         pop     si
         ret
-
+..@fr_none: jmp file_read.none          ; (a position past the end: a 2-byte
+        db      90h                     ;  jcc, not taken otherwise; the pad,
+                                        ;  never run, keeps file_read even)
 file_read:
         call    rw_start
-        jc      .err
+        jc      ..@fr_err
         ; no further than the end of the file
         mov     ax, [si+S_SIZE]
         mov     dx, [si+S_SIZE+2]
         sub     ax, [si+S_POS]
         sbb     dx, [si+S_POS+2]
-        jb      .none
+        jb      ..@fr_none
         or      dx, dx
         jnz     .seq
         cmp     ax, [rw_left]
