@@ -167,6 +167,28 @@ static void testPoll() {
     busIdle();
 }
 
+// ATN falling between talkService's first test and its cli: the interrupt
+// runs then (with nothing to let go), so the byte must not go on DIO after it.
+static int atnRuns = 0;
+static void atnNow() { atnRuns++; PINB &= ~B_ATN; PCINT0_vect(); }
+static void testPollAtn() {
+    resetSketch();
+    PINB &= ~B_NDAC;
+    isTalker = true; spollMode = true; spollSent = false;
+    unsigned long polls = nPolls;
+    atnRuns = 0;
+    stubAtCli = atnNow;                 // (talkService's is the first cli in a pass)
+    gpibService();
+    check("poll: ATN just before the cli: DIO left alone",
+          atnRuns == 1 && nPolls == polls &&
+          !(DDRD & (D_DIO | D_DAV)) && !(DDRC & C_DIO) && talkState == 0);
+    PINB |= B_ATN;                      // ATN gone: the poll goes on
+    gpibService();
+    check("poll: ... the byte on DIO after ATN", talkState == 1 && nPolls == polls + 1);
+    stubAtCli = 0;
+    busIdle();
+}
+
 // The page follows the 4662's COPY MODE switch (status bit 14), at IN
 // only; !m forces it; PLOTTER ON goes at every IN.
 static void testPage() {
@@ -340,6 +362,7 @@ int main() {
                {home, D(1000, 0), pt('U', rx, y1), U(2000, 0)}, 22);
     }
     testPoll();
+    testPollAtn();
     testPage();
     testAlpha();
     testNative();

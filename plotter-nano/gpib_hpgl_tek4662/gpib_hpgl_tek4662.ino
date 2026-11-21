@@ -344,13 +344,17 @@ void talkService() {
         if (!(isTalker && spollMode && !spollSent)) return;
         {
             uint8_t v = statusByte();
+            // ATN tested, DIO driven and talkState set with interrupts off: an
+            // ATN that falls after the test above has run the interrupt
+            // already (it found nothing to let go), so the byte must not go on
             uint8_t s = SREG; cli();
+            if (atnLow()) { SREG = s; return; }
             DDRD = (DDRD & ~D_DIO) | ((v & 0x0F) << 2);     // a 1 pulls its line low
             DDRC = (DDRC & ~C_DIO) | ((v >> 4) & 0x0F);
+            talkState = 1;
             SREG = s;
         }
         nPolls++;
-        talkState = 1;
         return;                         // DAV on the next pass: the byte settles first (T1, 2 us)
     case 1:                             // wait for the listeners: NRFD released, NDAC held
         if (nrfdLow() || !ndacLow()) return;
