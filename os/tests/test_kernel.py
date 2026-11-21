@@ -6353,8 +6353,125 @@ sdx     dw      0
           n == 224 and o.split('\n')[0].strip() == 'E05 E05' and 'A:\\F000.DAT' in files and 'A:\\Z.DAT' not in files
           and 'A:\\X' not in files and not k.crashed, (n, o, len(files)))
 
+ENVBIG = r"""; ENVBIG.COM: LCMD /C SET>ENV.TXT run with an environment of its own, 2001 bytes: V00= to V39=, each of
+; them 50 bytes with its NUL (a parent no Lodestone program is: COMMAND.COM with a large /E)
+org 100h
+        mov     bx, 1000h               ; (64 KB kept, the rest for LCMD)
+        mov     ah, 4Ah
+        int     21h
+        mov     bx, 2048 / 16
+        mov     ah, 48h
+        int     21h
+        jc      .x
+        mov     [pb], ax
+        mov     es, ax
+        xor     di, di
+        mov     dx, '00'
+        mov     cx, 40
+.s:     mov     al, 'V'
+        stosb
+        mov     ax, dx
+        stosw
+        mov     al, '='
+        stosb
+        push    cx
+        mov     cx, 45
+        mov     al, 'x'
+        rep     stosb
+        pop     cx
+        xor     al, al
+        stosb
+        inc     dh
+        cmp     dh, '9'
+        jbe     .n
+        mov     dh, '0'
+        inc     dl
+.n:     loop    .s
+        stosb
+        push    cs
+        pop     es
+        mov     [pb + 4], cs
+        mov     [pb + 8], cs
+        mov     [pb + 12], cs
+        mov     dx, prog
+        mov     bx, pb
+        mov     ax, 4B00h
+        int     21h
+.x:     mov     ax, 4C00h
+        int     21h
+prog    db 'A:\LCMD.COM', 0
+tail    db tend - tail - 1, ' /C SET>ENV.TXT'
+tend    db 13
+pb      dw 0, tail, 0, 5Ch, 0, 6Ch, 0
+"""
+
+def t_cmdedge():
+    """LCMD at its edges: EXIT in a batch file run by LCMD /C; PROMPT=text (the '=' skipped, as PATH=X); a CALL
+    whose redirection finds the handle table full; an inherited environment over its 1 KB; the line editor's keys
+    that do nothing and Tab with no match; FOR's, SET's and COPY's syntax errors."""
+    def bat(name, *lines):
+        p = os.path.join(OUT, name)
+        open(p, 'wb').write(('\r\n'.join(lines) + '\r\n').encode())
+        return name + '=' + p
+    src = os.path.join(OUT, 'ENVBIG.ASM'); open(src, 'w').write(ENVBIG)
+    com = os.path.join(OUT, 'ENVBIG.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    open(os.path.join(OUT, 'EDGE_A.TXT'), 'wb').write(b'a\r\n')
+    img = image('cmdedge.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'ENVBIG.COM=' + com, 'A.TXT=' + os.path.join(OUT, 'EDGE_A.TXT'),
+                bat('XB.BAT', '@echo off', 'echo before', 'type nosuch.x', 'exit', 'echo AFTER EXIT'),
+                bat('D.BAT', '@echo off', 'if "%1"=="xxxxxxxx" goto end', 'call d %1x < a.txt >> o.txt', ':end'))
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    F3 = 0x3D00
+    def run(*keys):
+        k.key('cls'); k.key(ktest.ENTER)
+        for x in keys: k.key(x)
+        k.key(ktest.ENTER)
+        return '\n'.join(k.pc.text_screen().rstrip().split('\n')[1:])
+    for x in (ktest.UP, F3, ktest.BKSP, 'echo ok', ktest.RIGHT, ktest.DOWN, ktest.F1, 0x5300, ktest.ENTER):
+        k.key(x)                                       # (no history yet: Up and F3 have nothing to give)
+    o = k.pc.text_screen()
+    o2 = run('echo okay and more', F3)
+    check('the keys that do nothing (Up, F3 with no history; Backspace at the start; Right, Down, F1, Del at the end; '
+          'F3 when the last line is shorter): the line as typed', 'ok' in o.split('\n') and 'okay and more' in o2.split('\n'), (o, o2))
+    n = ''.join(k.pc.tty).count('\x07')
+    o = run('type zzq', ktest.TAB)
+    check('Tab with no name to give: a beep, the line as typed', ''.join(k.pc.tty).count('\x07') == n + 1
+          and 'File not found' in o, o)
+    o = '\n'.join(sh.run(c) for c in ('for x in (a) do echo', 'for %x in a do echo', 'for %x in (a) echo', 'for %x in (a) do'))
+    check('FOR without its %, (, DO or command: "Syntax error" each', o.count('Syntax error') == 4, o)
+    o = sh.run('set foo')
+    check('SET NAME without "=": "Syntax error"', 'Syntax error' in o, o)
+    o = sh.run('copy a.txt+' + 'y' * 80)
+    check('COPY with a name over 79 characters: "Invalid path or file name", nothing copied',
+          'Invalid path or file name' in o and 'copied' not in o, o)
+    o = sh.run('lcmd /c xb.bat || echo CODE1')
+    check('LCMD /C of a batch file with EXIT: the lines after it not run, its ERRORLEVEL (1) the exit code',
+          'before' in o and 'AFTER EXIT' not in o and 'CODE1' in o, o)
+    sh.run('prompt=[$p]')
+    o = sh.run('ver')
+    check('PROMPT=[$P]: the prompt is "[A:\\]" (the "=" skipped, as PATH=X does)', o.split('\n')[-1].startswith('[A:\\]'), o)
+    sh.run('prompt $p$g')
+    psp = k.pc.u16(0x60, k.Y['cur_psp'])
+    jft = lambda: k.pc.rd(k.pc.u16(psp, 0x36), k.pc.u16(psp, 0x34), 20)
+    j0 = jft()
+    o = sh.run('d')
+    j1 = jft()
+    check('CALLs nested with < and >> till the handle table is full (a DUP fails): handle 4 (PRN) still open after, '
+          'handles 0-3 as they were, the shell runs', j1[:5] == j0[:5] and 'Lodestone version' in sh.run('ver'), (j0.hex(), j1.hex(), o))
+    sh.run('del o.txt')
+    m0 = mcbs(k)
+    sh.run('envbig')
+    e = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\ENV.TXT', b'').decode('latin-1').split()
+    m1 = mcbs(k)
+    own = lambda m: [b[:4] for b in m if b[2]] + [m[-1][:4]]
+    check('an inherited environment of 2001 bytes: LCMD\'s 1 KB copy takes V00 to V19 whole (V20 would cross its end), '
+          'no more; the arena whole after (its owned blocks and its last as they were)',
+          e == ['V%02d=' % i + 'x' * 45 for i in range(20)] and all(b[1] in 'MZ' for b in m1) and own(m1) == own(m0)
+          and 'Lodestone version' in sh.run('ver'), (e[:1], e[-2:], len(e), m0, m1))
+
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_divirq, t_divcap, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_divirq, t_divcap, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_cmdedge, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
