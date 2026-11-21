@@ -3,8 +3,16 @@
 The GRiD (controller) writes one frame; we answer with exactly one frame.
 Everything we want to say waits in an outbound queue until the GRiD asks.
 """
-import math, re, threading, time, collections
+import math, re, threading, time, traceback, collections
 from . import glp
+try:
+    import termios
+    # what a failing serial port raises: pyserial's SerialException (and its PortNotOpenError, timeouts) is an
+    # OSError, as are its select and ioctl errors; termios.error, out of tcsetattr and tcflush on a half-dead
+    # port, is not
+    PORT_ERRORS = (OSError, termios.error)
+except ImportError:                           # (not on Linux)
+    PORT_ERRORS = (OSError,)
 
 
 def stock_wait_ms(nbytes, baud):
@@ -23,21 +31,152 @@ def answer_bytes(frame, patched, baud):
     return data
 
 
-class AR488Serial:
+class PortLog:
+    """A transport's serial port (s.ser), dropped when it fails, and its failures logged once each (s.said, a
+    set) until it works again.  PicoBridge's, which reopens in its own threads; PortKeeper's for the rest."""
+    def _once(s, msg, key=None, tail='; retrying every 2 s'):
+        """A failure to find or open the port, logged once until it works again: the retries every 2 s
+        would otherwise log it every 2 s, or not at all.  (key: what counts as the same message, if not
+        its text.)"""
+        if (key or msg) not in s.said:
+            s.said.add(key or msg); s.log(msg + tail)
+
+    def _drop(s):
+        if s.ser: _close(s.ser)
+        s.ser = None
+
+
+def _close(ser):
+    """A port closed, quietly: it has failed already."""
+    try: ser.close()
+    except Exception: pass
+
+
+class PortKeeper(PortLog):
+    """A transport's serial port kept: a failure drops it, said once, and read() opens it again every 2 s, set
+    up as at the start (_setup), so an unplugged adapter is waited for in place of a crash loop under systemd.
+    The Link sees b'' meanwhile and keeps its state (serve() is unchanged).
+
+    A class using it calls _keep() from __init__ and has _open_port() (-> the opened port; raises if it can't),
+    _setup() (what a reopened port needs again; -> whether the port answered as it should) and _read() (the raw
+    read).  With `ser` given (the tests' model of a line) nothing is reopened: a failure is raised as it was.
+
+    Every exception is caught, not only a port's: a fault in gridlink must not end serve(), and the unit with it.
+    Only PORT_ERRORS, which cover every failure of a real pyserial 3.5 port, drop the port (_failed); anything else
+    is _fault.  The port's I/O, reads, answers and rings alike, is all on serve()'s one thread."""
+    REOPEN_EVERY = 2.0
+
+    def _keep(s, ser=None, opener=None):
+        s.ser = ser; s.given = ser is not None
+        s.opener = opener                     # (port) -> a pyserial-like port: the tests' (else pyserial)
+        s.said = set()                        # what _once has logged since the port last worked
+        s.next_open = 0.0
+        s.set_up = False                      # a reopened port set up cleanly: its next good read clears said
+
+    def _fault(s, what):
+        """From an except block: an error that is gridlink's, not the port's.  Its traceback is said once and
+        the port kept: reopening would not mend it, and would reset the AR488's Nano (DTR) every 2 s."""
+        s._once('bridge: %s on %s: a fault in gridlink, not the port (the port kept)\n%s'
+                % (what, s.port, traceback.format_exc().rstrip()), key='fault ' + what, tail='')
+
+    def _failed(s, what, e):
+        """From an except block: a port error (PORT_ERRORS) drops the port, to be opened again by read(), said
+        once; anything else is a _fault.  -> whether the port was dropped."""
+        if s.given: raise
+        if not isinstance(e, PORT_ERRORS):
+            s._fault(what); return False
+        s._once('bridge: %s on %s failed (%s): reopening' % (what, s.port, e), key='failed')
+        s._drop()
+        return True
+
+    def _drop(s):
+        PortLog._drop(s); s.set_up = False
+
+    def _try_open(s, setup):
+        """-> whether the port is open.  setup (a reopen): _setup() run, and if it says the port answered, the
+        failures said so far are cleared at the next read that doesn't fail."""
+        s.next_open = time.monotonic() + s.REOPEN_EVERY   # (a port that opens and fails at once: no faster)
+        try:
+            s.ser = s._open_port()
+            clean = s._setup() if setup else False
+        except PORT_ERRORS as e:
+            s._drop()
+            s._once('bridge: cannot open %s (%s)' % (s.port, e), key='open')
+            return False
+        except Exception:
+            if s.ser is None:                 # (opening it: tried again in 2 s)
+                s._fault('open'); return False
+            s._fault('setup'); clean = False
+        if setup:
+            s._once('bridge: %s is open again' % s.port, key='back', tail='')
+            s.set_up = bool(clean)
+        return True
+
+    def open(s):
+        """The first open.  A port not there is no error: read() waits for it."""
+        if s.given: s._setup_given(); return
+        s._try_open(False)
+
+    def _setup_given(s):
+        s.ser.reset_input_buffer()
+
+    def read(s):
+        """GRiD bytes, or b'' after a short wait (while the port is gone, too)."""
+        if s.ser is None:
+            now = time.monotonic()
+            if now < s.next_open:
+                time.sleep(min(s.next_open - now, 0.05)); return b''
+            if not s._try_open(True): return b''
+        try:
+            d = s._read()
+        except Exception as e:
+            if not s._failed('read', e): time.sleep(0.05)   # (a fault, the port kept: no busy loop)
+            return b''
+        if s.said and (d or s.set_up):      # (it works: the next failure is news)
+            s.said.clear(); s.set_up = False
+        return d
+
+    def _write(s, data):
+        """-> whether it went (a failure drops the port)."""
+        ser = s.ser
+        if ser is None: return False
+        try:
+            ser.write(data)
+        except Exception as e:
+            s._failed('write', e); return False
+        return True
+
+    def _serial(s, **kw):
+        if s.opener is not None: return s.opener(s.port)
+        import serial
+        return serial.Serial(s.port, **kw)
+
+
+class AR488Serial(PortKeeper):
     """The Nano on a USB serial port, running AR488 (stock or +GRiD patch)."""
-    def __init__(s, port, baud=115200, addr=7, log=print):
+    RESET_WAIT = 2.0                          # opening the port resets the Nano (DTR)
+
+    def __init__(s, port, baud=115200, addr=7, log=print, opener=None):
         s.port, s.baud, s.addr, s.log = port, baud, addr, log
-        s.ser = None; s.patched = False; s.version = ''
+        s.patched = False; s.version = ''
+        s._keep(opener=opener)
 
     @property
     def frame_limit(s):
         return glp.PATCHED_FRAME_MAX if s.patched else glp.STOCK_FRAME_MAX
 
-    def open(s):
-        import serial
-        s.ser = serial.Serial(s.port, s.baud, timeout=0.02)
-        time.sleep(2.0)                  # opening the port resets the Nano
-        s.ser.reset_input_buffer()
+    def _open_port(s):
+        ser = s._serial(baudrate=s.baud, timeout=0.02, write_timeout=2)
+        try:
+            time.sleep(s.RESET_WAIT)
+            ser.reset_input_buffer()
+        except BaseException:
+            _close(ser); raise                # (not s.ser yet: _try_open's _drop would not close it)
+        return ser
+
+    def _setup(s):
+        s._configure()                        # (the Nano was reset: its ++ settings are gone)
+        return 'AR488' in s.version           # (its ++ver answered)
 
     def _quiet(s, ms=300, limit=10.0):
         """Wait until the GRiD has been silent for ms, so a command we send
@@ -60,6 +199,13 @@ class AR488Serial:
         return buf.decode('latin1', 'replace')
 
     def configure(s):
+        if s.ser is None: return s.version    # (not there yet: read() sets it up when it opens)
+        try:
+            return s._configure()
+        except Exception as e:
+            s._failed('configure', e); return s.version
+
+    def _configure(s):
         for c in ('++mode 0', '++addr %d' % s.addr, '++eos 3', '++eoi 1', '++eot_enable 0', '++idn 0'):
             s._cmd(c)
         v = s._cmd('++ver real', reply=True)
@@ -72,12 +218,16 @@ class AR488Serial:
         return s.version
 
     def save(s):
-        s._cmd('++savecfg')
+        if s.ser is None: s.log('bridge: not open, so nothing saved'); return
+        try:
+            s._cmd('++savecfg')
+        except Exception as e:
+            s._failed('save', e)
 
     def answer(s, frame):
-        s.ser.write(answer_bytes(frame, s.patched, s.baud))
+        s._write(answer_bytes(frame, s.patched, s.baud))
 
-    def read(s):
+    def _read(s):
         # One byte with the timeout, then whatever has arrived: read(4096)
         # would wait out the whole timeout for every frame.
         d = s.ser.read(1)

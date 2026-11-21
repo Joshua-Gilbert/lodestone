@@ -20,6 +20,7 @@ The bridge takes no part in the bus until we put it online, and drops off again 
 import collections, glob, os, struct, threading, time
 
 from . import glp
+from .link import PortLog
 
 PICO_VID = 0x2E8A
 PROTO_VERSION = 1
@@ -397,14 +398,16 @@ class PicoLink:
         return s.proto.tx_done_at
 
 
-class PicoBridge(PicoLink):
-    """gridlink transport: frame_limit, open(), configure(), answer(frame), read()."""
+class PicoBridge(PicoLink, PortLog):
+    """gridlink transport: frame_limit, open(), configure(), answer(frame), read().  `opener` (port) -> a
+    pyserial-like port: the tests' (else pyserial)."""
     frame_limit = FRAME_MAX
     patched = True
 
-    def __init__(s, port='auto', addr=7, log=print):
+    def __init__(s, port='auto', addr=7, log=print, opener=None):
         s.spec, s.addr, s.log = port, addr, log
-        s.ser = None; s.port = None; s.wlock = threading.Lock()
+        s.opener = opener
+        s.ser = None; s.port = None; s.wlock = threading.Lock(); s.opened_at = -10.0
         s.proto = PicoProto(s._write, addr=addr, log=log)
         s.proto.once = lambda msg, key=None: s._once(msg, key, tail='')
         s.inq = collections.deque(); s.cv = threading.Condition()
@@ -421,42 +424,39 @@ class PicoBridge(PicoLink):
         try:
             with s.wlock: ser.write(data)
         except Exception as e:
-            s.log('bridge: write failed (%r): reopening' % e); s._drop()
+            s._once('bridge: write failed (%r): reopening' % e, key='write', tail=''); s._drop()
 
     def _drop(s):
-        try:
-            if s.ser: s.ser.close()
-        except Exception:
-            pass
-        s.ser = None; s.proto.connected = False
+        PortLog._drop(s); s.proto.connected = False
 
-    def _once(s, msg, key=None, tail='; retrying every 2 s'):
-        """A failure to find or open the bridge, logged once until it is up again: the retries every 2 s
-        would otherwise log it every 2 s, or not at all.  (key: what counts as the same message, if not
-        its text.)"""
-        if (key or msg) not in s.said:
-            s.said.add(key or msg); s.log(msg + tail)
+    def _serial(s, p):
+        if s.opener is not None: return s.opener(p)
+        import serial
+        return serial.Serial(p, 115200, timeout=0.02, write_timeout=2)
 
     def _open_once(s):
-        import serial
         ports = find_port(s.spec)
         if not ports:
             s._once('bridge: no GPIB-Pico2 bridge found (port %s)' % s.spec)
         for p in ports:
             try:
-                ser = serial.Serial(p, 115200, timeout=0.02, write_timeout=2)
+                ser = s._serial(p)
                 try: ser.dtr = True
                 except Exception: pass
             except Exception as e:
                 s._once('bridge: cannot open %s (%s)' % (p, e)); continue
             s.ser, s.port = ser, p
+            s.opened_at = time.monotonic()
             s.proto.resync()
             s.proto.hello()
             t_end = time.monotonic() + 3
-            while time.monotonic() < t_end and not s.proto.connected:
-                d = ser.read(256)
-                if d: s._push(s.proto.feed(d))
-            if s.proto.connected:
+            try:
+                while time.monotonic() < t_end and not s.proto.connected and s.ser is ser:
+                    d = ser.read(256)
+                    if d: s._push(s.proto.feed(d))
+            except Exception as e:           # (a port that opens and fails at once: tried again in 2 s)
+                s._once('bridge: %s failed as it opened (%s)' % (p, e), key='failed ' + p); s._drop(); continue
+            if s.proto.connected and s.ser is ser:
                 s.log('bridge on %s' % p); s.said.clear()
                 return True
             s._once('bridge: %s did not answer (not the bridge firmware? bench firmware?)' % p)
@@ -483,6 +483,8 @@ class PicoBridge(PicoLink):
     def _reader(s):
         while not s.stop.is_set():
             if s.ser is None:
+                left = s.opened_at + 2 - time.monotonic()   # (a port that opens and fails at once: no
+                if left > 0: time.sleep(left); continue     #  sooner than every 2 s)
                 if not s._open_once(): time.sleep(2)
                 continue
             ser = s.ser
@@ -496,7 +498,7 @@ class PicoBridge(PicoLink):
                     if n: d += ser.read(n)
             except Exception as e:
                 if s.ser is ser:              # else the pinger already dropped it: just reopen, quietly
-                    s.log('bridge: read failed (%r): reopening' % e); s._drop()
+                    s._once('bridge: read failed (%r): reopening' % e, key='read', tail=''); s._drop()
                 continue
             if d: s._push(s.proto.feed(d))
 
