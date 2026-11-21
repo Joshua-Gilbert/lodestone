@@ -33,6 +33,7 @@ Each run works in a directory of its own (tempfile.mkdtemp: bus_sim, the control
 sim_results.txt), so two runs never share a socket; it is kept, and named, when a check fails.  --results PATH
 also writes the results there.
 """
+import atexit
 import collections
 import struct
 import json
@@ -57,6 +58,21 @@ BENCH_ID = b"GPIB-Pico2,bench test,rev 1.2,addr 10\n"
 
 results = []
 out = []
+skipped = []                                            # groups and checks not run, named in the summary
+procs = []                                              # every Sim and Daemon started: stop_all() ends them
+
+
+def stop_all():
+    """Ends every bus_sim and gpib-bridged this run started (main's finally, and atexit): one left running
+    reopens its pty's name for ever and joins later simulations that get that pty."""
+    for x in reversed(procs):
+        try:
+            x.stop()
+        except Exception:
+            pass
+
+
+atexit.register(stop_all)
 
 
 def say(s=""):
@@ -78,6 +94,7 @@ class Sim:
                            check=True)
         env = dict(os.environ, GPIB_SIM_CLOCK0=str(clock0 or 0))
         self.p = subprocess.Popen([SIM], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, env=env)
+        procs.append(self)
         self.pty = self.p.stdout.readline().split()[1]
 
     def cmd(self, line):
@@ -99,13 +116,17 @@ class Sim:
         return dict(kv.split("=") for kv in self.cmd("stats"))
 
     def quit(self):
+        if self.p.poll() is not None:
+            return
         try:
             self.p.stdin.write("quit\n")
             self.p.stdin.flush()
             self.p.wait(5)
-        except (OSError, subprocess.TimeoutExpired):   # (a core 1 still frozen can't join)
+        except (OSError, ValueError, subprocess.TimeoutExpired):   # (a core 1 still frozen can't join)
             self.p.kill()
             self.p.wait(5)
+
+    stop = quit
 
 
 class Daemon:
@@ -117,6 +138,7 @@ class Daemon:
         self.p = subprocess.Popen([sys.executable, "-m", "gpibbridge.daemon", "-c", "/nonexistent", "--port", pty,
                                    "--ctl", CTL, "--handler", handler, "--address", str(address), "-v"],
                                   env=env, stderr=self.log, stdout=self.log)
+        procs.append(self)
         t0 = time.time()
         while time.time() - t0 < 10:
             try:
@@ -129,8 +151,14 @@ class Daemon:
         raise RuntimeError("daemon did not bring the bridge online")
 
     def stop(self):
+        if self.p.poll() is not None:
+            return
         self.p.terminate()
-        self.p.wait(5)
+        try:
+            self.p.wait(5)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            self.p.wait(5)
 
 
 def firmware_const(name, macro):
@@ -286,10 +314,16 @@ def big(sim):
 def stall_recovery(sim, d):
     say("I  the daemon stalls 5.8 s (Pico times out and goes offline), then must bring it back by itself")
     import signal
+    log = os.path.join(WORK, "daemon_thrutest.log")
+    said0 = open(log).read().count("no PING from the Pi for 5 s")
     d.p.send_signal(signal.SIGSTOP)
     time.sleep(5.8)
+    online = sim.stats()["online"]
     d.p.send_signal(signal.SIGCONT)
+    check("the bridge went offline by itself while the daemon was stopped", online == "0", f"online={online}")
     time.sleep(3.0)
+    said = open(log).read().count("no PING from the Pi for 5 s") - said0
+    check("... and told the daemon so (its log line, read once the daemon ran again)", said >= 1, f"{said} lines")
     sim.write(10, b"*IDN?\n")
     r, got, end = sim.read(10)
     check("back online without a restart", got == BENCH_ID, repr(got))
@@ -326,16 +360,26 @@ def offline(sim, d):
     r2, got, end = sim.read(5)
     check("address 5 still works", r == 0 and got == b"+1.234567E+00\n")
     d2 = Daemon(sim.pty)
-    sim.write(10, b"*IDN?\n")
-    r, got, end = sim.read(10)
-    check("daemon restarted: answers again", got == BENCH_ID, f"{got!r}")
+    try:
+        sim.write(10, b"*IDN?\n")
+        r, got, end = sim.read(10)
+        check("daemon restarted: answers again", got == BENCH_ID, f"{got!r}")
+    except BaseException:
+        d2.stop()
+        raise
     return d2
 
 
 def scpi(sim):
     say("F  scpi handler")
     d = Daemon(sim.pty, handler="scpi")
+    try:
+        scpi_checks(sim)
+    finally:
+        d.stop()
 
+
+def scpi_checks(sim):
     def q(s):
         sim.write(10, s.encode())
         r, got, end = sim.read(10)
@@ -357,25 +401,28 @@ def scpi(sim):
     q("*CLS;*OPC?\n")
     r, got, end = sim.read(10)
     check("read with no query: times out (488.2), nothing sent", got == b"", repr(got))
-    d.stop()
 
 
 def address_change(sim):
     say("G  address change from the Pi")
     d = Daemon(sim.pty, address=10)
-    ctl({"cmd": "address", "address": 7})
-    time.sleep(0.3)
-    r, n = sim.write(10, b"*IDN?\n")
-    check("nobody at 10 after moving to 7", r == 2)
-    sim.write(7, b"*IDN?\n")
-    r, got, end = sim.read(7)
-    check("answers at 7", got == BENCH_ID, repr(got))
-    d.stop()
+    try:
+        ctl({"cmd": "address", "address": 7})
+        time.sleep(0.3)
+        r, n = sim.write(10, b"*IDN?\n")
+        check("nobody at 10 after moving to 7", r == 2)
+        sim.write(7, b"*IDN?\n")
+        r, got, end = sim.read(7)
+        check("answers at 7", got == BENCH_ID, repr(got))
+    finally:
+        d.stop()
     d = Daemon(sim.pty, address=30)
-    sim.write(30, b"*IDN?\n")
-    r, got, end = sim.read(30)
-    check("started with address 30 from the command line/config", got == BENCH_ID)
-    d.stop()
+    try:
+        sim.write(30, b"*IDN?\n")
+        r, got, end = sim.read(30)
+        check("started with address 30 from the command line/config", got == BENCH_ID)
+    finally:
+        d.stop()
 
 
 def no_eoi_and_flow(sim, d):
@@ -413,12 +460,13 @@ def no_eoi_and_flow(sim, d):
           f"sent={sent} got={len(got)}")
     # NRFD is held once the rx ring is full, and while the USB output stalls that is once more bytes have come
     # than the ring and the output buffer hold.  On a loaded host the controller may send fewer than that in
-    # 2.5 s: then no hold is due, and this is not checked.
+    # 2.5 s: then no hold is due, and this is not checked (the summary says so).
     room = firmware_const("gpib_engine.h", "RX_RING") + firmware_const("host_link.c", "OUTBUF")
     if holds or stalled >= room:
         check("...and NRFD was held meanwhile (frames wait, nothing dropped)", holds > 0,
               f"holds={holds}, {stalled} bytes in the stall")
     else:
+        skipped.append(f"H's NRFD-held check ({stalled} bytes in the USB stall, under the {room} that fit)")
         say(f"     (not checked: only {stalled} bytes reached the bridge during the USB stall, and {room} fit"
             " without NRFD)")
     sim.cmd("tmo 2000")
@@ -1138,9 +1186,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="the bridge firmware and the Pi daemon on a simulated bus")
     ap.add_argument("--results", metavar="PATH", help="also write the results here")
     args = ap.parse_args(argv)
-    sim = Sim()
-    say(f"bus_sim on {sim.pty}")
-    d = Daemon(sim.pty)
+    sim = d = None
 
     def prompt(group, *a):
         # The Pi answers these at once: the controller's 2 s byte time-out would hide a firmware stall shorter
@@ -1152,6 +1198,9 @@ def main(argv=None):
             sim.cmd("tmo 2000")
 
     try:
+        sim = Sim()
+        say(f"bus_sim on {sim.pty}")
+        d = Daemon(sim.pty)
         prompt(thrutest, sim)
         reread(sim, d)
         prompt(other_device, sim)
@@ -1166,24 +1215,29 @@ def main(argv=None):
         prompt(address_change, sim)
         if os.path.isdir(LODESTONE_LINK):
             gridlink_auto_srq(sim)
+        else:
+            skipped.append(f"J (no claude-link at {LODESTONE_LINK})")
+            say(f"J  skipped: no claude-link at {LODESTONE_LINK} (set $LODESTONE_LINK)")
         short_frames()
         port_gone_under_read()
         clock_wrap()
     finally:
         try:
-            d.stop()
-        except Exception:
-            pass
-        st = sim.stats()
-        say(f"final Pico counters: {st}")
-        check("no events lost in the Pico", st["lost"] == "0")
-        check("no bus contention: the bridge never drove a line against the bus (fights)", st["fights"] == "0",
-              st["fights"])
-        check("no late ATN engagement: online, the bridge always took part in a command byte (late)",
-              st["late"] == "0", st["late"])
-        sim.quit()
+            if d:
+                d.stop()
+            if sim:
+                st = sim.stats()
+                say(f"final Pico counters: {st}")
+                check("no events lost in the Pico", st["lost"] == "0")
+                check("no bus contention: the bridge never drove a line against the bus (fights)",
+                      st["fights"] == "0", st["fights"])
+                check("no late ATN engagement: online, the bridge always took part in a command byte (late)",
+                      st["late"] == "0", st["late"])
+        finally:
+            stop_all()                           # (the first simulation's quit too, whatever failed above)
     n_ok = sum(ok for _, ok in results)
-    say(f"\n{n_ok} of {len(results)} checks passed")
+    say(f"\n{n_ok} of {len(results)} checks passed" + (f"; not run: {'; '.join(skipped)}"
+                                                       if skipped else ""))
     for path in [os.path.join(WORK, "sim_results.txt")] + ([args.results] if args.results else []):
         with open(path, "w") as f:
             f.write("\n".join(out) + "\n")
