@@ -4462,12 +4462,12 @@ r_hot:  push    ax
         pop     ax
 .x:     ret
 .k:     mov     ax, [bx]
-        cmp     ax, R_HOTRAW
-        je      .m
-        cmp     ax, R_HOT
+        or      al, 0F0h                ; (R_HOT folds onto R_HOTRAW; AX is
+        cmp     ax, R_HOTRAW            ;  read again from [BX] after)
         je      .m
         call    .nx
         jmp     .s
+        times   ($ + 1 - $$) & 1 db 90h ; (.m odd, so .nx and .n even)
 .m:     mov     byte [cs:r_pend], 1
 .mv:    mov     si, bx
         call    .nx
@@ -4618,8 +4618,9 @@ r_stack_top equ r_code_end + R_STACK    ;  stub's block, not in CLAUDE.COM)
 r_end   equ     r_stack_top
 R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
 ; the stub's hot code even, by its order (r_tell between r_hot and r_bg),
-; r_int16's STI before .pk and two self-correcting pads, never run (after
-; .rt and .ky); a peek's r_hot and r_feed go straight through
+; r_int16's STI before .pk and three self-correcting pads, never run (after
+; .rt, .ky and r_hot's jmp .s); a peek's r_hot and r_feed go straight through
+        times   -((R_HOT | 0F0h) != R_HOTRAW) db 0      ; (r_hot's one compare)
 %ifndef STUB_PAD                        ; (the tests: another version's layout)
         EVEN    r_int16, r_int16.ch, r_feed, r_hot, r_hot.s, r_hot.k, r_hot.nx, r_hot.n, r_bg, r_bg.x
         EVEN    r_int16.pk + 3, r_int16.pk + 9  ; (a peek's returns from r_hot and r_feed)
