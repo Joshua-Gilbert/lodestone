@@ -2999,8 +2999,9 @@ exists: mov     dx, exec_path           ; exec_path -> CF if no such file or
         int     21h                     ;  fails with DOS's error).  SI kept
         ret
 
-; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ).  CF if not in the environment
-; (DI as it was: the callers count on it).
+; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ), at most CX bytes with the
+; NUL (a longer one cut).  CF if not in the environment (DI and CX as they
+; were: the callers count on it).
 env_get:
         push    ds
         push    bx
@@ -3024,8 +3025,12 @@ env_get:
 .cp:    lodsb
         stosb
         or      al, al
-        jnz     .cp
-        pop     bx
+        loopnz  .cp
+        jz      .ok
+        dec     di                      ; (no room for the rest: cut, its NUL
+        xor     al, al                  ;  through ES, ours)
+        stosb
+.ok:    pop     bx
         pop     ds
         clc
         ret
@@ -3043,19 +3048,23 @@ env_get:
 get_comspec:
         mov     si, s_comspec
         mov     di, exec_path
+        mov     cx, 80                  ; (exec_path's room)
         call    env_get
         jnc     .x
         mov     si, s_defcomspec
         call    copyz
 .x:     ret
 
-; outname = %TEMP%\CLAUDE.OUT, %TMP%\CLAUDE.OUT or X:\CLAUDE.OUT
+; outname = %TEMP%\CLAUDE.OUT, %TMP%\CLAUDE.OUT or X:\CLAUDE.OUT.  The
+; value cut at 67 characters: "\CLAUDE.OUT" and the NUL fit outname's 80
+; (TEMP's documented limit is 64, as LODE.INI's and LCMD's pipe_name)
 make_outname:
         mov     si, s_temp
         mov     di, outname
+        mov     cx, 80 - 12
         call    env_get
         jnc     .have
-        mov     si, s_tmp
+        mov     si, s_tmp               ; (CX as it was)
         call    env_get
         jnc     .have
         mov     ah, 19h

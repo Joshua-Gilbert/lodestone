@@ -912,6 +912,56 @@ def test_run_temp_setting():
 
 T.test_run_temp_setting = test_run_temp_setting
 
+
+def test_run_long_temp_comspec():
+    """A TEMP or a COMSPEC longer than its buffer (a hand-typed SET; LODE.INI's TEMP= stops at 64): env_get
+    copied it to the NUL, so a TEMP of 68+ characters ran outname into the tail, and a COMSPEC of 80+ ran exec_path
+    into outname, and the captured RUN's file was made under a garbage name.  Now each is cut to its room: TEMP at
+    67 characters, so outname is that and "\\CLAUDE.OUT" in its 80 bytes; COMSPEC at 79, outname untouched."""
+    import threading
+    from unicorn import UC_HOOK_CODE
+    from gridlink import glp
+    h = T.start([], mode='auto')
+    g, Y = h.session.grid, h.sym
+    env0 = h.m.u16(h.claude_psp, 0x2C)
+    raw = bytes(h.m.rd(env0, 0, h.m.u16(env0 - 1, 3) * 16))           # (64 bytes: no room for these)
+    end = raw.index(b'\0\0')
+    rest = raw[end + 2:end + 2 + 2 + raw[end + 4:].index(b'\0') + 1]      # (the count and the program's name)
+    env, tail0 = h.claude_psp + 8, bytes(h.m.rd(h.claude_psp, 0x80, 128))
+    def set_env(*vs):                               # (an environment of these alone, in CLAUDE's PSP's 128-byte
+        e = b'\0'.join(vs) + b'\0\0' + rest         #  tail, read at its start only)
+        assert len(e) <= 128, len(e)
+        h.m.wr(env, 0, e)
+        h.m.wr(h.claude_psp, 0x2C, struct.pack('<H', env))
+    seen = []
+    at = h.claude_psp * 16 + Y['build_exec.mk']                  # (the capture file's 3Ch, its name in outname)
+    def mk(uc, addr, size, ud):
+        seen.append((h.m.asciiz(h.claude_psp, Y['outname']), h.m.asciiz(h.claude_psp, Y['exec_path'])))
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, mk, None, at, at)
+    h.m.mu.ctl_remove_cache(at, at + 1)
+    def run():
+        res, n = {}, len(seen)
+        th = threading.Thread(target=lambda: res.update(r=g.call(glp.OP_RUN, struct.pack('<BHH', 1, 10, 0) + b'DIR\0',
+                                                                  timeout=30)))
+        th.start()
+        assert h.run_until(lambda: not th.is_alive(), 60), 'no answer'
+        assert len(seen) == n + 1, seen
+        return res.get('r'), seen[-1]
+    try:
+        set_env(b'COMSPEC=A:\\LCMD.COM', b'TEMP=A:\\' + b'D' * 70)
+        r, (out, path) = run()
+        assert out == b'A:\\' + b'D' * 64 + b'\\CLAUDE.OUT' and path == b'A:\\LCMD.COM', (r, out, path)
+        set_env(b'COMSPEC=A:\\' + b'C' * 90)
+        r, (out, path) = run()
+        assert out == b'A:\\CLAUDE.OUT' and path == b'A:\\' + b'C' * 76, (r, out, path)
+    finally:
+        h.m.mu.hook_del(hk)
+        h.m.wr(h.claude_psp, 0x2C, struct.pack('<H', env0)); h.m.wr(h.claude_psp, 0x80, tail0)
+    T.check(h)
+
+
+T.test_run_long_temp_comspec = test_run_long_temp_comspec
+
 if __name__ == '__main__':
     names = [n for n in sorted(vars(T)) if n.startswith('test_')]
     want = [a for a in sys.argv[1:] if a.startswith('test')]
