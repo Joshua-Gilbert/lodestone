@@ -1818,9 +1818,9 @@ dio:    push    bx
 .pc:    mov     [io_pc], ax
 .tcp:   call    tc_piece                ; through the track cache?  (KEMS.INC:
                                         ;  ems_tc, the cache's pages in first,
-        jc      .err                    ;  gives a failed read back as dio's:
+        jc      .eh                     ;  gives a failed read back as dio's:
         cmp     byte [io_chg], 0        ;  not one the disk changed under)
-        jne     .err
+        jne     .eh
         or      al, al
         jnz     .adv
 %endif
@@ -1870,6 +1870,9 @@ dio:    push    bx
         rep     movsw
         pop     cx
         jmp     .adv
+%ifndef NOTC
+.eh:    jmp     .err                    ; (the cache's failures: a 2-byte jcc,
+%endif                                  ;  not taken on a good piece)
 .direct:
         call    .bios
         jc      .err
