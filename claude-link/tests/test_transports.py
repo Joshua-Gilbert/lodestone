@@ -434,6 +434,55 @@ def test_pico_fails_as_it_opens():
             b.stop.set()
 
 
+def data(gen, payload):
+    return struct.pack('<BHB', pico.F_DATA, gen, pico.DF_EOI) + payload
+
+
+def test_pico_reader_and_reopen():
+    # PicoBridge's reader: the GRiD's bytes out of DATA frames through read(); serve() over a port whose read
+    # raises once: reopened (HELLO again), the Link fed from the new port, nothing raised
+    log = []
+    made = []
+    def opener(p):
+        made.append(PicoPort()); return made[-1]
+    b = pico.PicoBridge('/dev/p', log=log.append, opener=opener)
+    got = []
+    L = Link(b, lambda mt, body: got.append(mt), log=log.append, hold=0)
+    stop = threading.Event()
+    try:
+        b.open()
+        th = threading.Thread(target=serve, args=(b, L, stop), daemon=True); th.start()
+        made[0].send(data(1, hello()))
+        assert until(lambda: got == [glp.G_HELLO]), (got, log)
+        assert until(lambda: any(pico.cobs_decode(r)[0] == pico.F_TX for r in made[0].written.split(b'\0')[:-1]))
+        made[0].fail = OSError(5, 'EIO')
+        assert until(lambda: len(made) == 2 and b.proto.connected, 4.0), (made, log)
+        assert made[0].closed and len(lines(log, 'read failed')) == 1, log
+        made[1].send(data(2, glp.encode(glp.G_POLL, 2, 1, b'', fl=True)))
+        assert until(lambda: L.stats['rx_frames'] == 2), L.stats
+        assert th.is_alive()
+    finally:
+        stop.set(); b.stop.set()
+
+
+def test_pico_pinger():
+    # PONGs stop: after 6 s without one the pinger drops the port, and the reader opens it again
+    log = []
+    made = []
+    def opener(p):
+        made.append(PicoPort(pong=bool(made))); return made[-1]     # (the first port's PONGs have stopped)
+    b = pico.PicoBridge('/dev/p', log=log.append, opener=opener)
+    try:
+        b.open()
+        b.proto.last_pong -= 10                        # (as if 10 s had gone by without one)
+        assert until(lambda: len(made) == 2 and b.proto.connected, 5.0), (made, log)
+        assert len(lines(log, 'no PONG for 6 s')) == 1 and made[0].closed, log
+        n = b.proto.pongs
+        assert until(lambda: b.proto.pongs > n, 2.5), log          # (the new port answers PINGs)
+    finally:
+        b.stop.set()
+
+
 if __name__ == '__main__':
     names = [n for n in sorted(globals()) if n.startswith('test_')]
     if len(sys.argv) > 1: names = [n for n in names if any(a in n for a in sys.argv[1:])]
