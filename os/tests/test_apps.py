@@ -125,6 +125,19 @@ def shot(k, name):
 def lines(k): return [l for y, l in k.ocr()]
 def screen(k): return '\n'.join(lines(k))
 def has(k, text): return any(text in l for l in lines(k))
+def keys_within(k, sim_s, blocks, *keys):
+    """k.key(*keys) bounded by sim_s simulated seconds and a count of blocks, checked at every block: code gone
+    wrong (running over memory it has overwritten, a few thousand blocks a second here, inside one run that
+    never returns) stops the machine there, so the check fails and the group goes on.  False if it ran out."""
+    end, n = k.pc.us + sim_s * 1e6, [0]
+    def h(pc):
+        n[0] += 1
+        if (pc.us > end or n[0] > blocks) and not pc.stopped:
+            pc.stopped = 'over %d s (simulated) or %d blocks' % (sim_s, blocks); pc.mu.emu_stop()
+    k.hooks.append(h)
+    try: k.key(*keys)
+    finally: k.hooks.remove(h)
+    return not k.pc.stopped
 def lit_row(k):
     """The Executive's list row drawn highlighted (its top pixel row lit across the list): its first word.
     (The reader also finds a '__' two rows under a lit row's text: not a row.)"""
@@ -354,9 +367,12 @@ def t_core():
           not k.crashed and has(k, 'Fill in form') and k.where().split()[-1].split('+')[0] != 'ui_form.click', (k.where(), k.band()))
     k.key(ktest.LEFT, K_PGDN, 'Z', K_CODE_ENTER)
     check('form: a key the form ignores keeps the field as it was (Left, PgDn, Z: "worlZd")', has(k, 'Find: worlZd'), screen(k))
-    k.key(CODE['F']); k.key(ktest.RIGHT, 'Q', K_HOME, 0x0E08, ktest.LEFT, 'A', K_CODE_ENTER)
+    k.key(CODE['F'])
+    # (these keys take 1.2 s and 53,000 blocks; an editor that let Right go past the text's
+    # end would run over memory with the next key and not come back)
+    done = keys_within(k, 5, 150000, ktest.RIGHT, 'Q', K_HOME, 0x0E08, ktest.LEFT, 'A', K_CODE_ENTER)
     check('form: Right at the end, Backspace and Left at the start change nothing (Right, Q, Home, Backspace, Left, A: '
-          '"AworlZdQ")', has(k, 'Find: AworlZdQ 1 1'), screen(k))
+          '"AworlZdQ"), within 5 s and 150,000 blocks', done and has(k, 'Find: AworlZdQ 1 1'), (k.pc.stopped, screen(k)))
     k.key(CODE['R'])
     check('UI_RUN given a .RUN: error 11 (it ran the header as code)', has(k, 'UI_RUN error 11'), screen(k))
     k.key(CODE['Q'])
@@ -446,8 +462,11 @@ def t_core():
     open(os.path.join(OUT, 'BAD5.RUN'), 'wb').write(hdr(4, 0xFF00, 0, 0) + b'\xc3\x90\x90\x90')     # BSS past 64 KB
     open(os.path.join(OUT, 'BAD6.RUN'), 'wb').write(hdr(100, 0, 0, 0) + b'\xc3\x90\x90\x90')        # the file cut short
     # each of the header's and the size's other failures
+    # (BAD7, a 10-byte file, is refused; but not by the short-read test alone, which has no check of its own:
+    # whatever the header's last 6 bytes hold, the image read finds no bytes after it, and with none to read
+    # the image is under 2 bytes.  BAD8 is a whole program but for "UN": without that test it would run)
     open(os.path.join(OUT, 'BAD7.RUN'), 'wb').write(b'GRUN' + bytes(6))                       # a header cut short (10 bytes)
-    open(os.path.join(OUT, 'BAD8.RUN'), 'wb').write(b'GRXX' + bytes(12))                      # "GR" but not "UN"
+    open(os.path.join(OUT, 'BAD8.RUN'), 'wb').write(b'GRXX' + hdr(4, 0, 0, 0)[4:] + b'\xc3\x90\x90\x90')   # "GR" but not "UN"
     open(os.path.join(OUT, 'BAD9.RUN'), 'wb').write(b'GRUN' + struct.pack('<6H', k.Y.equ('UI_API') + 1, 4, 0, 0, 0, 0)
                                                     + b'\xc3\x90\x90\x90')                     # a newer API than this core's
     open(os.path.join(OUT, 'BAD10.RUN'), 'wb').write(hdr(4, 0, 0x2000, 0x2000) + b'\xc3\x90\x90\x90')   # 4000h fixups: 32 KB
@@ -462,7 +481,8 @@ def t_core():
                       ('BAD8.RUN', 'Not a program'), ('BAD9.RUN', 'Not a program'), ('BAD10.RUN', 'Not a program'),
                       ('BAD11.RUN', 'Not enough memory'), ('BAD12.RUN', 'Not enough memory')):
         k.select(name); k.key(ktest.ENTER)
-        check('%s (a damaged header): "%s", the core untouched, the UI block its own size again' % (name, why),
+        check('%s (%s): "%s", the core untouched, the UI block its own size again'
+              % (name, 'a 10-byte file' if name == 'BAD7.RUN' else 'a damaged header', why),
               any("Can't run %s: %s" % (name, why) in l for l in k.band()) and not k.crashed and k.pc.rd(k.useg, 0, 135) == table
               and free_paras(k)[1] == ui0, (k.band(), k.where(), free_paras(k)[1], ui0))
         k.key(ktest.ENTER)
