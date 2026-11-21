@@ -193,6 +193,14 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
   - Terminate restores INT 22h–24h, closes files, frees memory and returns into the parent's EXEC call; the DTA goes back to the parent's PSP:80h.
   - TSR (31h) keeps its files open.
   - ^C runs INT 23h on the caller's stack: IRET restarts the call, RETF with CF ends the program.
+  - **A divide error (INT 00h, 2026-11-20)** ends whatever program is current (`cur_psp`), as MS-DOS's does: CR LF "Divide overflow" CR LF on standard output, then INT 21h 4C00h (exit code 0). Per context:
+    - A program's own code: it ends, its parent goes on (`t_divide`).
+    - Inside INT 21h (a hook the kernel calls, such as a TSR's INT 10h under AH=02h): no message, since the kernel's stack is in use; the program ends, InDOS goes back to 0 and the kernel goes on.
+    - LCMD's own code: that LCMD ends. `LCMD /P` started from a prompt returns to that prompt; the Executive's prompt returns to the Executive.
+    - A .RUN (its own code or a callback the UI makes for it), or the Executive's own code: the root process ends, so the Executive starts over, as after a .RUN's ^C. Its list, band, mouse and memory are as before: the .RUN's window and UI_ALLOC blocks go and the UI block shrinks back. The message is drawn over at once. Files the .RUN had open stay open in the Executive's handle table (20 slots).
+    - With MULTITASK=1, INT 00h is one of each task's own vectors: only the running task's program ends, its message is in that task's screen, and the other tasks run on. A window .RUN's divide error starts the Executive over as above: every window session goes with it, a terminal window's task runs on without its window, and tasks without windows are not touched.
+    - A program that sets its own INT 00h handler gets the divide errors itself (in its task only, with multitasking). Terminate puts back only INT 22h-24h, as MS-DOS: a handler left set points into the ended program's freed memory, and the next divide error goes there. Tasks started afterwards from the same task start with it too.
+    - In an interrupt handler (a program's INT 08h or 1Ch hook) it ends the program that was interrupted, not the hook's owner, and the interrupt is never ended at the PIC: IRQ 0 stays in service, which on an 8259 holds back the timer and every lower IRQ (keyboard, floppy, mouse).
 - **Built-in GPIB (INT 60h).**
   - The GRIDGPIB 1.1 API, reporting version 1.23. It installs only if a 7210 answers at the GRiD's GPIB ports.
   - SRQ on IRQ 5 (1.21, the GPIB cartridge's E1 jumper). The 7210 interrupts on SRQ only (IMR2 SRQI). The handler ORs ISR2 into the shadow AH=0Bh reads, and adds 1 to a count.

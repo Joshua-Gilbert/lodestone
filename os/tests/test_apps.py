@@ -1094,6 +1094,45 @@ def t_exec():
     check('more entries than fit (246 > 240): the band says only the first 240 are listed',
           any('Only the first 240 are listed' in l for l in k.band()) and k.u16('nent') == 240, (k.band(), k.u16('nent')))
 
+DIVRUN = os.path.join(OUT, 'DIVRUN.RUN')
+def t_divrun():
+    """A divide error in a .RUN, or in the Executive's own code, ends the root process (INT 00h's INT 21h 4C00h with
+    cur_psp the root's): the Executive starts over, as after a .RUN's ^C.  Its "Divide overflow" goes to the screen
+    and is drawn over by the Executive.  run_cleanup frees the .RUN's UI_ALLOC block and its window, and the UI
+    block shrinks back; the mouse is the Executive's again."""
+    print('== a divide error in a .RUN (its own loop, a UI_DISPATCH handler) and in the Executive')
+    from test_kernel import divide_at
+    mkrun.build(os.path.join(HERE, 'DIVRUN.ASM'), DIVRUN)
+    k = ktest.KPC(image('divrun.img', DIVRUN, MEMSZ)); k.pc.mouse = True; k.start()
+    free0 = free_paras(k)
+    for key, where in (('M', 'its own loop'), ('D', 'a key handler UI_DISPATCH calls')):
+        k.select('DIVRUN.RUN'); k.key(ktest.ENTER)
+        up = has(k, 'Divide test') and k.rd('run_active', 1) == b'\x01' and free_paras(k) != free0
+        k.pc.tty.clear()
+        k.key(key)
+        check('DIVRUN.RUN (a window, a UI_ALLOC block), a divide error in %s: "Divide overflow" written, the Executive '
+              'starts over (its list, its band), the window gone, run_active 0, no window left (wdepth 0), the block '
+              'freed and the UI block its own size again' % where, up and '\r\nDivide overflow\r\n' in ''.join(k.pc.tty)
+              and not has(k, 'Divide test') and k.band()[:1] == ['Select a file and confirm'] and 'DIVRUN.RUN' in k.exec_list()
+              and k.rd('run_active', 1) == b'\x00' and k.u16('wdepth') == 0 and free_paras(k) == free0 and not k.crashed,
+              (up, ''.join(k.pc.tty), k.band(), k.rd('run_active', 1), k.u16('wdepth'), free_paras(k), free0, k.where()))
+    click(k, 40, 48)
+    s1 = k.u16('sel')
+    k.select('DIVRUN.RUN'); k.key(ktest.ENTER); k.key(ktest.ESC)
+    check('... afterwards: a click selects a list row (the second: %d), DIVRUN.RUN runs again and ends with ESC '
+          '(exit code 5), memory as before' % s1, s1 == 1 and run_ret(k) == 5 and free_paras(k) == free0 and not k.crashed,
+          (s1, run_ret(k), free_paras(k), free0))
+    at = divide_at(k, lambda pc: pc.r('cs') == k.useg and pc.r('ip') == k.Y['ex_row'])
+    k.pc.tty.clear()
+    k.key(ktest.DOWN)
+    k.key(ktest.DOWN)
+    check('a divide error in the Executive\'s own code (raised at ex_row, a list row it draws): the message, the '
+          'Executive starts over and goes on (Down moves the selection), memory as before',
+          at and 'Divide overflow' in ''.join(k.pc.tty) and k.band()[:1] == ['Select a file and confirm']
+          and k.u16('sel') >= 1 and free_paras(k) == free0 and not k.crashed, (at, ''.join(k.pc.tty), k.band(), k.u16('sel')))
+    k.run_file('MEMSZ.COM', 20)
+    check('... and runs a program', any('MEMSZ.COM ended' in l for l in k.band()) and not k.crashed, k.band())
+
 # ---------------------------------------------------------------------
 LODEF = b''.join(bytes(g) for c, g in sorted(__import__('pcemu').load_font(os.path.join(GOS, 'src', 'FONT.INC')).items()))
 
@@ -3956,7 +3995,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_syslabel, t_spacenames, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_dchg, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
+    for t in (t_core, t_system, t_syslabel, t_spacenames, t_write, t_exec, t_divrun, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_dchg, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
               t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]

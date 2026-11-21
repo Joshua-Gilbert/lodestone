@@ -1327,6 +1327,78 @@ def t_divide():
     check('... the message is standard output\'s', 'Divide overflow' not in o and not k.crashed, o)
     check('... and the shell works on', 'Lodestone version' in sh.run('ver'))
 
+DIVT = os.path.join(OUT, 'DIVT.COM')
+def divide_at(k, cond):
+    """A divide error raised as the 286 raises it (the flags, CS and the faulting instruction's IP pushed, IF and
+    TF cleared, INT 00h's vector taken) at the first block start where cond(pc) holds, once: for code that has no
+    DIV of its own to fault.  -> a list that gets the CS:IP."""
+    at = []
+    def h(pc):
+        if at or not cond(pc): return
+        at.append((pc.r('cs'), pc.r('ip')))
+        fl = pc.r('flags'); pc.push(fl); pc.push(pc.r('cs')); pc.push(pc.r('ip'))
+        off, seg = struct.unpack('<HH', pc.rd(0, 0, 4))
+        pc.w('flags', fl & ~0x300); pc.w('cs', seg); pc.w('ip', off); pc.mu.emu_stop()
+    k.hooks.append(h)
+    return at
+
+def t_divctx():
+    """A divide error outside a program's own plain code (DIVT.ASM).  A program with its own INT 00h handler
+    keeps it to itself; terminate puts back INT 22h-24h only, as MS-DOS, so one left set points into the ended
+    program's memory.  A divide error inside INT 21h (a resident INT 10h hook under AH=02h) ends the calling
+    program without the message, exit code 0, InDOS back to 0.  One in LCMD's own code ends that LCMD: LCMD /P
+    inside a prompt goes back to it, the Executive's prompt back to the Executive."""
+    print('== a divide error: its own handler, inside INT 21h, in LCMD\'s code')
+    subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
+    open(os.path.join(OUT, 'EXIT7.COM'), 'wb').write(bytes([0xB8, 0x07, 0x4C, 0xCD, 0x21]))
+    k = ktest.KPC(image('divctx.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT, os.path.join(OUT, 'EXIT7.COM'))); k.start()
+    v0 = lambda: (k.pc.u16(0, 2), k.pc.u16(0, 0))
+    mine = (0x60, k.Y['int00'])
+    sh = Shell(k)
+    check('INT 00h is the kernel\'s', v0() == mine, v0())
+    o = sh.run('divt o')
+    e = sh.run('if errorlevel 3 echo E3')
+    check('a program with its own INT 00h handler (AH=25h): its handler runs, the program goes on and puts the '
+          'vector back; exit code 3, INT 00h the kernel\'s', 'own after back' in o and 'Divide overflow' not in o
+          and 'E3' in e.replace('echo E3', '') and v0() == mine, (o, e, v0()))
+    o = sh.run('divt k')
+    e = sh.run('if errorlevel 4 echo E4')
+    seg, off = v0()
+    check('... one that leaves it set (exit code 4): INT 00h still points at it, in the ended program\'s freed '
+          'memory (terminate puts back INT 22h-24h only, as MS-DOS)', 'own after' in o and 'E4' in e.replace('echo E4', '')
+          and seg != 0x60 and k.pc.u16(seg - 1, 1) == 0, (o, e, hex(seg), hex(off)))
+    k.pc.wr(0, 0, struct.pack('<HH', mine[1], mine[0]))
+    sh.run('divt t')
+    sft = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0] for i in range(24)]
+    s0 = sft()
+    sh.run('exit7')
+    o = sh.run('divt b')
+    e = sh.run('if not errorlevel 1 echo E0')
+    check('a divide error inside INT 21h (DIVT T\'s resident INT 10h hook, under DIVT B\'s AH=02h \'!\'): the '
+          'program ends there, without "Divide overflow" (the kernel\'s stack is in use) and nothing after it; exit '
+          'code 0, InDOS 0, its handles closed', o.split('\n')[0] == 'A' and 'Divide overflow' not in o
+          and 'E0' in e.replace('echo E0', '') and k.rd('indos', 1)[0] == 0 and sft() == s0 and not k.crashed,
+          (o, e, s0, sft()))
+    outs = [sh.run(c) for c in ('ver', 'dir divt.com', 'divt z', 'ver')]
+    check('... the prompt goes on: VER, DIR, a divide error outside the kernel (the message), VER',
+          'Lodestone version' in outs[0] and 'DIVT     COM' in outs[1] and 'Z1\nDivide overflow' in outs[2]
+          and 'Lodestone version' in outs[3] and not k.crashed, outs)
+    # LCMD's own code: LCMD /P inside the Executive's prompt, then that prompt itself
+    top = k.u16('cur_psp')
+    sh.run('lcmd /p')
+    inner = k.u16('cur_psp')
+    at = divide_at(k, lambda pc: pc.r('cs') == inner and k.rd('indos', 1)[0] == 0)
+    k.run_for(0.5); k.settle()
+    scr = k.pc.text_screen().rstrip()
+    check('a divide error in LCMD /P\'s own code (its key wait): that LCMD ends with "Divide overflow", the prompt '
+          'it was started from goes on', at and inner != top and k.u16('cur_psp') == top and 'Divide overflow' in scr
+          and scr.endswith('A:\\>') and 'Lodestone version' in sh.run('ver'), (at, hex(inner), hex(k.u16('cur_psp')), scr[-200:]))
+    at = divide_at(k, lambda pc: pc.r('cs') == top and k.rd('indos', 1)[0] == 0)
+    k.run_for(0.5); k.settle()
+    check('... one in the Executive\'s prompt\'s own code: it ends, the Executive back ("LCMD.COM ended")',
+          at and k.pc.mode() == 0x40 and k.u16('cur_psp') == k.u16('root_psp') and k.band()[:1] == ['LCMD.COM ended']
+          and not k.crashed, (at, k.band(), k.where()))
+
 def t_trunc():
     """CREATE onto a file there (here a redirection): truncated and stamped,
     but bytes 12-21 of its entry, which other systems use (creation time,
@@ -5602,7 +5674,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_rtcdate, t_exerel, t_exehuge, t_divide, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

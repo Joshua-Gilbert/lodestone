@@ -6394,6 +6394,88 @@ def t_tname():
     check('TERM.RUN started by hand from the Executive: no window, and the band says how one opens (%r)' % b[0],
           b[0] == 'Opened by Return or CODE-P on a text program' and mb('mw_n') == 0 and not k.crashed, (b, mb('mw_n')))
 
+DIVT = os.path.join(A.OUT, 'DIVT.COM')
+
+def t_divmt():
+    print('== a divide error (INT 00h) with tasks: only the faulting task\'s program ends, its message in its own '
+          'screen; INT 00h each task\'s own; inside INT 21h; in a window .RUN')
+    subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
+    A.mkrun.build(os.path.join(HERE, 'DIVRUN.ASM'), A.DIVRUN)
+    k = boot('mt_div.img', b'MULTITASK=1\r\n', 88, DIVT, A.DIVRUN, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    b0 = Baseline(k)
+    mine = (0x60, Y['int00'])
+    at = []                             # at int00's INT 21h 4C00h: (running task, front task, InDOS, the message in
+    def q(pc):                          #  the running task's own screen, on the screen shown)
+        if pc.r('cs') == 0x60 and pc.r('ip') == Y['int00.q']:
+            cur = pc.rd(seg, Y['mt_cur'], 1)[0]
+            at.append((cur, pc.rd(seg, Y['mt_front'], 1)[0], k.rd('indos', 1)[0], 'Divide overflow' in slot_text(k, cur),
+                       'Divide overflow' in pc.text_screen()))
+    k.hooks.append(q)
+    def txv0(task):                     # a task's own INT 00h, in its TX
+        o = equ('TX_VEC') + list(k.pc.rd(seg, Y['mt_vrun'], equ('MT_NVEC'))).index(0) * 4
+        tx = k.pc.u16(seg, task_ent(k, task) + TE_TX)
+        return k.pc.u16(tx, o + 2), k.pc.u16(tx, o)
+    # behind, then in front, MTSPIN counting meanwhile
+    for flag, s in (('', 'S1.TXT'), ('/f ', 'S2.TXT')):
+        at.clear()
+        typ(k, 'mtlaunch %sdivt.com w 15;mtspin.com 40 %s' % (flag, s), 0.4)
+        st = tstate(k)
+        waitfile(k, s, 8.0); k.run_for(0.3)
+        scr = k.pc.text_screen()
+        line(k, '')
+        want = (1, 1 if flag else 0, 0, True, bool(flag))
+        check('DIVT W 15 as task 1 %s, MTSPIN as task 2: at its divide error task 1 runs, "Divide overflow" in its own '
+              'screen%s; it ends, MTSPIN counts on to its end (%d), the Executive\'s task in front again; memory, files '
+              'and EMS as before' % ('in front' if flag else 'behind', ', the one shown' if flag else ', not the one in front',
+                                     spun(k, s)), [t for t, *_ in st[0]] == [0, 1, 2] and at == [want] and spun(k, s) > 0
+              and 'Divide overflow' not in scr and b0.back(), (st, at, spun(k, s), scr[-200:], b0.now()))
+    # a program's own INT 00h handler in one task; another task's divide error meanwhile is the kernel's
+    at.clear()
+    typ(k, 'mtlaunch divt.com o 30;divt.com w 10', 0.4)
+    k.run_for(0.2)
+    own1, t2 = txv0(1), txv0(2)
+    reg1 = k.pc.u16(seg, task_ent(k, 1) + TE_REG)
+    k.run_for(3.5)
+    line(k, '')
+    check('DIVT O 30 (its own INT 00h handler) as task 1, DIVT W 10 as task 2: task 1\'s INT 00h its handler (in its '
+          'region), task 2\'s and the table\'s the kernel\'s; task 2\'s divide error goes to the kernel\'s (it ends, '
+          '"Divide overflow" in its screen); INT 00h the kernel\'s after both; memory as before',
+          reg1 <= own1[0] < reg1 + 0x1000 and t2 == mine and at == [(2, 0, 0, True, False)] and vec(k, 0) == mine
+          and b0.back(), (own1, hex(reg1), t2, at, vec(k, 0), b0.now()))
+    # a window .RUN (DIVRUN.RUN, RF_WIN) with MTSPIN behind, started from the prompt
+    typ(k, 'start /w mtspin.com 1000 s4.txt', 0.5)
+    typ(k, 'exit', 1.0); k.key(ktest.ENTER)
+    k.pc.run_until(lambda: 'DIVRUN.RUN' in k.exec_list(), 10); k.settle()
+    m0 = merged(mcbs(k))
+    k.select('DIVRUN.RUN'); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    up = (k.pc.rd(seg, Y['mw_n'], 1)[0], A.has(k, 'Divide test'), merged(mcbs(k)) != m0)
+    k.key('M', settle=False); k.run_for(1.0); k.settle()
+    n, ra, m1 = k.pc.rd(seg, Y['mw_n'], 1)[0], k.rd('run_active', 1)[0], merged(mcbs(k))
+    st = tstate(k)
+    waitfile(k, 'S4.TXT', 60.0); k.run_for(0.3)
+    check('DIVRUN.RUN as a window session (%s), MTSPIN a task behind: its divide error starts the Executive over (no '
+          'session left, run_active 0, its window gone, memory as before it opened); MTSPIN runs on to its end (%d)'
+          % (up, spun(k, 'S4.TXT')), up == (1, True, True) and n == 0 and ra == 0 and not A.has(k, 'Divide test')
+          and m1 == m0 and [t for t, *_ in st[0]] == [0, 1] and spun(k, 'S4.TXT') > 0
+          and tstate(k)[0] == [(0, 1, 'Executive')] and not k.crashed, (up, n, ra, st, spun(k, 'S4.TXT'), show(m1), show(m0)))
+    # inside INT 21h: DIVT T resident in the Executive's task (its hooks in the tasks started after it)
+    sh = Shell(k)
+    sh.run('divt t')
+    b1 = Baseline(k)
+    at.clear()
+    typ(k, 'mtlaunch divt.com b;mtspin.com 30 s3.txt', 0.4)
+    waitfile(k, 'S3.TXT', 6.0); k.run_for(0.3)
+    line(k, '')
+    at1 = at[:]
+    outs = [sh.run(c) for c in ('ver', 'divt z')]
+    check('a divide error inside INT 21h in task 1 (DIVT T\'s INT 10h hook, inherited, under DIVT B\'s AH=02h): no '
+          'message, task 1 ends; MTSPIN counts on (%d); memory and files as before; the prompt goes on' % spun(k, 'S3.TXT'),
+          at1 == [(1, 0, 1, False, False)] and spun(k, 'S3.TXT') > 0 and b1.back() and 'Lodestone version' in outs[0]
+          and 'Z1\nDivide overflow' in outs[1], (at1, spun(k, 'S3.TXT'), b1.now(), outs))
+
 QUITRUN = os.path.join(HERE, 'QUITRUN.RUN')
 
 def t_wroot():
@@ -8270,7 +8352,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
