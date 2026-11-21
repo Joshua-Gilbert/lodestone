@@ -4138,7 +4138,7 @@ ui_reclaim:
         mov     [ui_paras], bx
         popa
 .x:     popf
-        ret
+.ret:   ret                             ; (ui_room's too: nothing pushed there)
 
 ; Room for the UI block to be whole, with RUN_ROOM free right after it for
 ; a .RUN.  If something resident (a TSR) now sits there, the block moves:
@@ -4148,11 +4148,11 @@ ui_reclaim:
 ; no segment values: the Executive's main loop.
 RUN_ROOM    equ 1024                    ; 16 KB
 ui_room:
-        cmp     byte [need_room], 0
-        je      .x
+        cmp     byte [need_room], 0     ; (both by the ret just above, in a
+        je      ui_reclaim.ret          ;  short jump's reach)
         mov     byte [need_room], 0
         cmp     byte [run_active], 0
-        jne     .x
+        jne     ui_reclaim.ret
         pusha
         mov     bx, UI_PARAS + RUN_ROOM
         mov     ah, 4Ah                 ; (ES = CS) room here?
@@ -4213,7 +4213,7 @@ ui_room:
         mov     [ui_paras], bx
         mov     word [ent_max], MAXENT
 .stay:  popa
-.x:     ret
+        ret
 
 ; run the .RUN at SI with argument DI -> AX = its exit code; CF if it
 ; couldn't be started (AX = DOS error, or 11 for a file that isn't a .RUN)
