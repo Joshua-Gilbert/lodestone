@@ -1085,9 +1085,13 @@ class EmuHarness:
             s.transport.open(); s.transport.configure()
             s.nano = None
             m.on_due = s.pump_pi
-        elif bridge in ('pico', 'pico-hold', 'pico-quiet'):
+        elif bridge in ('pico', 'pico-hold', 'pico-quiet', 'pico-early', 'pico-nrfd'):
+            # (and, opt-in, pico_model's closer looks at the bus: 'pico-early' fw 2026-10-23a's EARLY answers
+            #  read while the rest crosses USB, 'pico-nrfd' the GRiD's messages held by NRFD.  No TALK_WAIT
+            #  bridge: CLAUDE.COM reads only after SRQ, so it never addresses the bridge with nothing ready)
             s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi, holds=bridge == 'pico-hold',
-                               quiet=bridge == 'pico-quiet')
+                               quiet=bridge == 'pico-quiet', early=bridge == 'pico-early',
+                               nrfd_us=2000 if bridge == 'pico-nrfd' else 0)
             s.transport = PicoModelTransport(s.nano)
         else:
             s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
