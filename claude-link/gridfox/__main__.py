@@ -38,7 +38,9 @@ def main(argv=None):
         m = fx.start()
     except Exception as e:
         log('firefox: %r' % e)
-        sys.stdout.write('\r\n  Firefox could not start: %s\r\n  (Install it with: sudo apt install firefox)\r\n' % e)
+        sys.stdout.write('\r\n  Firefox could not start: %s\r\n' % e)
+        if isinstance(e, FileNotFoundError):            # (only then: not for a Firefox that won't answer)
+            sys.stdout.write('  (Install it with: sudo apt install firefox)\r\n')
         sys.stdout.flush()
         return 1
     app = App(Browser(m, log=log), start=a.url, search=a.search, log=log,

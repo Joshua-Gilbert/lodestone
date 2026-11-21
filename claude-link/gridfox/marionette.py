@@ -8,6 +8,7 @@ No geckodriver and no Python packages are needed.
 import ctypes, json, os, shutil, signal, socket, subprocess, tempfile, threading, time
 
 SANDBOX = 'gridfox'
+HELLO_WAIT = 5.0        # s for the hello of a Firefox gridfox didn't start (a hung one never says it)
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'      # WebDriver's web element key
 
 PREFS = {
@@ -71,9 +72,9 @@ class MarionetteError(Exception):
 
 
 class Marionette:
-    def __init__(s, host='127.0.0.1', port=2828, timeout=30.0):
-        s.sock = socket.create_connection((host, port), timeout=timeout)
-        s.sock.settimeout(timeout)
+    def __init__(s, host='127.0.0.1', port=2828, timeout=30.0, hello=None):
+        """hello: s for the connection and Marionette's hello (default: timeout)."""
+        s.sock = socket.create_connection((host, port), timeout=hello or timeout)
         s.buf = b''; s.id = 0; s.lock = threading.Lock()
         s.dead = False                  # the connection is gone or out of step: start again
         s.session = None
@@ -81,6 +82,7 @@ class Marionette:
             s.hello = s._recv()
         except Exception:
             s.sock.close(); raise
+        s.sock.settimeout(timeout)
 
     def _recv(s):
         # everything read stays in s.buf until a whole message is there, so a
@@ -241,7 +243,7 @@ class Firefox:
         """-> a connected Marionette (with a session)."""
         if not port_open(s.port):
             exe = find_firefox(s.binary)
-            if not exe: raise FileNotFoundError('Firefox is not installed (sudo apt install firefox)')
+            if not exe: raise FileNotFoundError('Firefox is not installed')
             s.write_prefs()
             env = dict(os.environ, MOZ_HEADLESS='1', FONTCONFIG_FILE=os.path.join(s.profile, 'fonts.conf'))
             env.pop('DISPLAY', None); env.pop('WAYLAND_DISPLAY', None)
@@ -258,13 +260,22 @@ class Firefox:
                 if time.time() - t0 > wait: raise TimeoutError('Firefox did not open Marionette')
                 time.sleep(0.1)
         m = None; t0 = time.time()
+        # a Firefox already there may be hung: a short wait for its hello.  Our
+        # own, just started, may be slow (a Pi's first start): the full one.
+        hello = HELLO_WAIT if s.proc is None else None
         while True:
             try:
-                m = Marionette(port=s.port); m.new_session(); break
-            except (OSError, ConnectionError, MarionetteError) as e:
+                m = Marionette(port=s.port, hello=hello); m.new_session(); break
+            except (OSError, ConnectionError, MarionetteError, ValueError) as e:
                 if m is not None: m.close()
                 m = None
-                if time.time() - t0 > 10: raise RuntimeError('Firefox would not start a session: %s' % e)
+                if time.time() - t0 > 10:
+                    if s.proc is None:          # (something was on the port before gridfox came)
+                        raise RuntimeError('port %d is open but gives no Marionette session (%s): another '
+                                           'Firefox started with --marionette, or another program? Close it, '
+                                           'or give gridfox another --port ([web] command in gridlink\'s config)'
+                                           % (s.port, e))
+                    raise RuntimeError('Firefox would not start a session: %s' % e)
                 time.sleep(0.3)
         return m
 
