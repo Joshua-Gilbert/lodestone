@@ -115,6 +115,7 @@ static void ann_flush(void) {
     DMB();
     SH.tx_head = (h + 1u) & (TX_RING - 1u);
     ann_due--;
+    DMB();
     SH.wake_seq++;
   }
 }
@@ -159,7 +160,9 @@ static void send_pong(uint32_t now_ms) {
   send_ctl(f, 47);
 }
 
-static void request(void) { DMB(); SH.req_seq++; SH.wake_seq++; }
+// req_seq before wake_seq, a barrier between: a talker that reads wake_seq and then req_seq (talk()) sees each
+// request in one or the other.
+static void request(void) { DMB(); SH.req_seq++; DMB(); SH.wake_seq++; }
 
 static void go_offline(void) {
   if (SH.want_online) { SH.want_online = 0; SH.rsv = 0; request(); }

@@ -10,7 +10,7 @@ goes to the Raspberry Pi over USB.
 | | |
 |---|---|
 | Files | `bridge.ino` (glue, pin init, USB, LED, watchdog) · `gpib_engine.c/.h` (core 1: the bus) · `host_link.c/.h` (core 0: the protocol) · `PROTOCOL.md` |
-| Ready-built | `bridge_pico2.uf2` (165 kB, fw 2026-10-26) |
+| Ready-built | `bridge_pico2.uf2` (166 kB, fw 2026-11-20) |
 | USB | VID 2E8A / PID 000F (the arduino-pico Pico 2 IDs), product **"GPIB-Pico2 Bridge"**, max power 500 mA in the descriptor |
 | GPIB subsets | SH1 AH1 T6 L4 SR1 RL1 PP0 DC1 DT1 C0. No secondary addresses, no parallel poll, never a controller |
 | Address | set by the Pi (0–30), from `address =` in `/etc/gpib-bridge/bridge.toml` |
@@ -137,6 +137,19 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   timed out. gridlink ignores TALK_WAIT. The bus simulation's K tests read 20 replies twice at once after
   such drops (about half the second reads timed out before). With the Pi daemon's L tests (no firmware
   change): 111 checks. `bridge_pico2.uf2` built as above.
+- **2026-11-20.** No lost wake-up. `spin()` read the counter it watches (`req_seq`, or `wake_seq` for a
+  talker waiting for the Pi's reply) after its caller had tested it, so a request or a TX frame that landed
+  in between waited for core 0's next poke (up to 1 s) or the 1520's next ATN: a read finished late, though
+  it didn't fail. Its four callers now pass the value their own test used, and spin returns at once if the
+  counter has moved since. The main loop's two pass `req_seen`. A talker with nothing to send (or only a
+  held reply) goes to `talk_idle()`, out of line: it reads `wake_seq`, then looks once more at the TX ring
+  and at `req_seq`, and goes back to the main loop if a byte or a request has come. Core 0's `request()`
+  bumps `req_seq`, then (after a barrier) `wake_seq`, so a request that the talker's `wake_seq` already
+  counts is seen by that look; a stand-in EOI entry also gets a barrier before its `wake_seq` bump. The
+  assembly loop is unchanged, a byte to send costs nothing more, and the main loop's ATN path compiles as
+  before but for register names. 56444 bytes of flash and 143448 of SRAM (2026-10-26: 56364 and 143408).
+  `bridge_pico2.uf2` built as above, with the sketch as `bridge.ino` (the `bridge_main.cpp` arrangement
+  below links the core in another order: the bridge's own code is the same, a few library bytes differ).
 
 ## Build
 

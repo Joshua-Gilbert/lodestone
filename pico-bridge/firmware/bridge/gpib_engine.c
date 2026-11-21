@@ -316,8 +316,11 @@ static void RAMFUNC(accept)(void) {
 // The tightest loop in the engine.  With react_atn, on ATN its very next store asserts NDAC (and drops TE/PE,
 // already low here); engage_fast then finishes the job.  Returns when *watch changes, IFC/REN change, or (with
 // react_atn) on ATN.  FIRMWARE.md has the compiled loop and its cycle count.
-static void RAMFUNC(spin)(bool react_atn, volatile uint32_t *watch) {
-  uint32_t r = *watch, l = last_ifc_ren;
+// r is the value of *watch the caller's own test used, read before that test: a request or TX frame that lands
+// between the test and this call has already moved *watch past r, so spin returns at once instead of waiting
+// for the next poke or ATN.  (Before 2026-11-20 spin read *watch itself, after the caller's test.)
+static void RAMFUNC(spin)(bool react_atn, volatile uint32_t *watch, uint32_t r) {
+  uint32_t l = last_ifc_ren;
   if (react_atn) {
 #ifdef GPIB_SIM
     uint32_t g;
@@ -426,6 +429,20 @@ static bool RAMFUNC(send_byte)(uint8_t b, bool eoi) {
   return true;
 }
 
+// A talker that found nothing to send (or only a held reply) waits for the Pi.  wake_seq is read first (then a
+// DMB), and after it the TX ring and req_seq are looked at once more: request() bumps req_seq, a DMB, then
+// wake_seq, so a request or TX frame that the value read already counts is seen by that look, and the main loop
+// takes it.  Any later one moves wake_seq past w, and spin returns at once.  Out of line, and only on this idle
+// path: a byte to send costs nothing more, and engine_run keeps its registers for the hot paths.
+static void __attribute__((noinline)) RAMFUNC(talk_idle)(void) {
+  uint32_t w = SH.wake_seq, e;
+  DMB();
+  if ((tx_peek(&e) && tx_class(e) != TXC_WAIT) || SH.req_seq != req_seen) return;
+  if (!talk_wait_sent) { rx_push(E_TALK_WAIT, 0, SH.tx_consumed); talk_wait_sent = true; }
+  if (cfg != CFG_IDLE) cfg_listen(false);               // nothing to send: drive nothing while waiting
+  spin(true, &SH.wake_seq, w);                          // returns on ATN (engaged), IFC/REN, a request or a
+}                                                       // TX frame (core 0 bumps wake_seq for both)
+
 static void RAMFUNC(talk)(void) {
   uint32_t e = 0;
   if (spms) {                                           // serial poll: the status byte
@@ -447,20 +464,10 @@ static void RAMFUNC(talk)(void) {
   }
   for (;;) {                                            // the reply, byte after byte while nothing else happens
     for (;;) {
-      if (!tx_peek(&e)) {
-        if (!talk_wait_sent) { rx_push(E_TALK_WAIT, 0, SH.tx_consumed); talk_wait_sent = true; }
-        if (cfg != CFG_IDLE) cfg_listen(false);         // nothing to send: drive nothing while waiting
-        spin(true, &SH.wake_seq);                       // returns on ATN (engaged), IFC/REN, a request or a
-        return;                                         // TX frame (core 0 bumps wake_seq for both)
-      }
+      if (!tx_peek(&e)) { talk_idle(); return; }        // nothing to send
       int c = tx_class(e);
       if (c == TXC_SEND) break;
-      if (c == TXC_WAIT) {                              // (only a held reply, for a message still to come)
-        if (!talk_wait_sent) { rx_push(E_TALK_WAIT, 0, SH.tx_consumed); talk_wait_sent = true; }
-        if (cfg != CFG_IDLE) cfg_listen(false);
-        spin(true, &SH.wake_seq);
-        return;
-      }
+      if (c == TXC_WAIT) { talk_idle(); return; }       // (only a held reply, for a message still to come)
       tx_pop(e);                                        // stale: queued before a clear or a new message
       auto_status();
     }
@@ -573,7 +580,7 @@ void RAMFUNC(engine_run)(void) {
     }
     if (!online || !(g & IFC_M)) {
       if (cfg != CFG_IDLE) cfg_listen(false);
-      spin(false, &SH.req_seq);                         // offline or in IFC: take no part, not even in ATN
+      spin(false, &SH.req_seq, req_seen);               // offline or in IFC: take no part, not even in ATN
     } else if (!(g & ATN_M)) {
       continue;
     } else if (listener) {
@@ -585,7 +592,7 @@ void RAMFUNC(engine_run)(void) {
       if (cfg != CFG_IDLE) cfg_listen(false);           // ATN false and not addressed: take no part
       uint32_t e;
       if (tx_peek(&e) && tx_class(e) == TXC_DROP) continue;   // more stale entries to drop first
-      spin(true, &SH.req_seq);
+      spin(true, &SH.req_seq, req_seen);
     }
   }
 }
