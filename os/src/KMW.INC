@@ -310,6 +310,7 @@ mw_shut:
 mw_sbad: jmp    mw_start.bad            ; (mw_start's: its header damaged,
 mw_sno: jmp     mw_start.no             ;  it can't start, no room)
 mw_sroom: jmp   mw_start.room
+        db      90h                     ; (what follows keeps its parity)
 
 ; ---------------------------------------------------------------------
 ;  a window .RUN (path SI, argument DI) as a new session, in front: the
@@ -330,10 +331,10 @@ mw_start:
         cmp     word [cs:mw_fh], 0      ; (mw_run's peek: open, read)
         jne     .pk
         call    mw_peek
-        jc      mw_sno
-.pk:    mov     ax, 11
+        jc      .no                     ; (this and the next long: each label
+.pk:    mov     ax, 11                  ;  in here keeps its parity)
         test    byte [cs:mw_hdr+14], RF_WIN
-        jz      mw_sno
+        jz      .no
         cmp     word [cs:mw_hdr+4], 6   ; (a window .RUN's windows have W_FLAGS,
         jae     .api                    ;  whatever API it asks for: run_hdr
         mov     word [cs:mw_hdr+4], 6   ;  says 6 then, for win_flags)
@@ -361,7 +362,7 @@ mw_start:
         mov     dx, bx
         add     dx, cx                  ; DX = its end
         call    mw_grow                 ; the UI block to the highest end
-        jc      mw_sroom
+        jc      .room                   ; (long: .fr keeps its parity)
         call    mw_load                 ; read and fix it at BX (mw_fh closed)
         jc      .lf
         cmp     byte [cs:mw_n], 0       ; the first: the Executive alone in the
