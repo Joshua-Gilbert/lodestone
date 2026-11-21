@@ -184,7 +184,9 @@ env_init:
         cmp     di, ENVPARA * 16 - 1    ; the last byte is the second NUL's
         jb      .s
         mov     di, bx                  ; a string that does not fit whole
-        mov     byte [es:di], 0         ;  is dropped, and so are the rest
+        xor     al, al                  ;  is dropped, and so are the rest (two
+        stosb                           ;  NULs: the first string's leaves none
+        stosb                           ;  before it, and EXEC's copy wants both)
 .d:     pop     ds
         push    es
         mov     es, [mypsp]             ; give the old one back
@@ -743,7 +745,8 @@ redir_do:
         ret
 
 ; make handle CX refer to file handle BX (which is closed); AX = a copy
-; of what CX was
+; of what CX was.  No handle left for the copy: CX is left as it was, the
+; file is closed all the same, and AX = FFFFh
 swap_handle:
         push    bx
         mov     bx, cx
@@ -754,12 +757,12 @@ swap_handle:
         push    ax
         mov     ah, 46h
         int     21h
-        call    fclose
+.c:     call    fclose
         pop     ax
         ret
 .f:     sbb     ax, ax                  ; no copy: FFFFh, "none saved" (not the
-        ret                             ;  error code, a handle redir_undo
-                                        ;  would force and close)
+        push    ax                      ;  error code, a handle redir_undo
+        jmp     .c                      ;  would force and close)
 
         times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so the hot labels after even)
 redir_undo:
@@ -5331,6 +5334,8 @@ getnum: push    cx
         pop     cx
         ret
 
+        times   ($ - $$) & 1 db 90h     ; (the environment search even: at every
+                                        ;  prompt, command and %NAME%)
 env_seg:                                ; AX (and ES) = environment
         push    ds
         mov     ds, [cs:mypsp]
@@ -5874,6 +5879,7 @@ padw        dw 0
         EVEN    do_dir.e, do_dir.n, put_83, put_83.part, put_83.pn, put_83.pl, pump.l, show_prompt.l
         EVEN    putc, puts, crlf, strlen.l, strlen.x, strcpy, strend.l, streq, streq.l, streq.x, upcase, upcase.x
         EVEN    skipsp.x, getarg.l, pu2sp
+        EVEN    env_find.v, env_find.c, env_end.e
 
 section .bss
 bss_start:

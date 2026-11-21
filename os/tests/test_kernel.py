@@ -6459,6 +6459,7 @@ def t_cmdedge():
     j1 = jft()
     check('CALLs nested with < and >> till the handle table is full (a DUP fails): handle 4 (PRN) still open after, '
           'handles 0-3 as they were, the shell runs', j1[:5] == j0[:5] and 'Lodestone version' in sh.run('ver'), (j0.hex(), j1.hex(), o))
+    check('... and the file opened for the redirect that failed is closed: the whole table as before', j1 == j0, (j0.hex(), j1.hex()))
     sh.run('del o.txt')
     m0 = mcbs(k)
     sh.run('envbig')
