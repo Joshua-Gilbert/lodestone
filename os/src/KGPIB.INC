@@ -503,7 +503,8 @@ gp_do_write:
 ; kept in registers and [gp_done_n] is settled from SI/DI at the end.  The
 ; pad bytes put the jump targets at the parity they were measured at
 ; (they are executed once a call, if at all).
-; GPIBLOOP 1.4-1.6: read 70 -> 152 KB/s, write 77 -> 119.)
+; GPIBLOOP 1.4-1.6: read 70 -> 152 KB/s, write 77 -> 112 (119 with no
+; time-out, which would hang on a listener that stops).)
 ;
 ; Fast path for the bulk of a write: the next byte is fetched while the bus
 ; handshakes, so DO -> OUT is three instructions, and a poll that misses
