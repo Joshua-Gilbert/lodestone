@@ -153,15 +153,19 @@ def ini(text):
 # With the 1520's drive timing (disk_model 'real': seeks, rotation) a copy's time depends on where its files are on
 # the disk, and so on the system files' sizes in front of them: LODEMT.SYS a sector shorter moved t_dwait's copy
 # from 8.4% to 10.6% over its time with MT's INT 15h off.  So on such a floppy what follows LODE.SYS and LODEMT.SYS
-# starts at a fixed cluster, PIN_AT, a filler (PIN.BIN) between: the layout the measured figures were taken with
-# (LODE.SYS 101 sectors, LODEMT.SYS 43, 2026-11-20)
-PIN_AT = 146
+# starts at a fixed cluster, PIN_AT, a filler (PIN.BIN) between, with 16 sectors of room for the two to grow
+# (LODE.SYS 101 sectors and LODEMT.SYS 42 now, so they end at cluster 145).  There t_dwait's figures, 2026-11-20:
+# the copy alone 21.31 s, MT's INT 15h off or on; with MTSPIN behind 23.26 s off, 24.46 s on (5.2% more)
+PIN_AT = 162
 
 def pin_fill(mt, kw):
     if kw.get('disk_model') != 'real': return []
     used = 2 + sum((os.path.getsize(f) + 511) // 512 for f in [A.SYS] + ([] if mt is None else [mt]))
     n = PIN_AT - used
-    if n < 0: raise SystemExit('test_mt: LODE.SYS and LODEMT.SYS reach past cluster %d (PIN_AT): move it' % PIN_AT)
+    if n < 0:
+        check('LODE.SYS and LODEMT.SYS (to cluster %d) end before PIN_AT, cluster %d, where the timed floppies\' files '
+              'start: move PIN_AT on and measure again' % (used - 1, PIN_AT), False)
+        return []
     if n == 0: return []
     p = os.path.join(A.OUT, 'PIN.BIN'); open(p, 'wb').write(bytes(n * 512))
     return ['PIN.BIN=' + p]
@@ -7772,8 +7776,8 @@ def t_dkill():
     its frame's flags had interrupts off, the gate refused it, and its HLT with them off stopped the machine; and,
     held, mt_switch sent it back to mt_kdie every round, 20 bytes of its stack left behind each time."""
     print('== a task killed while another is out on a disk ends once the owner is back; nothing halts')
-    # the floppy: task 1 a copy (LCMD /C)
-    pad = dw_pad(); want = open(pad, 'rb').read()
+    # the floppy: task 1 a copy (LCMD /C) of 600 KB, still going when the kill's call gets past the gate
+    pad = dw_pad(600000); want = open(pad, 'rb').read()
     for isr in (False, True):
         k = boot('mt_dk%d.img' % isr, b'MULTITASK=1\r\n', 88, MTKL, 'PAD.BIN=' + pad, fd_wait=True, disk_model='real')
         Shell(k).run('ver')
@@ -8033,16 +8037,17 @@ def t_dwait():
     check('the copy alone (the 1520\'s drive timing): %.2f s with MT\'s INT 15h off, %.2f s on (%d of its waits could have been '
           'given away, nobody to take them: no switch), both exact' % (a0, a1, s1),
           o0 and o1 and s0 == 0 and s1 > 0 and abs(a1 - a0) < 0.01 * a0, alone)
-    k, dw = fresh('mt_dw1.img', 'real')
+    k, dw = fresh('mt_dw1.img', 'real')         # (each the first copy on a fresh floppy: the same clusters)
     dw.m10(False)
-    t_off, c_off = dw_run(k, '200 c0.txt', 'copy pad.bin p0.bin', 'copied')
-    ok0 = A.disk_file(k, 'P0.BIN') == want
+    t_off, c_off = dw_run(k, '200 c.txt', 'copy pad.bin p.bin', 'copied')
+    ok0 = A.disk_file(k, 'P.BIN') == want
     sw0 = dw.sw()
-    dw.m10(True)
-    t_on, c_on = dw_run(k, '200 c1.txt', 'copy pad.bin p1.bin', 'copied')
-    ok1 = A.disk_file(k, 'P1.BIN') == want
+    k, dw = fresh('mt_dw1.img', 'real')
+    t_on, c_on = dw_run(k, '200 c.txt', 'copy pad.bin p.bin', 'copied')
+    ok1 = A.disk_file(k, 'P.BIN') == want
     pc = k.pc
-    check('a 300 KB copy at the prompt, MTSPIN counting behind (the 1520\'s drive timing: seeks, rotation): with MT\'s INT 15h '
+    check('a 300 KB copy at the prompt, MTSPIN counting behind (the 1520\'s drive timing: seeks, rotation), each on a '
+          'fresh floppy, to the same clusters: with MT\'s INT 15h '
           'off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d (%d switches at 9001h, back in %d 9101h, %d IRQ 6s through '
           'MT\'s hook): the waits given to MTSPIN, the copy within 10%% (a switch back is ~1.5 ms); both copies '
           'exact; no INT 13h while one waited, no transfer whose EMS window '
