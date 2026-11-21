@@ -3237,15 +3237,17 @@ ed_enter:                               ; (ui_form, back in the same field:
         cmp     ah, 0FFh                ; an event: a click ends it; any other
         jne     .ch                     ;  (EV_MOVED: the window moved, the
         cmp     al, EV_CLICK & 0FFh     ;  field with it, drawn there;
-        je      .out                    ;  EV_RCLICK) and editing goes on, a
+        je      .hout                   ;  EV_RCLICK) and editing goes on, a
         jmp     .l                      ;  first character still replacing
-.ch:
+.hout:  jmp     .out                    ; (the edit's end, in a short jump's
+        times ($ - $$) & 1 db 90h       ;  reach: each key goes past it;
+.ch:                                    ;  hot: even)
         cmp     al, 0Dh
-        je      .out
+        je      .hout
         cmp     al, 1Bh
-        je      .out
+        je      .hout
         cmp     al, 09h
-        je      .out
+        je      .hout
         cmp     al, ' '                 ; a character: in it goes
         jb      .key
         cmp     al, 7Eh
@@ -3278,23 +3280,25 @@ ed_enter:                               ; (ui_form, back in the same field:
         cmp     al, 0E0h
         je      .out
         jmp     .l
-.bksp:  cmp     word [ed_pos], 0
-        je      .l
-        dec     word [ed_pos]
+.bksp:  cmp     word [ed_pos], 0        ; (at either end of the text: by the
+        je      .bkl                    ;  jmp .l below, in a short jump's
+        dec     word [ed_pos]           ;  reach)
 .del:   call    ed_del
-        jmp     .l
+.bkl:   jmp     .l
 .left:  cmp     word [ed_pos], 0
-        je      .l
+        je      .lfl
         dec     word [ed_pos]
-        jmp     .l
+.lfl:   jmp     .l
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .right: mov     si, [ed_buf]
         add     si, [ed_pos]
         cmp     byte [si], 0
-        je      .l
+        je      .rtl
         inc     word [ed_pos]
-        jmp     .l
+.rtl:   jmp     .l
 .home:  mov     word [ed_pos], 0
         jmp     .l
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .end:   mov     si, [ed_buf]
         call    strlen
         mov     [ed_pos], cx
