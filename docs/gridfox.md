@@ -364,7 +364,7 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
 
 ## Tests
 
-- `claude-link/tests/test_gridfox.py` (34 tests now, about 45 s: one
+- `claude-link/tests/test_gridfox.py` (34 tests on 2026-11-04, about 45 s: one
   stand-in Firefox for the whole run):
   - layout and wrapping, the key parser and line editor;
   - the real `extract.js` and `act.js` against a stand-in Firefox;
@@ -390,7 +390,7 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
   - It can keep the old page up while a slow one loads.
   - It wants scripts in gridfox's sandbox, kept between calls.
   - It follows a `#fragment` link in the same document, as a browser does.
-- `os/tests/test_claude_mouse.py` (22 checks): the real CLAUDE.COM `/W` on
+- `os/tests/test_claude_mouse.py` (22 checks on 2026-10-17): the real CLAUDE.COM `/W` on
   the Lodestone kernel in pcemu, with its serial mouse and the kernel's
   INT 33h, the real gridlink, and gridfox on the stand-in Firefox.
   - A click on a link follows it, and a click on the address opens Go.
@@ -410,7 +410,8 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
 - `test_emu_term.py` `test_web_gridfox`: the real CLAUDE.COM `/W` in the
   emulator. The GRiD's screen matches the Pi's cell for cell after a page,
   a link followed and a PgDn.
-- Unchanged and passing:
+- Unchanged and passing on 2026-10-16 (the counts then; each suite prints
+  its own total):
 
   | Suite | Checks |
   |---|---|

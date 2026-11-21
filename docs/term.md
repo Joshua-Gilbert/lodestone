@@ -238,7 +238,10 @@ raced only by a program running as you, which could read the files itself.
 
 ## Tests
 
-- `claude-link/tests/test_term.py` (17): the pre-filter, the alternate
+The counts are the suites' as of 0.4.0 (2026-10-09); they have grown since,
+and each suite prints its own total.
+
+- `claude-link/tests/test_term.py` (17 then): the pre-filter, the alternate
   screen and sync, glyphs and attributes, the encoder against pyte (random
   screens, both frame sizes, scroll and fill), the key map; end to end with
   the GRiD model and `fake_claude.py` in a real pty: typing, a 60-line
@@ -247,12 +250,12 @@ raced only by a program running as you, which could read the files itself.
   `claude` exiting and starting again, a link restart, the router, the echo
   time; the fixes' cases (answers in order, colon SGR, no API key for
   Claude Code, a lone Esc, the chat stopped and gated when Term takes over).
-- `test_emu_term.py` (8): the real CLAUDE.COM /T in the emulator, its
+- `test_emu_term.py` (8 then): the real CLAUDE.COM /T in the emulator, its
   shadow and every pixel of rows 0-23 checked against pyte: typing, scroll,
   inverse, the keys, CODE-R, a DOS program run in the middle, CODE-Q; chat
   messages ignored in Term, CODE-R held down and then a request, a HELLO
   answered with NOP (the link starts again).
-- `test_mcp.py` (13): the MCP server over stdio to the GRiD model: files
+- `test_mcp.py` (13 then): the MCP server over stdio to the GRiD model: files
   (read, write through NAME.$$$, copies both ways), a captured command, a
   key script with a screenshot, GPIB, two calls at once, the GRiD away.
   Relative paths, a `.mcp.json` it can't read. The limits: the tool list
