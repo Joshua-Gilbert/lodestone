@@ -206,45 +206,47 @@ mount_bpb:
         push    di
         mov     di, [actp]
         cmp     word [si+0Bh], 512
-        jne     .bad
+        jne     .b1
         mov     al, [si+0Dh]            ; sectors per cluster: a power of 2
         or      al, al
-        jz      .bad
+        jz      .b1
         xor     cl, cl
 .p:     shr     al, 1
         jc      .pe
         inc     cl
         jmp     .p
-.pe:    or      al, al
-        jnz     .bad
+.b1:    jmp     .bad                    ; (the checks out of .bad's short reach:
+        db      90h                     ;  a 2-byte jcc not taken on a good BPB;
+.pe:    or      al, al                  ;  the pad keeps the shift even)
+        jnz     .b1
         mov     [di+D_SHIFT], cl
         mov     al, [si+0Dh]
         mov     [di+D_SPC], al
         mov     ax, [si+0Eh]
         or      ax, ax
-        jz      .bad
+        jz      .b1
         mov     [di+D_RSV], ax
         mov     al, [si+10h]
         or      al, al
-        jz      .bad
+        jz      .b1
         cmp     al, 2
-        ja      .bad
+        ja      .b1
         mov     [di+D_NFAT], al
         mov     ax, [si+11h]
         or      ax, ax
-        jz      .bad
+        jz      .b1
         mov     [di+D_NROOT], ax
         mov     ax, [si+13h]
         or      ax, ax
-        jz      .bad
+        jz      .b1
         mov     [di+D_TOT], ax
         mov     al, [si+15h]
         mov     [di+D_MEDIA], al
         mov     ax, [si+16h]
         or      ax, ax
-        jz      .bad
+        jz      .b1
         cmp     ax, MAXSPF
-        ja      .bad
+        ja      .b1
         mov     [di+D_SPF], ax
         mov     ax, [si+18h]
         or      ax, ax

@@ -388,6 +388,10 @@ gp_ren_on: push    ax
         pop     ax
         ret
 
+..@gw_cf: jmp   gp_do_write.cf          ; (gp_do_write's failed commands: a 2-byte
+                                        ;  jcc, not taken when they succeed; here,
+                                        ;  not past `jmp short .put', so the
+                                        ;  careful loop keeps its parity)
 ; write CX bytes from ES:SI to device BL.  AX = error, CX = bytes sent
 gp_do_write:
         mov     [gp_count], cx
@@ -402,19 +406,19 @@ gp_do_write:
         jne     .r
         call    gp_ren_on
 .r:     call    gp_ensure_ctrl
-        jc      .cf
+        jc      ..@gw_cf
         mov     al, gp_UNL
         call    gp_send_cmd
-        jc      .cf
+        jc      ..@gw_cf
         mov     al, 40h+gp_MYADDR          ; MTA
         call    gp_send_cmd
-        jc      .cf
+        jc      ..@gw_cf
         mov     al, bl
         or      al, 20h                 ; LAD
         call    gp_send_cmd
-        jc      .cf
+        jc      ..@gw_cf
         call    gp_wait_co
-        jc      .cf
+        jc      ..@gw_cf
         call    gp_do_gts
 %ifndef NOFAST
         call    gp_fast_write           ; the bulk, all but the last byte
@@ -650,24 +654,25 @@ gp_do_read:
         mov     word [gp_fa], 1         ; (04h: the read's own frame check)
         mov     byte [gp_endr], 0
         call    gp_ensure_ctrl
-        jc      .cf
+        jc      .cf1
         mov     al, gp_UNL
         call    gp_send_cmd
-        jc      .cf
+        jc      .cf1
         mov     al, 20h+gp_MYADDR          ; MLA
         call    gp_send_cmd
-        jc      .cf
+        jc      .cf1
         mov     al, bl
         or      al, 40h                 ; TAD
         call    gp_send_cmd
-        jc      .cf
+        jc      .cf1
         call    gp_wait_co
-        jc      .cf
+        jc      .cf1
         call    gp_clear_in
         mov     cx, [gp_count]
         or      cx, cx
         jnz     .nz
         jmp     .full
+.cf1:   jmp     .cf                     ; (failed commands: as ..@gw_cf above)
 .nz:    mov     al, 92h                 ; AUXRA: RFD holdoff on END
         test    byte [gp_lfstop], 1
         jz      .a
