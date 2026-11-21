@@ -1465,6 +1465,8 @@ def t_exerel():
     check('... the handles it inherited given back (SFT counts as before)', refs() == r0, (r0, refs()))
     o = sh.run('execerr cut.exe')
     check('... EXEC\'s answer: 11 (bad format)', 'E=0B' in o and 'RAN' not in o, o)
+    o = sh.run('execerr')
+    check('EXEC of "" (get_path\'s exit): 3', o.split('\n')[0].strip() == 'E=03', o)
     o = sh.run('execerr short.exe')
     check('an .EXE shorter than its header says (its image\'s read short): EXEC answers 11, the handles given back',
           'E=0B' in o and 'RAN' not in o and refs() == r0 and not k.crashed, (o, r0, refs()))
@@ -6106,8 +6108,8 @@ def t_errexits():
     it before those jumps were made short): RENAME of an open file 5, RENAME onto a file there 5, RMDIR, MKDIR and
     CHDIR of "" 3, RMDIR of "\\" 16 (the current directory) and from a subdirectory 5 (no last name), of "D\\" 3,
     a read after a seek past the end 0 bytes and no error, IOCTL 4409h (drive A:) and 440Ah (an open
-    file) no error, DX 0 (local), AX kept; FIND NEXT after FIND FIRST with the DTA's drive byte made Z:, B: (no disk:
-    not mounted) or C: (none here): 18.  ^C typed at INT 21h 01h and 08h: "^C", the program ends there."""
+    file) no error, DX 0 (local), AX kept; FIND NEXT after FIND FIRST with the DTA's drive byte made Z:, B: or C:
+    (no such drive: drv_present's exit), and on a machine with a B: not yet mounted (D_MNT's exit): 18.  ^C typed at INT 21h 01h and 08h: "^C", the program ends there."""
     src = os.path.join(OUT, 'XITS.ASM'); open(src, 'w').write(XITS)
     com = os.path.join(OUT, 'XITS.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
@@ -6123,6 +6125,15 @@ def t_errexits():
           o.split('\n')[0].strip() == want and not k.crashed, o)
     files = sorted(fatcheck.read_files(k.pc.drives[0].img))
     check('... its files deleted again, none renamed', files == ['A:\\CCWAIT.COM', 'A:\\LCMD.COM', 'A:\\LODE.SYS', 'A:\\XITS.COM'], files)
+    # with a B: drive, its disk not yet mounted (nothing has used it): FIND NEXT on B: is the unmounted check's
+    data = os.path.join(OUT, 'XB.TXT'); open(data, 'wb').write(b'b' * 100)
+    kb = ktest.KPC(image('xits2.img', os.path.join(GOS, 'src', 'LCMD.COM'), com), b=image('xitsb.img', data)); kb.start()
+    bent = lambda: tuple(kb.pc.rd(0x60, kb.Y['drvtab'] + 32 + o, 1)[0] for o in (27, 1))     # (B:'s D_PRES, D_MNT)
+    sh = Shell(kb)
+    b0 = bent()
+    o = sh.run('xits')
+    check('... with a B: there, not mounted (D_PRES %d, D_MNT %d): the same answers, FIND NEXT on B: 18 too' % b0,
+          b0[0] != 0 and b0[1] == 0 and o.split('\n')[0].strip() == want and not kb.crashed, (b0, o))
     for fn in '18':
         k.key('cls'); k.key(ktest.ENTER)
         k.key('ccwait ' + fn); k.key(ktest.ENTER)
