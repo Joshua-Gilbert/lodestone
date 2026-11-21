@@ -4755,16 +4755,18 @@ rbuf        resb 64
 lstate      resb 1
 TERMLINK_RESET_VARS
 pi_active   resb 1
-pend_chunk  resw 1
 done_type   resb 1
             alignb 2                    ; (the words from here even, whatever
-t_sent      resw 1                      ;  TERMLINK_RESET_VARS holds)
+pend_chunk  resw 1                      ;  TERMLINK_RESET_VARS holds)
+t_sent      resw 1
 t_last      resw 1
 t_reset     resw 1
 n_fail      resw 1
-n_failrun   resb 1
+n_failrun   resb 1                      ; (even: took_answer clears both with one word)
+n_resend    resb 1                      ; the Pi's NAKs in a row: 8 fail the link (link_reset clears it)
 n_bad       resw 1
 spoll_errs  resb 1
+            alignb 2
 pit_last    resw 1
 kbd_pit     resw 1                      ; (KBD_EVERY: when the keys were last looked at)
 kbd_tick    resw 1

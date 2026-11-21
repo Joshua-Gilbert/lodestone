@@ -42,7 +42,6 @@ tlook       resb 1                      ; link_wait's serial poll: 2 a tick's lo
                                         ;  1 at an SRQ edge; 0 the PIT's
 srq_held    resb 1                      ; 1: another device holds SRQ: the PIT's polls, no
                                         ;  sleeping for it, till an edge finds our answer
-n_resend    resb 1                      ; the Pi's NAKs in a row (took_answer: 8 fail the link)
 lr_end:
 %endmacro
 
@@ -69,6 +68,7 @@ link_reset:
         mov     cx, lr_end - lr_first
         xor     al, al
         rep     stosb
+        mov     [n_resend], al          ; (beside n_failrun, which goes on)
         pop     es
         call    build_hello
         mov     al, G_HELLO
@@ -609,8 +609,7 @@ took_answer:
         jmp     link_fail
 .rs:    mov     byte [resend], 1        ; the Pi lost our frame: send it again
         ret
-.ok:    mov     byte [n_failrun], 0
-        mov     byte [n_resend], 0
+.ok:    mov     word [n_failrun], 0     ; (and n_resend, the byte after it)
         call    commit_fragment         ; our frame got through
         mov     al, [rxbuf+bx+2]
         cmp     byte [have_pi], 0
