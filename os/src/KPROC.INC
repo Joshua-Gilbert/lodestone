@@ -180,9 +180,9 @@ make_psp:
 f_4B:   cmp     byte [bp+F_AX], 0
         je      .go
         mov     ax, 1
-        jmp     fail
-.go:    call    get_path
-        jc      .e0
+.ef:    jmp     fail                    ; (.e0's code, in short reach of the
+.go:    call    get_path                ;  first checks: a 2-byte jcc, not
+        jc      .ef                     ;  taken when they pass)
         push    cs                      ; the parameter block, as it is laid
         pop     es                      ;  out: ex_env, ex_tail, ex_fcb1,
         push    ds                      ;  ex_fcb2
@@ -195,11 +195,11 @@ f_4B:   cmp     byte [bp+F_AX], 0
         call    find_file               ; (first: an unknown current
         jc      .nf                     ;  directory found again, its name
         call    full_name               ;  right in the program's)
-        jc      .e0
+        jc      .ef
         test    byte [de+11], A_DIR | A_VOL
         jnz     .acc
         call    sft_alloc
-        jc      .e0
+        jc      .ef
         mov     [ex_sft], si
         xor     al, al
         call    sft_fill
@@ -219,10 +219,10 @@ f_4B:   cmp     byte [bp+F_AX], 0
         je      .exe
 .com:   mov     si, [ex_sft]
         cmp     word [si+S_SIZE+2], 0
-        jne     .big
+        jne     .bg
         mov     ax, [si+S_SIZE]
         cmp     ax, 0FE00h
-        ja      .big
+        ja      .bg
         mov     [ex_left], ax
         mov     word [ex_left+2], 0
         add     ax, 100h + 15
@@ -231,6 +231,9 @@ f_4B:   cmp     byte [bp+F_AX], 0
         mov     [ex_min], ax
         mov     word [ex_max], 0FFFFh
         jmp     .env
+.bg:    jmp     .big                    ; (too big: a 2-byte jcc to it, not
+        db      90h                     ;  taken when it fits; the pad, never
+                                        ;  run, keeps the load loops' parity)
 .exe:   mov     byte [ex_isexe], 1
         mov     ax, [ex_hdr+4]          ; pages
         mov     dx, [ex_hdr+2]          ; bytes in the last page
@@ -256,7 +259,7 @@ f_4B:   cmp     byte [bp+F_AX], 0
         add     ax, 10h                 ; + the PSP
         mov     bx, ax
         add     ax, [ex_hdr+0Ah]        ; + minimum extra
-        jc      .big
+        jc      .bg
         mov     [ex_min], ax
         mov     ax, bx
         add     ax, [ex_hdr+0Ch]        ; + maximum extra
@@ -425,13 +428,16 @@ f_4B:   cmp     byte [bp+F_AX], 0
         pop     cx
         push    cs
         pop     es
-        jc      .e2
+        jc      .h2
         cmp     ax, cx
-        jne     .e2s                    ; file shorter than its header says
+        jne     .h2s                    ; file shorter than its header says
         sub     [ex_left], ax
         sbb     word [ex_left+2], 0
         add     word [ex_seg], 800h
         jmp     .ld
+.h2:    jmp     .e2                     ; (the .EXE load's and relocations'
+.h2s:   jmp     .e2s                    ;  failed reads: a 2-byte jcc, not
+                                        ;  taken when the read is whole)
 .rel:   mov     ax, [ex_hdr+18h]        ; relocation table
         mov     [si+S_POS], ax
         mov     word [si+S_POS+2], 0
@@ -452,10 +458,10 @@ f_4B:   cmp     byte [bp+F_AX], 0
         pop     bx
         push    cs
         pop     es
-        jc      .e2
+        jc      .h2
         shr     ax, 2                   ; all of them there?  (else entries
         cmp     ax, cx                  ;  nobody read: what ex_rel held)
-        jne     .e2s
+        jne     .h2s
         sub     bx, cx
         mov     di, ex_rel
         mov     dx, [ex_load]
