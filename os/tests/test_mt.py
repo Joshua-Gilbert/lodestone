@@ -7746,20 +7746,18 @@ def t_dkill():
     its frame's flags had interrupts off, the gate refused it, and its HLT with them off stopped the machine; and,
     held, mt_switch sent it back to mt_kdie every round, 20 bytes of its stack left behind each time."""
     print('== a task killed while another is out on a disk ends once the owner is back; nothing halts')
-    # the floppy: task 1 MTSPIN W, a 64-byte record written to D.BIN on each count (a copy in a task of its own
-    # would hold the others back: their EMS maps differ from its, mt_dok)
+    # the floppy: task 1 a copy (LCMD /C)
+    pad = dw_pad(); want = open(pad, 'rb').read()
     for isr in (False, True):
-        k = boot('mt_dk%d.img' % isr, b'MULTITASK=1\r\n', 88, MTKL, fd_wait=True, disk_model='real')
+        k = boot('mt_dk%d.img' % isr, b'MULTITASK=1\r\n', 88, MTKL, 'PAD.BIN=' + pad, fd_wait=True, disk_model='real')
         Shell(k).run('ver')
         dw = DWait(k)
-        dk = dk_run(k, dw, 'mtspin.com 200 w.txt w d.bin', isr=isr)
-        d, c = A.disk_file(k, 'D.BIN') or b'', spun(k, 'W.TXT')
+        dk = dk_run(k, dw, 'lcmd.com /c copy pad.bin p.bin', isr=isr)
         probs, _ = A.fatcheck.check(bytes(k.pc.drives[0].img))
-        dk_check(k, dk, 'MTSPIN killed while MTSPIN W behind is out on the floppy (%d switches at 9001h)%s'
+        dk_check(k, dk, 'MTSPIN killed while a copy behind is out on the floppy (%d switches at 9001h)%s'
                  % (dw.sw(), ', IRQ 7 in service as its end was first tried (refused %d times, tried again after '
-                    'each interrupt)' % dk.no if isr else ''), 'MTSPIN.COM',
-                 'D.BIN %d bytes for W\'s %d counts' % (len(d), c),
-                 c > 0 and len(d) == 64 * c and not probs and k.pc.fd_reentry == 0 and k.pc.fd_frame_bad == 0
+                    'each interrupt)' % dk.no if isr else ''), 'LCMD.COM', 'P.BIN exact',
+                 A.disk_file(k, 'P.BIN') == want and not probs and k.pc.fd_reentry == 0 and k.pc.fd_frame_bad == 0
                  and (dk.staged == 2 and dk.no >= 1 if isr else dk.no == 0))
     # C:: task 1 a copy (LCMD /C)
     data = hw_data()
