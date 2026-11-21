@@ -45,7 +45,8 @@ up_al:  cmp     al, 'a'
 .x:     ret
 
 ; copy the caller's ASCIIZ path DS:DX (frame) to path_buf (uppercase,
-; '/' -> '\').  CF: AX = 3 if empty or too long
+; '/' -> '\').  CF: AX = 3 if empty or too long.  gpath: to DI instead
+; (RENAME's new name, to path2_buf: empty by the count, whatever the buffer)
 get_path:
         mov     si, [bp+F_DX]
         mov     di, path_buf
@@ -66,7 +67,7 @@ gpath:  push    ds
         jmp     .bad
         times ($ - $$) & 1 db 90h       ; (hot: even)
 .end:   pop     ds
-        cmp     byte [path_buf], 0
+        cmp     cl, 128                 ; (the NUL first: an empty name)
         je      .bad
         clc
         ret
