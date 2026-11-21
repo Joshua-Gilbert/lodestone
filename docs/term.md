@@ -62,11 +62,10 @@ through the bridge the chat already uses. GPIB only.
 - `mcp.py`: the GRiD's tools for Claude Code, a stdio MCP server that
   gridlink registers in `~/grid/.mcp.json`. Each call goes over a Unix
   socket to gridlink and to the GRiD as a REQUEST, one at a time (CLAUDE
-  drops a second REQUEST that arrives while one waits to run). Four tools
-  only look (`grid_info`, `grid_files`, `grid_screen`, `gpib_read`) and can
-  be allowed for good; three change something (`grid_command`,
-  `grid_change_files`, `gpib_send`) and Claude Code asks before every call
-  (Tool server limits, below).
+  drops a second REQUEST that arrives while one waits to run). The tools
+  that only look can be allowed for good; for the ones that change
+  something Claude Code asks before every call (Tool server limits, below).
+  Which tool is which: the table in `claude-link/README.md` (Term).
 
 **On the GRiD** (`os/claude`):
 - `TERMLINK.INC`: the GLP link, moved out of CLAUDE.ASM unchanged except
@@ -177,14 +176,17 @@ fixed:
 - **"Don't ask again" covered too much:** allowing a read allowed delete,
   allowing `DIR` allowed `DEL *.*`, allowing a GPIB query allowed writes to a
   power supply. Claude Code remembers permission per tool and its rules
-  can't look at arguments, so the tools are split: four that only look
-  (`readOnlyHint`), three that change something. Those three carry
+  can't look at arguments, so the tools are split: those that only look
+  (`readOnlyHint`), and those that change something (which are which:
+  claude-link/README.md's table). The second kind carry
   `_meta: {"anthropic/requiresUserInteraction": true}`: Claude Code asks on
   every call, in every mode, offers no "don't ask again" and lets no allow
   rule skip it (its docs, and its code: the flag turns into an "ask" with no
   rule to add). GPIB queries are among them: a query is a command, and some
   (`MEAS?`, `READ?` on a Keithley source-meter) turn a source's output on.
-  Nothing is written into Claude Code's settings.
+  Nothing is written into Claude Code's settings. (Later, `[permissions]
+  measure` and `auto_mode` let you take some of these questions away:
+  README.)
 - **No size limits.** A huge or special Pi file could exhaust gridlink's
   memory or hang it; reads stopped quietly at 256 KB or 4 MB, so reading,
   editing and writing back could cut a GRiD file short. Now a copy or write
