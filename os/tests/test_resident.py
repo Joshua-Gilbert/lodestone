@@ -312,9 +312,13 @@ def t_rpoll():
             continue
         k.key(HOT, settle=False)
         k.pc.run_until(lambda: k.pc.mode() == 3, 3)
+    k.key(0x2B5C)                       # (the \ key itself, 2B5Ch: r_hot's fold takes only 2Bx0h, not it)
+    stub = stub_seg(k)
+    pend, up = k.pc.rd(stub, csym('r_pend'), 1)[0], console(k)
     k.key('a'); k.key(ktest.ESC)
-    check('CODE-\\ under KEYPK at 24 moments of its peek loop: the console came each time, and back', not missed
-          and 'KEYPK ready: a' in k.pc.text_screen(), (missed, k.pc.text_screen()[:200]))
+    check('CODE-\\ under KEYPK at 24 moments of its peek loop: the console came each time, and back; the \\ key '
+          '(2B5Ch) is KEYPK\'s (r_pend %d)' % pend, not missed and not up and pend == 0
+          and 'KEYPK ready: \\a' in k.pc.text_screen(), (missed, up, pend, k.pc.text_screen()[:200]))
 
 def t_rvideo():
     """The console over CGA graphics, the 640x400 mode and text: the screen

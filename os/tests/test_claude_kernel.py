@@ -284,6 +284,42 @@ def test_key_script_other_int16():
 T.test_key_script_other_int16 = test_key_script_other_int16
 
 
+K10 = r'''; K10.COM: keys read with INT 16h AH=10h (the enhanced keyboard's) till Esc
+cpu 286
+org 100h
+.l:     mov     ah, 10h
+        int     16h
+        cmp     al, 1Bh
+        jne     .l
+        mov     ax, 4C00h
+        int     21h
+'''
+
+def test_key_script_wait_kind():
+    """A RUN's {WAIT} under a reader of AH=10h: int16's look for a real key meanwhile is the caller's kind, AH=11h
+    (AH=01h would drop the keys the 1520 BIOS's 01h skips)."""
+    import test_resident as R
+    from unicorn import UC_HOOK_CODE
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'K10', 'capture': False, 'keys': '{WAIT 1}x{ESC}'})),
+                 T.reply(('text', 'Done.'))], mode='auto', files={'A:\\K10.COM': open(R.asm('K10', K10), 'rb').read()})
+    lo = h.claude_psp * 16 + h.sym['int16']
+    code = bytes(h.m.mu.mem_read(lo, 64))
+    at = lo + code.index(b'\xFE\xC4\x9C\x2E\xFF\x1E') + 3       # (inc ah, pushf, then the far call: its AH)
+    ahs = []
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, ud: ahs.append(h.m.r('ah')), None, at, at)
+    h.m.mu.ctl_remove_cache(at, at + 1)
+    try:
+        assert h.turn('run k10', sim_s=60)
+    finally:
+        h.m.mu.hook_del(hk)
+    text = str(T.results(h, 1)[0]['content'])
+    assert 'Exit code: 0' in text and ahs and set(ahs) == {0x11}, (text, len(ahs), sorted(set(ahs)))
+    T.check(h)
+
+
+T.test_key_script_wait_kind = test_key_script_wait_kind
+
+
 def test_run_exec_block():
     """A RUN's EXEC block (filled once at CLAUDE's start): the child gets CLAUDE's environment, the command's
     tail and two blank FCBs in its PSP."""
@@ -656,6 +692,7 @@ def test_nak_resend_keeps_the_check():
     assert h.turn('hello', sim_s=60), (st['arm'], len(st['resent']), h.screen())
     assert st['arm'] == 3 and st['resent'] == [st['first']], (st['arm'], st.get('first'), st['resent'])
     assert h.var('use_fl', 1) == 2 and h.link.stats.get('rx_dup', 0) > s0.get('rx_dup', 0), (h.var('use_fl', 1), h.link.stats)
+    assert h.var('n_resend') == 0, h.var('n_resend')   # (the good answer after the NAK cleared the count)
     T.check(h)
 
 
@@ -689,7 +726,7 @@ def test_naks_fail_the_link():
     assert h.run_until(lambda: 'Reconnected' in h.screen(), 20) and h.run_until(h.idle, 20), h.screen()
     assert h.turn('hello again', sim_s=60), h.screen()
     assert 'NAKs.' in h.screen(), h.screen()
-    T.check(h, fails=h.var('n_fail', 2))
+    T.check(h, fails=f0 + 3)                    # (the three runs' failures, none after)
 
 
 T.test_naks_fail_the_link = test_naks_fail_the_link

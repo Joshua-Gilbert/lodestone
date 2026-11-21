@@ -161,7 +161,8 @@ def t_popup():
         ok = h.has('Welcome to Claude Code', 30)
         check('CODE-\\ over EMSUSE: the console connects and shows Claude Code', ok and h.up(), h.screen())
         enc = h.router.term.enc
-        check('... its HELLO says app=resident, and gridlink gives it Term', h.router.term.hello.get('app') == 'resident'
+        check('... its HELLO says app=resident and the console\'s version (grid=CLAUDE 1.14), and gridlink gives it Term',
+              h.router.term.hello.get('app') == 'resident' and 'CLAUDE 1.14' in h.router.term.hello.get('grid', '')
               and h.router.app == 'term', (h.router.term.hello, h.router.app))
         check('... the console\'s shadow and screen are pyte\'s on the Pi', in_step(h), h.screen())
         check('... the band: how to go back, its last letter in column 78', 'CODE-\\ back' in h.band()
@@ -1561,13 +1562,25 @@ def t_ops_mt():
         h.cmd('claude /r')
         h.cmd('emsuse')
         mt_on = h.m.u16(h.stub(), h.sym['r_mt'] + 2) != 0
+        # what dos_check reads as MT's segment (P_MT + 2 in the stub's parameters): CX after its third instruction,
+        # mov cx, [es:bx + P_MT + 2] (26 8B 4F disp8), 9 bytes on
+        from unicorn import UC_HOOK_CODE
+        dc = h.rsym['dos_check'] + 13
+        mts = []
+        hk = h.m.mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, ud: mts.append(h.m.r('cx')), None, 0xE0000 + dc, 0xE0000 + dc)
+        h.m.mu.ctl_remove_cache(0xE0000 + dc, 0xE0000 + dc + 1)
         gen = generation(h)
         h.press(HOT)
         up = popped(h, gen) and in_step(h)
         r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
-        check('MULTITASK=1 (the stub has MT\'s address), over EMSUSE: files work (BIG.TXT read)',
-              mt_on and up and r and not r[1] and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n'),
-              (mt_on, up, r and r[0][0]['text'][-100:]))
+        h.m.mu.hook_del(hk)
+        code = bytes(h.m.ems_read(h.page(), dc - 4, 3))
+        seg = h.m.u16(h.stub(), h.sym['r_mt'] + 2)
+        check('MULTITASK=1 (the stub has MT\'s address), over EMSUSE: files work (BIG.TXT read); the console\'s '
+              'dos_check read MT\'s segment from the stub\'s r_mt (%04X: %s)' % (seg, ' '.join('%04X' % v for v in mts)),
+              mt_on and up and r and not r[1] and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n')
+              and code == b'\x26\x8B\x4F' and mts and all(v == seg for v in mts),
+              (mt_on, up, r and r[0][0]['text'][-100:], code.hex(), mts, hex(seg)))
         h.press(HOT)
         h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
         h.k.key(ESC)
@@ -1702,20 +1715,23 @@ def t_bg_mt():
     finally:
         h.close()
 
+BUSY = 3                                        # (t_bg_floppy: res_eout's first call finds the controller busy)
+
 def t_bg_floppy():
     """On the 1520 a page register written while a floppy's DMA runs resets the machine (pcemu's fd_ems_write;
     FD_STRICT: a crash).  With Lodestone's tasks a task behind may be out on the floppy while the front task's
     INT 16h call comes to the stub: the stub maps no page then (r_isr: the controller mid-command), not for a
     background look, CODE-\\, TYPE's keys or CLAUDE /R's install, and does once the transfer is over.  The 1520's
     drive timing (fd_wait, disk_model 'real'); MTKEY P polls INT 16h in front, started with the copy in one
-    MTLAUNCH (a program typed at the prompt after the copy starts would wait at MT's gate meanwhile)."""
+    MTLAUNCH (a program typed at the prompt after the copy starts would wait at MT's gate meanwhile).  (r_isr's
+    bits 3-0, a drive seeking, are not tested: pcemu's controller never sets them.)"""
     pcemu = CK.pcemu
-    strict = pcemu.FD_STRICT
-    pcemu.FD_STRICT = True
-    more = {'A:\\' + f: open(os.path.join(HERE, f), 'rb').read() for f in ('MTKEY.COM', 'MTLAUNCH.COM')}
-    more['A:\\LODEMT.SYS'] = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
-    h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more=more, fd_wait=True, disk_model='real')
+    strict, h = pcemu.FD_STRICT, None
     try:
+        pcemu.FD_STRICT = True
+        more = {'A:\\' + f: open(os.path.join(HERE, f), 'rb').read() for f in ('MTKEY.COM', 'MTLAUNCH.COM')}
+        more['A:\\LODEMT.SYS'] = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
+        h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more=more, fd_wait=True, disk_model='real')
         pc = h.m
         h.boot()
         com = pc.fs['A:\\CLAUDE.COM']
@@ -1735,22 +1751,33 @@ def t_bg_floppy():
                 n[k] = n.get(k, 0) + 1
                 if x in ('r_popup', 'r_bg.go') and pc.rd(ms, pc.Y['mt_down'], 1)[0] != 0xFF:
                     n['owner out'] = n.get('owner out', 0) + 1      # (the console in with a disk's owner out)
+                if n['phase'] == 'install' and 'go1' not in n:       # (res_eout's first call: 3F4h busy for its
+                    if x == 'res_eout' and 'ems0' not in n:          #  first BUSY reads, the controller mid-command)
+                        n['ems0'] = list(pc.ems_reg); pc.fd_busy_reads = BUSY
+                    elif x == 'res_eout.a':                         # (each pass again: interrupts on, no OUT yet)
+                        n.setdefault('passes', []).append((bool(pc.r('flags') & 0x200), list(pc.ems_reg) == n['ems0']))
+                    elif x == 'res_eout.go':
+                        n['go1'] = list(pc.ems_reg) == n.get('ems0')
             watch(addr)
         pc.watch = w
         def cnt(phase, name, dma=True): return n.get((phase, name, dma), 0)
         # CLAUDE /R installed while a task behind copies (res_load's two OUTs wait for a transfer's end)
         v16 = h.stub()                          # (MT's INT 16h)
         h.k.key('cls'); h.k.key(ENTER); h.k.key('mtlaunch lcmd.com /c copy claude.com x0.com'); h.k.key(ENTER, settle=False)
-        h.wait(lambda: pc.fd_dma(), 10)
+        moving = h.wait(lambda: pc.fd_dma(), 10)
         h.k.key(ENTER, 'claude /r', ENTER, settle=False)       # (MTLAUNCH's line, then /R as the copy runs)
-        ok = h.wait(lambda: pc.crash or h.stub() != v16 and 'Claude is resident' in pc.text_screen(), 30) \
-            and copied('X0.COM')
+        ok = h.wait(lambda: pc.crash or h.stub() != v16 and 'Claude is resident' in pc.text_screen(), 30)
+        early = pc.fs.get('A:\\X0.COM') != com  # (the copy not done yet as /R ends)
+        ok = ok and copied('X0.COM')
         ne = sum(cnt('install', 'res_eout', d) for d in (False, True))
-        check('CLAUDE /R while a task behind copies on the floppy: installed (res_eout %d times, %d looks again), the '
-              'copy exact, no page register written under a transfer (%d)'      # (.a a block's start only when it waits)
-              % (ne, sum(cnt('install', 'res_eout.a', d) for d in (False, True)), fdw()),
-              ok and ne == 2 and cnt('install', 'res_eout.go') == 0 and not pc.crash and fdw() == 0
-              and r_bgon(h) == 0, (ok, n, pc.crash, fdw(), pc.log[-3:], pc.text_screen()))
+        check('CLAUDE /R while a task behind copies on the floppy (still copying as /R ended): installed (res_eout %d '
+              'times), the copy exact, no page register written under a transfer (%d)' % (ne, fdw()),
+              moving and early and ok and ne == 2 and cnt('install', 'res_eout.go') == 0 and not pc.crash and fdw() == 0
+              and r_bgon(h) == 0, (moving, early, ok, n, pc.crash, fdw(), pc.log[-3:], pc.text_screen()))
+        ps = n.get('passes', [])
+        check('... res_eout with the controller mid-command (3F4h 10h for its first %d reads): %d passes more, each '
+              'with interrupts on and no page register written before the last' % (BUSY, len(ps)),
+              len(ps) >= BUSY and all(a and b for a, b in ps) and n.get('go1') is True, (ps, n.get('go1')))
         if pc.crash: return
         base = h.stub() * 16
         at.update({base + h.sym[x]: x for x in ('r_isr', 'r_feed.k', 'r_popup', 'r_hot.p', 'r_bg.go')})
@@ -1771,7 +1798,8 @@ def t_bg_floppy():
               'flight, none of them mapped (no page register written: %d); the keys done, the console back by itself; '
               'the copy exact (MTKEY: %s)' % (cnt('type', 'r_feed.k'), fdw(), bp),
               up and res and not res[1] and h.up() and ok and fdw() == 0 and not pc.crash
-              and cnt('type', 'r_feed.k') >= 1 and cnt('type', 'r_popup') + cnt('type', 'r_bg.go') == 0,
+              and cnt('type', 'r_feed.k') >= 1 and cnt('type', 'r_popup') + cnt('type', 'r_bg.go') == 0
+              and cnt('type', 'r_bg.go', False) == 0,     # (and no background look while TYPE's keys are out)
               (up, res and str(res)[:300], h.up(), ok, fdw(), pc.crash, pc.log[-3:], n))
         if pc.crash: return
         h.press(HOT)
@@ -1795,8 +1823,8 @@ def t_bg_floppy():
               held and looks['n'] > n0 and dma_look >= 1 and cnt('look', 'r_bg.go') == 0 and fdw() == 0
               and not pc.crash, (held, looks['n'] - n0, n, fdw(), pc.crash, pc.log[-3:]))
         check('... CODE-\\ pressed then: the console came once the transfer was over (%d times due in flight, none '
-              'mapped)' % dma_hot, came and cnt('hot', 'r_popup') + cnt('hot', 'r_bg.go') == 0 and fdw() == 0
-              and not pc.crash,
+              'mapped)' % dma_hot, came and dma_hot >= 1 and cnt('hot', 'r_popup') + cnt('hot', 'r_bg.go') == 0
+              and fdw() == 0 and not pc.crash,
               (came, n, fdw(), pc.crash))
         if pc.crash: return
         h.press(HOT)
@@ -1835,7 +1863,7 @@ def t_bg_floppy():
         check('no link failure, nothing wrong in gridlink\'s log', ok, why)
     finally:
         pcemu.FD_STRICT = strict
-        h.close()
+        if h: h.close()
 
 def mt_seg(pc):
     """Lodestone's multitasking: its segment (the system's block named MT), or None."""
@@ -1854,12 +1882,12 @@ def t_floppy_hot():
     typed (it waited for one before).  And only once no disk's owner is out: not in the transfer's result phase either,
     where the console's first DOS call would wait at MT's gate with windows 2-3 kept for the cylinder cache."""
     pcemu = CK.pcemu
-    strict = pcemu.FD_STRICT
-    pcemu.FD_STRICT = True
-    more = {'A:\\' + f: open(os.path.join(HERE, f), 'rb').read() for f in ('MTKEY.COM', 'MTLAUNCH.COM', 'MTSPIN.COM')}
-    more['A:\\LODEMT.SYS'] = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
-    h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more=more, fd_wait=True, disk_model='real')
+    strict, h = pcemu.FD_STRICT, None
     try:
+        pcemu.FD_STRICT = True
+        more = {'A:\\' + f: open(os.path.join(HERE, f), 'rb').read() for f in ('MTKEY.COM', 'MTLAUNCH.COM', 'MTSPIN.COM')}
+        more['A:\\LODEMT.SYS'] = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
+        h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more=more, fd_wait=True, disk_model='real')
         pc = h.m
         h.boot()
         Y = pc.Y
@@ -1922,7 +1950,7 @@ def t_floppy_hot():
               ok and bk == b'0078' and fdw() == 0 and not pc.crash, (ok, bk, fdw(), pc.crash))
     finally:
         pcemu.FD_STRICT = strict
-        h.close()
+        if h: h.close()
 
 
 def t_bg_screen():

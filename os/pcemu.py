@@ -449,6 +449,7 @@ class PC:
         # real code (FDWAIT) for IRQ 6 at its end, when its data moves (the
         # DMA: through the EMS windows as they are then), as on the 1520
         s.fd_wait = fd_wait or os.environ.get('FD_WAIT') == '1'     # (FD_WAIT=1: every test so)
+        s.fd_busy_reads = 0             # (a test's: 3F4h reads 10h, a command under way, this many times first)
         s.fd_op = None; s.fd_at = float('inf'); s.fd_res = None
         s.fd_reentry = 0; s.fd_timeouts = 0; s.fd_ops = 0
         s.fd_frame_bad = 0              # (transfers in the EMS frame whose windows changed under them)         # an IRQ held under CLI taken when IF is set again (run())
@@ -749,6 +750,8 @@ class PC:
         if port == 0xA1: return s.pic2_mask
         if port == 0x20: return s.isr if s.pic_rr == 3 else 0
         if port == 0x7F8: return s.vid_status         # (the 1520's: internal plasma 640x400)
+        if port == 0x3F4 and s.fd_busy_reads:
+            s.fd_busy_reads -= 1; return 0x10
         if port == 0x3F4 and s.fd_wait:                 # the floppy controller's main status (fd_wait): a
             if s.fd_dma(): return 0x10                  #  command executing (its DMA under way); its result
             return 0xD0 if s.fd_op else 0x80            #  phase till FDWAIT's end; else ready

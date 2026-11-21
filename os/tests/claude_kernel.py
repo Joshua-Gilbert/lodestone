@@ -165,11 +165,16 @@ OPS_PROBE = [
     ('gpib op 10', 0x20, _gp(10, 29), 4, b''),
     ('op 0Bh, none such', 0x0B, b'', {'claude': 0xFF, 'rcon': 0xF6}, b''),
     ('write, no NUL in the request', 4, b'\0' + struct.pack('<I', 0) + b'A:\\NONUL.TXT', 0xF0, 0),
+    ('write, nothing after the offset', 4, b'\0' + struct.pack('<I', 0), 0xF0, 0),
+    ('write, a mode byte alone', 4, b'\0', 0xF0, 0),
     ('gpib clear, 8 bytes', 0x20, _gp(5, 29)[:6], 4, b''),           # (under the 9 before the data: refused)
     ('settime, year 30000', 0x30, struct.pack('<HBBBBB', 30000, 1, 1, 0, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),
     ('settime, 6 bytes', 0x30, struct.pack('<HBBBB', 2025, 6, 1, 12, 0), {'claude': 4, 'rcon': 0xF6}, 0),
     ('settime, hour 25', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 25, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),  # (a good
-]                                       # date: refused whole, the clock and the RTC as they were: test_ops_codes)
+    ('settime, hour 24', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 24, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),  #  date:
+    ('settime, minute 60', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 23, 60, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),  # refused
+    ('settime, second 60', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 23, 59, 60), {'claude': 0x0D, 'rcon': 0xF6}, 0),  # whole,
+]                                       # the clock and the RTC as they were: test_ops_codes)
 
 def ops_want(prog):
     """OPS_PROBE's statuses and replies for 'claude' (CLAUDE.COM) or 'rcon'"""
