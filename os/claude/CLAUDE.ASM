@@ -4474,7 +4474,10 @@ r_feed: cmp     byte [cs:r_ks], 0
 ; made with none in service.  With Lodestone's tasks, only in a call of
 ; the front task's: the console takes the front screen and keys.  Taken
 ; in another task's call, it tells MT once (mt_tsrk, r_pend 2), which
-; gives the front task a turn as for a key.  The fold (OR AL, 0F0h) takes any 2Bx0h as the hot key: the 1520's
+; gives the front task a turn as for a key.  Refused by r_isr in the front
+; task's call, it tells MT each time (r_pend stays 1), so a read waiting at
+; our HLT comes back: CODE-\ during a floppy's transfer comes when it is
+; over.  The fold (OR AL, 0F0h) takes any 2Bx0h as the hot key: the 1520's
 ; keyboard gives none but CODE-\ (its key gives 2B5Ch, 2B7Ch, 2B1Ch and
 ; 2BF0h / 2B00h); a national keyboard driver could.  Registers kept.  (Never called with the
 ; console up: r_int16 answers itself then, and r_popup clears r_inpop
@@ -4515,10 +4518,10 @@ r_hot:  push    ax
 .e:     mov     [1Ch], si               ; the tail one back
 .p:     call    r_front                 ; (a background task's call: at the
         jne     .df                     ;  front one's, over its screen)
-        call    r_isr
-        jnz     .no
-        xor     al, al
-        mov     [cs:r_pend], al
+        call    r_isr                   ; (not now: MT told, each time, so
+        jnz     .tl                     ;  a read waiting at our HLT comes
+        xor     al, al                  ;  back for it: CODE-\ during a
+        mov     [cs:r_pend], al         ;  floppy's transfer once it is over)
         call    r_tell                  ; (no longer waiting, for MT)
         sti
         pop     ds
@@ -4529,7 +4532,7 @@ r_hot:  push    ax
 .df:    cmp     byte [cs:r_pend], 1     ; (MT told once, r_pend 2: the front
         jne     .no                     ;  task's turn to come, as for a key,
         inc     byte [cs:r_pend]        ;  so its call does; MT clears it as
-        mov     al, 1                   ;  it gives it)
+.tl:    mov     al, 1                   ;  it gives it)
         call    r_tell
         jmp     .no
 .nx:    inc     bx                      ; the next word, round the buffer

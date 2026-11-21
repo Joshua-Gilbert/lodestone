@@ -1847,6 +1847,84 @@ def mt_seg(pc):
         seg += size + 1
     return at
 
+def t_floppy_hot():
+    """CODE-\\ typed while a task behind is out in a floppy transfer, the front task (MTKEY R) waiting in its read at
+    the stub's HLT and MTSPIN behind always ready: the stub takes the key, may not map the console then (r_isr), and
+    tells MT so the front task's read comes back for it; the console comes once the transfer is over, no other key
+    typed (it waited for one before).  And only once no disk's owner is out: not in the transfer's result phase either,
+    where the console's first DOS call would wait at MT's gate with windows 2-3 kept for the cylinder cache."""
+    pcemu = CK.pcemu
+    strict = pcemu.FD_STRICT
+    pcemu.FD_STRICT = True
+    more = {'A:\\' + f: open(os.path.join(HERE, f), 'rb').read() for f in ('MTKEY.COM', 'MTLAUNCH.COM', 'MTSPIN.COM')}
+    more['A:\\LODEMT.SYS'] = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
+    h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more=more, fd_wait=True, disk_model='real')
+    try:
+        pc = h.m
+        h.boot()
+        Y = pc.Y
+        com = pc.fs['A:\\CLAUDE.COM']
+        fdw = lambda: getattr(pc, 'fd_ems_write', 0)
+        h.cmd('claude /r')
+        ms = mt_seg(pc)
+        # {(label, the floppy then): n}: 'dma' a transfer in flight, 'out' its owner out otherwise (its result, a
+        # seek), 'idle'; and at the console's dos_check (its first DOS call), whether the windows are its four pages
+        n = {}
+        base = h.stub() * 16
+        at = {base + h.sym[x]: x for x in ('r_hot.p', 'r_popup', 'r_bg.go')}
+        dchk = 0xE0000 + h.rsym['dos_check']
+        hw = bytes(h.m.rd(h.stub(), h.sym['r_hw'], 4))
+        watch = pc.watch
+        def w(addr):
+            if addr in at:
+                st = 'dma' if pc.fd_dma() else 'out' if pc.rd(ms, Y['mt_down'], 1)[0] != 0xFF else 'idle'
+                k = (at[addr], st); n[k] = n.get(k, 0) + 1
+            elif addr == dchk and pc.r('cs') == 0xE000:
+                k = ('dos_check', bytes(pc.ems_reg) == hw); n[k] = n.get(k, 0) + 1
+            watch(addr)
+        pc.watch = w
+        def cnt(name, st): return n.get((name, st), 0)
+        h.k.key('cls'); h.k.key(ENTER)
+        h.k.key('mtlaunch /f mtkey.com r bk.txt;mtspin.com 900 sp.txt;lcmd.com /c copy claude.com x3.com')
+        h.k.key(ENTER, settle=False)
+        def out():                              # (the copy's task out in a transfer, MTKEY in front)
+            d, f = pc.rd(ms, Y['mt_down'], 1)[0], pc.rd(ms, Y['mt_front'], 1)[0]
+            return d != 0xFF and d != f and f != 0 and pc.fd_dma()
+        got = h.wait(lambda: pc.crash or out(), 20) and out()
+        gen = generation(h)
+        h.press(HOT)
+        t0 = pc.us
+        came = h.wait(lambda: pc.crash or h.inpop() == 1, 30) and h.inpop() == 1
+        dt = (pc.us - t0) / 1e6
+        came = came and h.pi_wait(lambda: generation(h) not in (None, gen) and h.rv('connected') == 1, 30)
+        check('CODE-\\ typed while a task behind is out in a floppy transfer, MTKEY R waiting in its read, MTSPIN behind: '
+              'the console comes by itself once the transfer is over (%.2f s; due %d times in flight, %d with the owner '
+              'out otherwise), its HELLO through; no page register written under a transfer (%d)'
+              % (dt, cnt('r_hot.p', 'dma'), cnt('r_hot.p', 'out'), fdw()),
+              got and came and cnt('r_hot.p', 'dma') >= 1 and fdw() == 0 and not pc.crash,
+              (got, came, dt, n, fdw(), pc.crash, pc.log[-3:], generation(h), gen, h.inpop(), h.rv('connected'),
+               h.rv('lstate'), h.rv('n_fail', 2), h.band()))
+        check('... the console came with no disk\'s owner out (r_popup: %s), and its first DOS call found its own four '
+              'pages in the windows (dos_check: %d of %d)' % (sorted((k[1], v) for k, v in n.items() if k[0] == 'r_popup'),
+                                                             cnt('dos_check', True), cnt('dos_check', True)
+                                                             + cnt('dos_check', False)),
+              cnt('r_popup', 'idle') >= 1 and cnt('r_popup', 'dma') + cnt('r_popup', 'out') == 0
+              and cnt('dos_check', True) >= 1 and cnt('dos_check', False) == 0, n)
+        if pc.crash: return
+        h.press(HOT)
+        h.wait(lambda: pc.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key('x', settle=False)              # (MTKEY's key; then MTLAUNCH's line)
+        h.run_until(lambda: False, 0.5)
+        h.k.key(ENTER, settle=False)
+        ok = h.wait(lambda: pc.crash or pc.fs.get('A:\\X3.COM') == com, 90) and pc.fs.get('A:\\X3.COM') == com
+        bk = pc.fs.get('A:\\BK.TXT')
+        check('... MTKEY read its key (%s), the copy exact, no page register written under a transfer (%d)' % (bk, fdw()),
+              ok and bk == b'0078' and fdw() == 0 and not pc.crash, (ok, bk, fdw(), pc.crash))
+    finally:
+        pcemu.FD_STRICT = strict
+        h.close()
+
+
 def t_bg_screen():
     """CLAUDE 1.11: grid_program in the background.  Back in the program, Claude reads its screen as it is
     then (copied to the console's windows for the reply, nothing drawn): text with what the user typed since
@@ -1996,7 +2074,7 @@ def t_bg_hot():
 
 
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_replies, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_floppy, t_bg_screen, t_bg_ksum, t_bg_hot]
+         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_floppy, t_floppy_hot, t_bg_screen, t_bg_ksum, t_bg_hot]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]
