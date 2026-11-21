@@ -7687,6 +7687,90 @@ def t_hwait():
           re.search(r'Hard disk\s+Conner Peripherals 120MB - CP30104H', t) and re.search(r'Hard disk\s+none', t0)
           and not any(c[0] == 0xEC for c in ata.cmds[n0:]), (t[-900:], t0[-400:], ata.cmds[n0:][:10]))
 
+class DKill:
+    """A task MT_KILL ended, task v, seen as it ends: each entry to mt_kdie in it (an owner out or not: mt_down; its
+    SS:SP), each pass of mt_kdie.h (IF then), mt_end in it, mt_gate.no in it once it is dying.  isr: at its first
+    entry with an owner out, IRQ 7 marked in service (as from inside a program's handler: the gate refuses the call
+    whatever its flags), cleared again at its third pass of .h."""
+    def __init__(s, k, v, isr=False):
+        s.k, s.v, s.isr, s.seg = k, v, isr, mt_seg(k)
+        s.at = {s.seg * 16 + k.Y[n]: n for n in ('mt_kdie', 'mt_kdie.h', 'mt_end', 'mt_gate.no')}
+        s.ent = []; s.h = []; s.ends = 0; s.no = 0; s.staged = 0; s.lay = []
+        code_hooks(k, s.at, s.hook)
+    def b(s, n): return s.k.pc.rd(s.seg, s.k.Y[n], 1)[0]
+    def hook(s, a):
+        pc, n = s.k.pc, s.at[a]
+        if s.b('mt_cur') != s.v: return
+        if n == 'mt_kdie':
+            if not s.ent: s.lay = [(t, m) for t, _, m in tstate(s.k)[0]]
+            s.ent.append((s.b('mt_down'), pc.r('ss'), pc.r('sp')))
+            if s.isr and not s.staged and s.ent[-1][0] != 0xFF: pc.isr |= 0x80; s.staged = 1
+        elif n == 'mt_kdie.h':
+            s.h.append(bool(pc.r('flags') & 0x200))
+            if s.staged == 1 and len(s.h) >= 3: pc.isr &= ~0x80; s.staged = 2
+        elif n == 'mt_end': s.ends += 1
+        elif s.ent: s.no += 1
+    def tasks(s):                       # (tstate's, from MT's segment as it was: its arena may not be, after a fault)
+        return [i for i in range(8) if s.k.pc.rd(s.seg, s.k.Y['mt_tab'] + i * MT_ENT, 1)[0]]
+    def out(s): return [e for e in s.ent if e[0] != 0xFF]
+    def drift(s): return max(e[2] for e in s.ent) - min(e[2] for e in s.ent) if s.ent else 0
+
+def dk_run(k, w, owner, sim=120, isr=False):
+    """One MTLAUNCH line: OWNER (task 1: its disk calls go out), MTSPIN computing (task 2, to be killed), MTSPIN counting
+    200 ticks to C.TXT (task 3), MTKILL K (task 4: 9 ticks on, MT_KILL of task 2; its answer to KK.TXT).  The kill's
+    call passes the gate with task 1 back; task 1, before task 2 in the round, goes out again before task 2's turn.
+    Back when tasks 1, 2 and 4 have ended and C.TXT is there (or the time is up): the DKill, the tasks at the kill."""
+    typ(k, 'cls', 0.3)
+    dk = DKill(k, 2, isr)
+    typ(k, 'mtlaunch %s;mtspin.com 3000 k.txt;mtspin.com 200 c.txt;mtkill.com k 2 kk.txt' % owner, 1.0); typ(k, '', 0.2)
+    k.pc.run_until(lambda: not set(dk.tasks()) & {1, 2, 4} and bool(A.disk_file(k, 'C.TXT')) or k.pc.crash, sim)
+    k.run_for(0.5)
+    return dk
+
+def dk_check(k, dk, what, task1, file, exact):
+    t = dk.tasks()
+    check('%s: its end through INT 21h held at the gate (%d entries to mt_kdie, %d with the owner out, one more after '
+          'each refusal; its SP the same at each: drift %d bytes), MT_END reached in it (%d), the task gone; nothing '
+          'halted (mt_kdie.h passed %d times, %d with interrupts off); task 1 ended, %s; task 3 counted on (%d)'
+          % (what, len(dk.ent), len(dk.out()), dk.drift(), dk.ends, len(dk.h), dk.h.count(False), file,
+             spun(k, 'C.TXT')),
+          dk.lay[1:3] == [(1, task1), (2, 'MTSPIN.COM')] and dk.out() and len(dk.ent) <= 2 + len(dk.h)
+          and dk.drift() == 0 and dk.ends == 1 and not set(t) & {1, 2, 4}
+          and (A.disk_file(k, 'KK.TXT') or b'').startswith(b'0 ') and all(dk.h) and exact and spun(k, 'C.TXT') > 0
+          and not k.crashed,
+          (dk.lay, dk.ent[:8], len(dk.h), dk.ends, dk.no, t, A.disk_file(k, 'KK.TXT'), exact, spun(k, 'C.TXT')))
+
+def t_dkill():
+    """A task MT_KILL ended that gets its turn while another task is out on the floppy or C:.  Its end (mt_kdie's MT_END,
+    through the kernel's INT 21h) waits at the gate as any call does, and is made once the owner is back.  Before:
+    its frame's flags had interrupts off, the gate refused it, and its HLT with them off stopped the machine; and,
+    held, mt_switch sent it back to mt_kdie every round, 20 bytes of its stack left behind each time."""
+    print('== a task killed while another is out on a disk ends once the owner is back; nothing halts')
+    # the floppy: task 1 MTSPIN W, a 64-byte record written to D.BIN on each count (a copy in a task of its own
+    # would hold the others back: their EMS maps differ from its, mt_dok)
+    for isr in (False, True):
+        k = boot('mt_dk%d.img' % isr, b'MULTITASK=1\r\n', 88, MTKL, fd_wait=True, disk_model='real')
+        Shell(k).run('ver')
+        dw = DWait(k)
+        dk = dk_run(k, dw, 'mtspin.com 200 w.txt w d.bin', isr=isr)
+        d, c = A.disk_file(k, 'D.BIN') or b'', spun(k, 'W.TXT')
+        probs, _ = A.fatcheck.check(bytes(k.pc.drives[0].img))
+        dk_check(k, dk, 'MTSPIN killed while MTSPIN W behind is out on the floppy (%d switches at 9001h)%s'
+                 % (dw.sw(), ', IRQ 7 in service as its end was first tried (refused %d times, tried again after '
+                    'each interrupt)' % dk.no if isr else ''), 'MTSPIN.COM',
+                 'D.BIN %d bytes for W\'s %d counts' % (len(d), c),
+                 c > 0 and len(d) == 64 * c and not probs and k.pc.fd_reentry == 0 and k.pc.fd_frame_bad == 0
+                 and (dk.staged == 2 and dk.no >= 1 if isr else dk.no == 0))
+    # C:: task 1 a copy (LCMD /C)
+    data = hw_data()
+    ata = hw_ata(data)
+    k, hw = hw_boot('mt_dkh.img', ata, b'MULTITASK=1\r\n', MTKL)
+    dk = dk_run(k, hw, r'lcmd.com /c copy c:\big.bin c:\b2.bin')
+    fs, probs = hw_files(ata)
+    dk_check(k, dk, 'the same while a copy behind is out on C: (%d switches at 9000h)' % hw.sw(), 'LCMD.COM',
+             'B2.BIN exact',
+             fs.get('\\B2.BIN') == data and not probs and dk.no == 0)
+
 def t_dmaems():
     """The 1520 restarts when an EMS page register changes while the floppy's DMA runs (found 2026-11-04 with
     CRASHLOG: MT's switch at a floppy's wait, mt_load writing the next task's windows).  pcemu models it
@@ -8380,7 +8464,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

@@ -1294,6 +1294,11 @@ mt_switch:
         mov     es, [cs:bx+TE_TX]
         cmp     byte [cs:bx+TE_KILL], 0 ; (it ended itself where that couldn't
         je      .nk                     ;  be at once: it goes on at mt_kdie,
+        cmp     byte [cs:bx+TE_STATE], TS_WAITD ; (but not from the gate's wait
+        je      .nk                     ;  for a disk's owner: its own MT_END
+                                        ;  waits there, and mt_kdie run again
+                                        ;  each round left 20 bytes of its
+                                        ;  stack behind every time)
         mov     byte [cs:bx+TE_STATE], TS_RUN ; as one ended by another does,
         mov     bp, sp                  ;  ready whatever it was about to wait
         mov     word [bp+SW_RET+2], mt_kdie ; for; BX still pushed)
@@ -3660,13 +3665,14 @@ mt_kdie:
         cmp     byte [indos], 0
         je      .out
         jmp     mt_end
-.out:   pushf                           ; (the call's frame: never gone back
-        push    cs                      ;  to)
-        push    word .h
-        mov     ax, 0F000h + MT_END
-        jmp     KSEG:int21
-.h:     hlt
-        jmp     .h
+.out:   push    word 0202h              ; (the call's frame; its flags with
+        push    cs                      ;  interrupts on, or mt_gate, with a
+        push    word .h                 ;  disk's owner out, refuses the call
+        mov     ax, 0F000h + MT_END     ;  and its IRET came to .h's HLT with
+        jmp     KSEG:int21              ;  them off: the machine stopped)
+.h:     hlt                             ; refused all the same (an interrupt in
+        jmp     mt_kdie                 ;  service; its IRET put interrupts on):
+                                        ;  again after the next one
 
 ; MT_SCREEN: the caller's screen, which it wrote itself, is as it should
 ; be (put back after a screen saver, say): if it is the front task's, in a
