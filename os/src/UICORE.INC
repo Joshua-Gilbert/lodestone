@@ -4225,6 +4225,7 @@ run_app:
         ret
 .hbad:  jmp     .bad                    ; (the failures, in a short jump's
 .hbig:  jmp     .big                    ;  reach)
+        db      90h                     ; (never run: .abs and on stay even)
 .free:  pusha
         mov     [run_ret], di
         mov     dx, si
@@ -4261,7 +4262,7 @@ run_app:
         add     ax, [run_base]
         jc      .hbig
         cmp     ax, 0FFF0h
-        ja      .big                    ; (not by .hbig: .abs stays even)
+        ja      .hbig
         add     ax, 15
         shr     ax, 4
         mov     bx, ax
