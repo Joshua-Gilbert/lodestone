@@ -150,6 +150,22 @@ OFF_MAP ={'image_end': 0x4810, 'bss_end': 0x7C70, 'ui_keep_end': 0x6854}  # (the
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
 
+# With the 1520's drive timing (disk_model 'real': seeks, rotation) a copy's time depends on where its files are on
+# the disk, and so on the system files' sizes in front of them: LODEMT.SYS a sector shorter moved t_dwait's copy
+# from 8.4% to 10.6% over its time with MT's INT 15h off.  So on such a floppy what follows LODE.SYS and LODEMT.SYS
+# starts at a fixed cluster, PIN_AT, a filler (PIN.BIN) between: the layout the measured figures were taken with
+# (LODE.SYS 101 sectors, LODEMT.SYS 43, 2026-11-20)
+PIN_AT = 146
+
+def pin_fill(mt, kw):
+    if kw.get('disk_model') != 'real': return []
+    used = 2 + sum((os.path.getsize(f) + 511) // 512 for f in [A.SYS] + ([] if mt is None else [mt]))
+    n = PIN_AT - used
+    if n < 0: raise SystemExit('test_mt: LODE.SYS and LODEMT.SYS reach past cluster %d (PIN_AT): move it' % PIN_AT)
+    if n == 0: return []
+    p = os.path.join(A.OUT, 'PIN.BIN'); open(p, 'wb').write(bytes(n * 512))
+    return ['PIN.BIN=' + p]
+
 def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chip=None, irq_exact=True, **kw):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
     MTPROBE, `more`, and LODE.INI holding `text`.  nofpu: INT 11h says no
@@ -157,7 +173,8 @@ def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chi
     traps (INT 7, counted in pc.ints).  mouse: a serial mouse on COM1.  irq_exact: pcemu's (an IRQ held
     under CLI taken when IF is set again, as the 1520's PIC gives it; on by default).  kw: pcemu's
     (fd_wait: a floppy's transfer waits for its IRQ 6; disk_model)."""
-    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
+    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + pin_fill(mt, kw) \
+        + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
         + ([ini(text)] if text is not None else [])
     k = ktest.KPC(A.image(name, *files), ems_pages=ems, chip=chip, irq_exact=irq_exact, **kw)
     k.pc.mouse = mouse
