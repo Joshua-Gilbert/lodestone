@@ -307,6 +307,9 @@ mw_shut:
 .x:     pop     bx
         pop     ax
         ret
+mw_sbad: jmp    mw_start.bad            ; (mw_start's: its header damaged,
+mw_sno: jmp     mw_start.no             ;  it can't start, no room)
+mw_sroom: jmp   mw_start.room
 
 ; ---------------------------------------------------------------------
 ;  a window .RUN (path SI, argument DI) as a new session, in front: the
@@ -321,44 +324,44 @@ mw_start:
         pusha
         mov     ax, 8
         cmp     byte [cs:mw_n], MW_MAX
-        jae     .no
+        jae     mw_sno
         cmp     word [wdepth], NWIN     ; (each has a window)
-        jae     .no
+        jae     mw_sno
         cmp     word [cs:mw_fh], 0      ; (mw_run's peek: open, read)
         jne     .pk
         call    mw_peek
-        jc      .no
+        jc      mw_sno
 .pk:    mov     ax, 11
         test    byte [cs:mw_hdr+14], RF_WIN
-        jz      .no
+        jz      mw_sno
         cmp     word [cs:mw_hdr+4], 6   ; (a window .RUN's windows have W_FLAGS,
         jae     .api                    ;  whatever API it asks for: run_hdr
         mov     word [cs:mw_hdr+4], 6   ;  says 6 then, for win_flags)
 .api:
         mov     ax, [cs:mw_hdr+10]      ; its footprint, as run_app reckons it
         add     ax, [cs:mw_hdr+12]
-        jc      .bad                    ; (a damaged header, as run_app says)
+        jc      mw_sbad                 ; (a damaged header, as run_app says)
         cmp     ax, 4000h
-        jae     .bad
+        jae     mw_sbad
         shl     ax, 1
         mov     [cs:mw_hdr+14], ax      ; (the fixups' bytes: mw_load reads
         cmp     ax, MW_STK              ;  them past the BSS, into the
         jae     .fx                     ;  stack's room, unused till it runs)
         mov     ax, MW_STK
 .fx:    add     ax, [cs:mw_hdr+8]
-        jc      .room
+        jc      mw_sroom
         add     ax, [cs:mw_hdr+6]
-        jc      .room
+        jc      mw_sroom
         add     ax, MW_TRAMP + 15
-        jc      .room
+        jc      mw_sroom
         and     al, 0F0h
         mov     cx, ax                  ; CX = the slot's size
         call    mw_slot                 ; -> BX = where; CF none
-        jc      .room
+        jc      mw_sroom
         mov     dx, bx
         add     dx, cx                  ; DX = its end
         call    mw_grow                 ; the UI block to the highest end
-        jc      .room
+        jc      mw_sroom
         call    mw_load                 ; read and fix it at BX (mw_fh closed)
         jc      .lf
         cmp     byte [cs:mw_n], 0       ; the first: the Executive alone in the

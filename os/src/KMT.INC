@@ -2215,8 +2215,10 @@ mt_uic: push    es
 ; MT_WIN: is the UI code running a window .RUN's session (KMW.INC)?
 mt_winc:
         cmp     byte [cs:mw_cur], 0
-        je      mt_bad
+        je      .bad
         jmp     KSEG:ok
+.bad:   jmp     mt_bad                  ; (mt_topen's too)
+        db      90h                     ; (what follows keeps its parity)
 
 ; MT_TOPEN: task BL, its count CL, is shown by the window .RUN that
 ; calls (its session, mw_cur: TERM.RUN), whose UI_EVENT gives EV_TICK from
@@ -2224,16 +2226,16 @@ mt_winc:
 ; task, another count, not a window .RUN's call), 5 (task 0, parked)
 mt_topen:
         cmp     byte [cs:mt_cur], 0     ; (the UI's call, not a task's)
-        jne     mt_bad
+        jne     mt_winc.bad
         call    mt_targ
         call    mt_t5
         mov     ah, [bp+F_CX]
         cmp     ah, [cs:bx+TE_GEN]
-        jne     mt_bad
+        jne     mt_winc.bad
         mov     dl, al
         mov     al, [cs:mw_cur]
         or      al, al
-        jz      mt_bad
+        jz      mt_winc.bad
         push    bp
         call    mw_rec
         mov     [cs:bp+SE_TASK], dl
@@ -2503,6 +2505,8 @@ mt_wkme:
         jne     .x
         mov     byte [cs:mt_wkt], 0FFh
 .x:     ret
+mt_pubbd: jmp   mt_pub.bd               ; (mt_pub's)
+        db      90h                     ; (what follows keeps its parity)
 
 ; MT_PUB.  CL = 0, the running task's program: ES:DI its screen's
 ; descriptor (0:0 withdraws one), it and its cells, font and table all in
@@ -2531,22 +2535,22 @@ mt_pub: mov     cl, [bp+F_CX]
         jb      .v1
         inc     cx
 .v1:    call    mt_pin
-        jc      .bd
+        jc      mt_pubbd
         cmp     byte [es:di+PB_VER], 1
-        jb      .bd
+        jb      mt_pubbd
         mov     al, [es:di+PB_COLS]     ; (1-80: 0-79 less 1)
         dec     al
         cmp     al, 80
-        jae     .bd
+        jae     mt_pubbd
         mov     ah, [es:di+PB_ROWS]
         dec     ah
         cmp     ah, 25
-        jae     .bd
+        jae     mt_pubbd
         cmp     byte [es:di+PB_FIRST], 20h
-        ja      .bd
+        ja      mt_pubbd
         mov     cl, [es:di+PB_GEND]
         cmp     cl, 40h
-        jb      .bd
+        jb      mt_pubbd
         sub     cl, [es:di+PB_FIRST]    ; the font: 16 bytes a code
         xor     ch, ch
         shl     cx, 4
@@ -2881,13 +2885,14 @@ mt_list:
 mt_frontc:
         call    mt_targ
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
-        je      mt_park.r5
+        je      .r5
         or      al, al
         jz      .f
         call    mt_ispub
-        jc      mt_park.r5
+        jc      .r5
 .f:     mov     [cs:mt_swreq], al
         jmp     KSEG:ok
+.r5:    jmp     mt_park.r5              ; (mt_kill's too)
 
 ; MT_KILL: task BL ended, whatever runs in it.  Another task: where it would
 ; go on, mt_switch's return, becomes mt_kdie, which ends it when it next
@@ -2897,7 +2902,7 @@ mt_frontc:
 mt_kill:
         call    mt_targ
         or      al, al
-        jz      mt_park.r5
+        jz      mt_frontc.r5
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
         jne     .k
         push    ax
@@ -2972,6 +2977,8 @@ mt_unpark:
         call    mt_up
         jc      mt_fail
         jmp     KSEG:ok
+mt_pkno: jmp    mt_pk.no                ; (mt_pk's)
+        db      90h                     ; (what follows keeps its parity)
 
 ; task AL (its entry at BX, not free) parked: its region copied to pages
 ; of MT's own (their owner MT's segment, which no PSP has: no program's end
@@ -2986,9 +2993,9 @@ mt_pk:  push    cx
         push    ax
         mov     cx, 5
         or      al, al
-        jz      .no
+        jz      mt_pkno
         cmp     al, [mt_cur]
-        je      .no
+        je      mt_pkno
         cmp     al, [mt_front]
         je      .no
         cmp     byte [bx+TE_KILL], 0
@@ -3164,11 +3171,11 @@ mt_take:
         cmp     cx, si
         jbe     .nx                     ; (below the place)
         cmp     ax, di
-        jae     .oth                    ; (past it: can't be)
+        jae     .ho                     ; (past it: can't be)
         cmp     word [es:1], 0
         jne     .in                     ; in the way
         cmp     ax, si
-        ja      .oth                    ; (can't be: the one before had it)
+        ja      .ho                     ; (can't be: the one before had it)
         cmp     cx, di
         jb      .nx                     ; (free, but what follows is in the way)
         mov     dl, [es:0]              ; the place in it: what is below it
@@ -3204,6 +3211,7 @@ mt_take:
         je      .oth
         mov     ax, cx
         jmp     .w
+.ho:    jmp     short .oth              ; (can't be)
 .in:    cmp     word [es:1], 8          ; a task's region ("T1".."T7", that
         jne     .oth                    ;  task's, resident)?
         cmp     byte [es:8], 'T'
@@ -3764,15 +3772,17 @@ mt_tfree:
         jnc     .x
         mov     byte [cs:mt_shd], 0
 .x:     ret
+mt_endb: jmp    mt_bad                  ; (mt_end's)
+        db      90h                     ; (what follows keeps its parity)
 
 ; MT_END: from a task's stub, its program done.  Its handles (the
 ; inherited ones) closed, its region freed, and another task runs.
 mt_end: call    mt_cent                 ; (first: a call refused changes
         or      al, al                  ;  nothing)
-        jz      mt_bad                  ; (not the Executive)
+        jz      mt_endb                 ; (not the Executive)
         mov     ax, [cs:bx+TE_PSP]
         cmp     ax, [cur_psp]
-        jne     mt_bad                  ; (only its stub)
+        jne     mt_endb                 ; (only its stub)
         mov     es, ax
         cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
         je      .sw                     ;  ended it inside: the front one's
@@ -7650,11 +7660,12 @@ mt_grow:
         inc     cx
         cmp     cx, si
         je      .f
-        ja      .no                     ; (past it: can't be)
+        ja      .n                      ; (past it: can't be)
         mov     ax, cx
         jmp     .w
+.n:     jmp     .no                     ; (no room)
 .f:     cmp     word [es:1], 0          ; (ES: that block) free?
-        jne     .no
+        jne     .n
         mov     ax, di                  ; AX: d, the paragraphs it gives; BP:
         xor     bp, bp                  ;  0 the first growth, 1 the chain's
         mov     dx, [cs:bx+TE_TX]       ;  first block free, 2 a program's
@@ -7669,16 +7680,16 @@ mt_grow:
         jne     .ow
         sub     ax, [es:3]              ; (free: by what it lacks)
         pop     es
-        jbe     .no
+        jbe     .n
         jmp     short .rd
 .ow:    pop     es
         inc     bp
         inc     ax                      ; (a program's: a free block's MCB)
 .rd:    mov     cx, [es:3]              ; CX: what the block below can give
         sub     cx, MT_GRES
-        jb      .no
+        jb      .n
         cmp     ax, cx
-        ja      .no
+        ja      .n
         mov     dx, ax                  ; (in steps of 4 KB, if that fits too)
         add     dx, MT_GROW - 1
         jc      .g
