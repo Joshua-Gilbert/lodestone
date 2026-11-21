@@ -215,9 +215,19 @@ like Claude Code's CLAUDE.md; `/init` has Claude write one.
 
 ## Setting up
 
-### 1. The bridge (Arduino Nano + AR488)
+### 1. The bridge
 
-Flash AR488 to the Nano. Two choices:
+**The GPIB-Pico2 bridge** (a Raspberry Pi Pico 2 with SN75160B/SN75161B
+transceivers, `pico-bridge/` in the Lodestone tree) is the default:
+`kind = "pico"` and `port = "auto"` in `[bridge]`, as config.example.toml
+has them. Flash its firmware (`pico-bridge/firmware/bridge`) and plug it
+into the Pi's USB: gridlink finds it, puts it on the bus at the config's
+address (7), and logs `bridge on /dev/...` with the firmware's tag. It
+needs no settings of its own.
+
+**The AR488 Nano** is the alternative: `kind = "ar488"`, and `port` the
+Nano's serial port (auto: `/dev/ttyUSB0`). Flash AR488 to the Nano. Two
+choices:
 
 - **Patched (recommended):** apply `AR488-gridlink.patch` to AR488
   0.53.46 (`src/AR488/AR488.ino` and `AR488_Config.h`). It makes the Nano

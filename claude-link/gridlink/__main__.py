@@ -137,18 +137,19 @@ def main(argv=None):
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
         baud = a.baud or (cfg.baud if cfg.baud_set else 19200)
         t = SerialLink(port, baud, log=log)
-        log('opening %s at %d baud' % (port, baud))
+        how = 'a serial line on %s at %d baud' % (port, baud)
     elif cfg.bridge == 'modem':             # a USB modem the GRiD dials (SERLINK /D:)
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyACM0'
         t = ModemLink(port, a.baud or (cfg.baud if cfg.baud_set else 115200), log=log)
-        log('opening the modem on %s' % port)
+        how = 'a modem on %s' % port
     elif cfg.bridge == 'ar488':
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
         t = AR488Serial(port, cfg.baud, cfg.address, log=log)
-        log('opening %s at %d baud' % (port, cfg.baud))
+        how = 'the AR488 Nano on %s at %d baud' % (port, cfg.baud)
     else:
         t = PicoBridge(cfg.port, cfg.address, log=log)
-        log('looking for the GPIB-Pico2 bridge (%s)' % cfg.port)
+        how = 'the GPIB-Pico2 bridge on %s' % ('any Pico port' if cfg.port in ('auto', 'pico') else cfg.port)
+    log('bridge = %s: %s (%s)' % (cfg.bridge, how, cfg.source or 'no config file: the defaults'))
     t.open()
     t.configure()
     if a.save_bridge:

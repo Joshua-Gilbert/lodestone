@@ -1,8 +1,12 @@
 # gridlink settings.  Copy to ~/.config/gridlink/config.toml and edit.
 
 [bridge]
-port = "/dev/ttyUSB0"        # the Nano (CH340) on the Pi's USB
-baud = 115200                # must match AR_SERIAL_SPEED in the AR488 firmware
+kind = "pico"                # pico: the GPIB-Pico2 bridge; ar488: the AR488 Nano; serial or modem: SERLINK.COM
+port = "auto"                # pico: auto finds the Pico on USB (or /dev/gpib-bridge); a path to pin it.
+                             # ar488 and serial: auto is /dev/ttyUSB0 (the Nano's CH340, a USB serial
+                             # adapter); modem: /dev/ttyACM0
+# baud = 115200              # ar488: must match AR_SERIAL_SPEED in its firmware (115200); serial: SERLINK's
+                             # (19200); modem: the USB modem's (115200).  The Pico ignores it.
 address = 7                  # GPIB address of the bridge; CLAUDE /A:7 on the GRiD
 
 [claude]
