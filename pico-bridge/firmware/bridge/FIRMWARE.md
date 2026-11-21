@@ -1,9 +1,11 @@
-# GPIB-Pico2 bridge firmware (`bridge fw 2026-10-24`)
+# GPIB-Pico2 bridge firmware (`bridge fw 2026-11-20`)
 
 This is the production firmware: the Pico is the 1520's GPIB device, and everything the 1520 sends to it
 goes to the Raspberry Pi over USB.
 
-- The bench sketch (`firmware/bench_test/`) stays as the board's test tool.
+- The bench sketch, its `bench_test_pico2.uf2` and the board's test plan (TEST_PLAN, whose stages this file
+  names) are in the board's own project (GPIB Pico Board, where this firmware began), not in this
+  repository. The bench sketch stays as the board's test tool.
 - This firmware replaces it once the board has passed TEST_PLAN stage 6b.
 - The Pi side is in `pi/`. Setup is in `pi/README.md`.
 
@@ -167,19 +169,22 @@ arduino-cli compile -b rp2040:rp2040:rpipico2:opt=Optimize2,freq=150 \
   --output-dir out bridge
 ```
 
-The product string matters: the Pi's udev rule finds the bridge by it. In the Arduino IDE, set CPU Speed
+The product string matters: the Pi's udev rule finds the bridge by it (`pi/README.md`; the rule itself is on
+the Pi, not in this tree). In the Arduino IDE, set CPU Speed
 to 150 MHz and Optimize to -O2. The IDE build has the default product string "Pico 2". That still works,
 because the daemon also finds any Pico, but `/dev/gpib-bridge` won't appear.
 
 ## Flash
 
 Use either:
-- **From the Pi, once it's set up:** `sudo gpibctl flash /opt/gpib-bridge/bridge_pico2.uf2`. It reboots
-  the Pico into its bootloader over USB, copies the file and restarts the daemon.
+- **From the Pi, once it's set up** (`pi/README.md`, which installs to `/opt/gpib-bridge`; copy this
+  `bridge_pico2.uf2` there): `sudo gpibctl flash /opt/gpib-bridge/bridge_pico2.uf2`. It reboots the Pico
+  into its bootloader over USB, copies the file and restarts the daemon. While gridlink owns the port, stop
+  it first (`sudo systemctl stop gridlink`) and start it again after.
 - **From any PC:** hold BOOTSEL while plugging the Pico in, then copy `bridge_pico2.uf2` onto the RP2350
   drive.
 
-To go back to the bench firmware, use BOOTSEL and `firmware/bench_test/bench_test_pico2.uf2`.
+To go back to the bench firmware, use BOOTSEL and its `bench_test_pico2.uf2` (in the board's project).
 
 ## LED
 
@@ -190,7 +195,10 @@ To go back to the bench firmware, use BOOTSEL and `firmware/bench_test/bench_tes
 | Steady on | Online |
 | Flicker | Bytes moving to or from the bridge |
 
-## Tested (no hardware): `sim/host/run_sim_tests.py`, 111 / 111
+## Tested (no hardware): `sim/host/run_sim_tests.py`, 138 / 138
+
+(Measured 2026-11-20 with claude-link next door; without it the J group is skipped, and the summary says so.
+On a heavily loaded host H's NRFD-held check may not be due, and is then named as not run, so 137.)
 
 `sim/host/bus_sim.c` compiles this same `gpib_engine.c` and `host_link.c` for Linux, with a model of the
 board:
@@ -213,13 +221,25 @@ What it covers:
 - Messages of 241–20000 bytes.
 - A message ended by UNL.
 - The Pi stalled 2.5 s, and the Pico's USB output stalled 2.5 s: NRFD held, nothing lost.
-- The daemon stalled past the 5 s PING timeout: it recovers by itself.
+- The daemon stalled past the 5 s PING timeout: the bridge goes offline and says so, and the daemon recovers
+  by itself.
+- Core 1's liveness guard: the watchdog is petted while core 1 moves, and not once it has stopped for 5 s.
 - Daemon stopped: the bridge goes offline and the bus still works.
+- The scpi handler.
+- Address changes.
+- gridlink's own transport (`pico.py`) in auto service request mode, as CLAUDE.COM reads: EARLY and held
+  answers, rings, quiet.
+- Frames from the bridge shorter than their fields: the daemon ignores and counts them, across reopens. A
+  port whose tcsetattr fails while it opens: the daemon skips it and goes on.
 - The daemon on a fake port whose write fails in the ping thread while the main loop reads it: it lives,
   closes the port in the main loop and reconnects. And the other order: the main loop closes the port while a
   PING write is in flight: the ping thread lives on.
-- The scpi handler.
-- Address changes.
+- The Pico's clocks wrapping (a second simulation started 15 s before the wrap) under a USB stall and a core
+  1 freeze that begin 1 s before it, by the simulation's own clock.
+- At the end, the model's own counters: no events lost, no bus contention, no late ATN engagement.
+
+Where the Pi answers at once, the controller's byte time-out is 300 ms, so a firmware stall longer than that
+fails the check.
 
 The model checks logic, not nanoseconds, so the ATN timing is the scope test above. Fixes of
 2026-10-16 (13 issues), among them:

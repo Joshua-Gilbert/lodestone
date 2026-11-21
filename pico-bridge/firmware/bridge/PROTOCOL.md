@@ -42,7 +42,10 @@ sees nothing new.
 ## Generations: how a reply is matched to its question
 
 - The Pico counts a **generation** (`gen`). It goes up at the first byte of every new message from the 1520,
-  at every DCL or SDC, and when the Pi brings it online.
+  at every DCL or SDC, and when the Pi brings it online. It also goes up when a half-received message is
+  thrown away: at IFC; at the Pi's CONFIG taking it offline or moving its address; or when it goes offline
+  otherwise (a new HELLO_REQ session, the port closing, or no PING for 5 s). So no reply queued for that
+  message can be sent.
 - Every DATA and EVENT frame carries the current gen. The Pi tags each reply with the gen of the message it
   answers.
 - The Pico drops any reply whose gen is no longer current. A reply that arrives late (after the 1520 has
