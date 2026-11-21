@@ -444,6 +444,19 @@ def plot_to_end(h, c, wall=30):
     raise AssertionError('the plot did not finish: %s' % r)
 
 
+def assert_pairs(data, parts):
+    """Each part that ends inside data's one PA/PD list ends just after a
+    y: an even count of numbers in the list so far."""
+    import re
+    data = data.encode(); i = data.index(b'PA') if b'PA' in data else data.index(b'PD')
+    e = data.index(b';', i); at = 0
+    for p in parts[:-1]:
+        at += len(p)
+        if i < at < e:
+            n = len(re.findall(rb'[^,\s;]+', data[i + 2:at]))
+            assert n % 2 == 0 and data[at - 1:at] in b', ', (at, n, data[at - 20:at + 5])
+
+
 def test_plotter():
     h, c = start()
     try:
@@ -453,6 +466,7 @@ def test_plotter():
         r = plot_to_end(h, c)
         assert ': done' in r and '%d of %d bytes' % (len(square), len(square)) in r, r
         assert h.grid.plot_parts == [square.encode()], h.grid.plot_parts
+        assert h.grid.plot_clears == [0], h.grid.plot_clears           # SDC first: no label left open before
         assert not getattr(h.grid, 'plot_overrun', False)
         # no ';' at the end: one is added, so the Nano ends the last command
         h.grid.plot_parts = []
@@ -471,6 +485,31 @@ def test_plotter():
         r = plot_to_end(h, c)
         assert ': done' in r and b''.join(h.grid.plot_parts) == long.encode(), (r, h.grid.plot_parts)
         assert not getattr(h.grid, 'plot_overrun', False), 'sent more than the Nano had room for'
+        # (cut in its list only just after the ',' after a y: never inside a number or an x,y pair)
+        assert h.grid.plot_parts[0].endswith(b',') and len(h.grid.plot_parts[0]) > 200, h.grid.plot_parts
+        assert all(p.endswith((b';', b',')) for p in h.grid.plot_parts), h.grid.plot_parts
+        assert_pairs(long, h.grid.plot_parts)
+        # the same with ", " and " " between the numbers
+        for sep in (', ', ' '):
+            lst = 'IN;PA' + sep.join('%d%s%d' % (i * 37 % 10000, sep, i * 53 % 7000) for i in range(150)) + ';PU;'
+            h.grid.plot_parts = []; h.grid.plot_held = 0
+            c.call('grid_plotter', hpgl=lst)
+            r = plot_to_end(h, c)
+            assert ': done' in r and b''.join(h.grid.plot_parts) == lst.encode(), (r, h.grid.plot_parts)
+            assert len(h.grid.plot_parts) > 2, h.grid.plot_parts
+            assert_pairs(lst, h.grid.plot_parts)
+        # any other command bigger than the room is cut where the room ends (only PA PD PR PU lists are numbers)
+        lab = 'IN;LB' + 'a,b ' * 100 + '\x03;'
+        h.grid.plot_parts = []; h.grid.plot_held = 0
+        c.call('grid_plotter', hpgl=lab)
+        r = plot_to_end(h, c)
+        assert ': done' in r and b''.join(h.grid.plot_parts) == lab.encode(), (r, h.grid.plot_parts)
+        assert h.grid.plot_parts[0] == lab.encode()[:240], h.grid.plot_parts
+        other = 'IN;XX' + '12,' * 100 + ';PU;'                         # (numbers, but not a PA PD PR PU list)
+        h.grid.plot_parts = []; h.grid.plot_held = 0
+        c.call('grid_plotter', hpgl=other)
+        r = plot_to_end(h, c)
+        assert ': done' in r and h.grid.plot_parts[0] == other.encode()[:240], (r, h.grid.plot_parts)
         h.grid.plot_parts = []; h.grid.plot_held = 0
         r = c.call('grid_plotter', file='big.plt')
         assert not r['isError'], r
@@ -491,21 +530,55 @@ def test_plotter():
         r = plot_to_end(h, c)
         assert ': stopped' in r and 'part of the drawing may be on the paper' in r, r
         h.grid.plot_fail_after = None
-        # cancel
-        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 1    # a slow pen
+        # cancel: SDC, then the pen up after the whole commands sent
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0; h.grid.plot_drain = 1  # a slow pen
         c.call('grid_plotter', file='big.plt')
         h.run_for(0.5)
         r = body(c.call('grid_plotter', action='cancel'))
+        assert 'cancelled' in r and 'not have stopped' not in r, r
+        parts = h.grid.plot_parts
+        assert len(parts) >= 2 and parts[-1] == b'PU;' and h.grid.plot_clears == [0, len(parts) - 1],             (parts, h.grid.plot_clears)
+        # cancelled inside one command sent in parts: SDC, no "PU;" (it would end the list early)
+        one = 'PD' + ','.join('%d,%d' % (i, i) for i in range(300)) + ';'
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0
+        c.call('grid_plotter', hpgl=one)
+        end = time.time() + 20
+        while not h.grid.plot_parts:
+            assert time.time() < end; h.run_for(0.2)
+        r = body(c.call('grid_plotter', action='cancel'))
         assert 'cancelled' in r, r
+        parts = h.grid.plot_parts
+        assert len(parts) == 1 and parts[0].endswith(b',') and h.grid.plot_clears == [0, 1], (parts, h.grid.plot_clears)
         h.grid.plot_drain = 60
+        # a clear the GRiD fails is not fatal, but said
+        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_clear_fail = True
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        r = plot_to_end(h, c)
+        assert ': done' in r and h.grid.plot_parts == [b'IN;PU1,2;'], (r, h.grid.plot_parts)
+        assert 'The Nano was not cleared' in r and 'a label left open may eat the start' in r, r
+        assert any('plot: the Nano was not cleared' in str(l) for l in h.log), h.log
+        h.grid.plot_clear_fail = False
+        # a clear that fails on cancel: said
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0; h.grid.plot_drain = 1
+        c.call('grid_plotter', file='big.plt')
+        end = time.time() + 20
+        while not h.grid.plot_parts:
+            assert time.time() < end; h.run_for(0.2)
+        h.grid.plot_clear_fail = True
+        r = body(c.call('grid_plotter', action='cancel'))
+        assert ': cancelled' in r and 'The plotter may not have stopped cleanly' in r, r
+        assert h.grid.plot_clears == [0], h.grid.plot_clears
+        h.grid.plot_clear_fail = False; h.grid.plot_drain = 60
         # cancelled while the pen finishes is "cancelled", not "done"
-        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0      # a pen that never finishes
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0; h.grid.plot_drain = 0  # never finishes
         c.call('grid_plotter', hpgl='IN;PU1,2;')
         end = time.time() + 20
         while 'the pen is finishing' not in body(c.call('grid_plotter', action='status')):
             assert time.time() < end; h.run_for(0.2)
         r = body(c.call('grid_plotter', action='cancel'))
         assert ': cancelled' in r, r
+        # (no clear: what the Nano holds is drawn)
+        assert h.grid.plot_clears == [0] and h.grid.plot_parts == [b'IN;PU1,2;'], (h.grid.plot_clears, h.grid.plot_parts)
         h.grid.plot_drain = 60
         # a GRiD that doesn't answer the plot's polls holds the other tools for one short wait, not 31 s
         h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0
