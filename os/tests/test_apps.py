@@ -1174,6 +1174,26 @@ def t_exec():
     to_subject(k, 'MANY')
     check('more entries than fit (246 > 240): the band says only the first 240 are listed',
           any('Only the first 240 are listed' in l for l in k.band()) and k.u16('nent') == 240, (k.band(), k.u16('nent')))
+    # F5 (relist, as after the saver or a program) on a disk swapped for one with fewer files: no empty rows
+    # under the last, and a selection that is gone on the last entry, as after Delete
+    import pcemu
+    a = image('rla.img', *['F%02d.DAT=%s' % (i, empty) for i in range(20)])        # (21 entries with LODE.SYS)
+    b = bytearray(open(image('rlb.img', *['F%02d.DAT=%s' % (i, empty) for i in range(6)]), 'rb').read())   # (7)
+    b[0x27:0x2B] = b'\x12\x34\x56\x78'                  # (another serial: another disk)
+    for at, want_sel in ((5, 5), (10, 6)):
+        k = ktest.KPC(a); k.start()
+        k.key(K_END)
+        for _ in range(20 - at): k.key(ktest.UP, settle=False)
+        k.settle()
+        before = (k.u16('sel'), k.u16('top'))
+        k.pc.drives[0] = pcemu.Floppy(bytes(b)); k.pc.drives[0].changed = True
+        k.key(0x3F00)                                   # F5
+        names = [n.split('.')[0] for n in k.exec_list()]
+        firsts = [l.split()[0] for l in lines(k)[1:16] if l.split()]
+        check('21 entries, F%02d (%d) selected and %s, then F5 on a disk of 7: all 7 rows drawn, the list from its top, '
+              'entry %d selected' % (at, at, 'at the top' if at == 5 else 'not on it', want_sel),
+              before == (at, at if at == 5 else 8) and len(names) == 7 and all(n in firsts for n in names)
+              and k.u16('top') == 0 and k.u16('sel') == want_sel, (before, firsts, k.u16('top'), k.u16('sel'), names))
 
 DIVRUN = os.path.join(OUT, 'DIVRUN.RUN')
 def t_divrun():
