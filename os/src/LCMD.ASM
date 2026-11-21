@@ -747,13 +747,16 @@ swap_handle:
         mov     ah, 45h
         int     21h
         pop     bx
-        jc      .x
+        jc      .f
         push    ax
         mov     ah, 46h
         int     21h
         call    fclose
         pop     ax
-.x:     ret
+        ret
+.f:     sbb     ax, ax                  ; no copy: FFFFh, "none saved" (not the
+        ret                             ;  error code, a handle redir_undo
+                                        ;  would force and close)
 
         times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so the hot labels after even)
 redir_undo:
