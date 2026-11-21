@@ -379,6 +379,7 @@ def tstate(k):
     """MT's own table: ([(task, TS_* state, name)], front, running)."""
     seg, Y = mt_seg(k), k.Y
     out = []
+    if seg is None: return [(-1, 0, 'no MT block: the arena broken')], None, None   # (the checks fail, not the run)
     for i in range(8):
         b = Y['mt_tab'] + i * MT_ENT
         st = k.pc.rd(seg, b, 1)[0]
@@ -4228,7 +4229,14 @@ def t_windows():
     # started from a window while its question waits: the Executive's band, not a pointer into the starter's slot
     bkey(k, A.CODE['T'], t=0.5)
     bkey(k, A.CODE['D'], t=0.3)
+    sg, bd = mt_seg(k) or 0, [0, 0]             # (band_redraw's calls inside mw_start: in it, its count)
+    def bdh(a):
+        if a == sg * 16 + k.Y['mw_start']: bd[0] = 1
+        elif a == sg * 16 + k.Y['mw_start.nq']: bd[0] = 0
+        elif bd[0]: bd[1] += 1
+    code_hooks(k, [sg * 16 + k.Y['mw_start'], sg * 16 + k.Y['mw_start.nq'], k.useg * 16 + k.Y['band_redraw']], bdh)
     bkey(k, A.CODE['K'], t=0.5)
+    bd[0] = 0
     bk, ck = k.band(), mb('mw_cur')
     k.wr('saver_t', struct.pack('<H', 36))
     for _ in range(40):
@@ -4240,10 +4248,12 @@ def t_windows():
     bkey(k, ktest.ESC, t=0.5)
     bt3 = k.band()
     bkey(k, ktest.ESC, t=0.3); bkey(k, ktest.ESC, t=0.5); k.run_for(0.5)
-    check('CODE-D in the tasks, then CODE-K while it asks: the calculator\'s band the Executive\'s (%s), after the saver '
+    check('CODE-D in the tasks, then CODE-K while it asks: the calculator\'s band the Executive\'s (%s, drawn %d time(s) '
+          'as it started), after the saver '
           'too (%s), not the tasks\' question; ESC: the tasks\' question again (%s); ESC, ESC: none left'
-          % (bk[:1], bk2[:1], bt3[:1]), ck == 2 and bk[:1] == bk2[:1] == ['Select a file and confirm'] and bt3[:1] == [q]
-          and mb('mw_n') == 0 and A.has(k, 'Select a file and confirm'), (ck, bk, bk2, bt3, mb('mw_n')))
+          % (bk[:1], bd[1], bk2[:1], bt3[:1]), ck == 2 and bd[1] == 1
+          and bk[:1] == bk2[:1] == ['Select a file and confirm'] and bt3[:1] == [q]
+          and mb('mw_n') == 0 and A.has(k, 'Select a file and confirm'), (ck, bd, bk, bt3, mb('mw_n')))
     k = boot('mt_win2.img', b'MULTITASK=1\r\n', 88, TR)
     seg = mt_seg(k)
     k.key(A.CODE['T']); k.run_for(0.5)
@@ -4280,6 +4290,14 @@ def t_windows():
           any(b.startswith("Can't run") for b in be) and re0 == b'\x00' and n0 == 0 and f1 == f0
           and bt[:1] == ["CALC.RUN can't start"] and n1 == 1 and up and A.free_paras(k) == f0 and not k.crashed,
           (be, re0, n0, f0, f1, bt, n1, up, A.free_paras(k)))
+    # a damaged header (its image and BSS paragraphs 4000h or more): from the tasks, not a .RUN (11), not "no room" (8)
+    big = os.path.join(A.OUT, 'CALCBIG.RUN'); open(big, 'wb').write(cr[:10] + struct.pack('<H', 0x4000) + cr[12:])
+    k = boot('mt_win4.img', b'MULTITASK=1\r\n', 88, TR, 'CALC.RUN=' + big)
+    k.key(A.CODE['T']); k.run_for(0.5)
+    k.key(A.CODE['K']); k.run_for(0.5)
+    bt = k.band()
+    check('a CALC.RUN whose header asks for 4000h paragraphs or more: CODE-K in the tasks says "CALC.RUN can\'t start" '
+          '(%s), not that it doesn\'t fit' % bt[:1], bt[:1] == ["CALC.RUN can't start"] and not k.crashed, bt)
 
 def t_base():
     print('== the Executive live under the windows: in front by a click or CODE-F6, its drawing clipped')
@@ -7336,6 +7354,22 @@ def t_image():
     check('kbd_get.k in LODE.SYS is MOV AH,1 / INT 16h / JNZ .have (B4 01 CD 16 75 xx: what mt_boot patches)',
           kw[:5] == bytes([0xB4, 1, 0xCD, 0x16, 0x75]) and Y['kbd_get.k'] + 6 + kw[5] == Y['kbd_get.have'], kw.hex())
     check('task 0\'s TX in MT\'s BSS: on the paragraph after the image', Y['mt_tx0'] == (len(mtb) + 15) // 16 * 16, hex(Y['mt_tx0']))
+    check('the variables that start as zeros (mt_zv to mt_zve, %04Xh-%04Xh) in the part mt_boot clears: past the image '
+          '(MT_LEN %04Xh), inside MT\'s block (MT_PARAS %04Xh paragraphs)' % (Y['mt_zv'], Y['mt_zve'], equ('MT_LEN'),
+                                                                               equ('MT_PARAS')),
+          equ('MT_LEN') <= Y['mt_zv'] < Y['mt_zve'] <= equ('MT_PARAS') * 16, (Y['mt_zv'], Y['mt_zve']))
+    mtb_at = 0x10000 + [r for r, v, n in secs['boot'] if n == 'mt_boot'][0]     # (the load image at 1000:0)
+    def zv(fill):                       # (fill: MT's block, where a start puts it, 5Ah as mt_boot begins)
+        k = ktest.KPC(A.image('mt_zv.img', 'LODEMT.SYS=' + MTSYS, A.LCMD, ini(b'MULTITASK=1\r\n')), ems_pages=88)
+        if fill: code_hooks(k, [mtb_at], lambda a: k.pc.wr(fill, 0, bytes([0x5A]) * (equ('MT_PARAS') * 16)))
+        k.start(10); k.mcb0 = k.u16('first_mcb')
+        s = mt_seg(k)
+        return s, bytes(k.pc.rd(s, Y['mt_zv'], Y['mt_zve'] - Y['mt_zv']))
+    s0, z0 = zv(0)
+    s1, z1 = zv(s0)
+    check('... and they are as after a start on clear memory when MT\'s block (%04Xh) was full of 5Ah as mt_boot began '
+          '(%d of them non-zero at the prompt either way)' % (s1, sum(1 for b in z0 if b)), s0 == s1 and z0 == z1,
+          (hex(s0), hex(s1), z0.hex(), z1.hex()))
     ex = sysb[Y['done.sw']:Y['done.sw'] + 5]
     check('done.sw in LODE.SYS is MOV SS,AX / MOV SP,BX / POPA (8E D0 89 DC 61: what mt_boot patches), the bytes after it '
           'POP DS / POP ES / IRET, and ctrlc\'s copy of them is somewhere else (untouched)',
