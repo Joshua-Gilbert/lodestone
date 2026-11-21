@@ -181,6 +181,75 @@ def test_pico_model_pong():
     assert struct.unpack_from('<HI', f, 9) == (0x1234, 0x89ABCDEF), f
 
 
+# ---- the two copies of the protocol: gridlink's pico.py and pico-bridge's protocol.py ---------------------------
+# pico-bridge/pi installs on its own (gpibctl), so each keeps its copy; these keep them in step.
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(REPO, 'pico-bridge', 'pi'))
+from gpibbridge import protocol as P
+
+
+def test_same_constants():
+    names = [n for n in dir(P) if n.split('_')[0] in ('F', 'CF', 'DF', 'TXF')] + ['EVENTS', 'TX_CHUNK',
+                                                                                  'PROTO_VERSION', 'PICO_VID']
+    assert len(names) >= 20, names
+    diff = [(n, getattr(P, n), getattr(pico, n, None)) for n in names if getattr(P, n) != getattr(pico, n, None)]
+    assert not diff, diff
+    # gridlink reads PONG's consumed count at offset 11 (X122): the daemon's PONG_FMT puts it there too
+    i = P.PONG_FIELDS.index('tx_consumed')
+    assert P.PONG_FMT.startswith('<8BH9I') and 1 + struct.calcsize('<8BH') == 11 and i == 9, (P.PONG_FMT, i)
+    assert 1 + struct.calcsize(P.PONG_FMT) == 47
+
+
+def frames_mix():
+    """Frames as the bridge sends them, zeros inside, and the damage a tty can do: an overlong run, bad COBS."""
+    import random
+    r = random.Random(1520)
+    good = [bytes([pico.F_DATA]) + bytes(r.choice((0, 0, r.randrange(256))) for _ in range(r.randrange(1, 300)))
+            for _ in range(40)]
+    s = b''.join(cobs_encode(f) for f in good[:10])
+    s += bytes(r.randrange(1, 256) for _ in range(5000)) + b'\0'          # overlong, ended
+    s += b''.join(cobs_encode(f) for f in good[10:20])
+    s += b'\x05\x01\0'                                                     # bad COBS
+    s += b'\0\0' + b''.join(cobs_encode(f) for f in good[20:30])          # empty runs
+    s += bytes(r.randrange(1, 256) for _ in range(4500))                   # overlong, its 0x00 in the next part
+    s += bytes(r.randrange(1, 256) for _ in range(300)) + b'\0'
+    s += b''.join(cobs_encode(f) for f in good[30:])
+    return s
+
+
+def deframe_both(stream, cuts):
+    d = P.Deframer()
+    p = PicoProto(lambda b: None, log=lambda *a: None)
+    got = []
+    p._frame = lambda f: got.append(f) or b''
+    want = []
+    for a, b in zip(cuts, cuts[1:]):
+        want += d.feed(stream[a:b]); p.feed(stream[a:b])
+    return want, got, d.bad, p.stats['bad_frames']
+
+
+def test_same_deframing():
+    import random
+    s = frames_mix()
+    r = random.Random(7)
+    for name, cuts in (('whole', [0, len(s)]), ('byte by byte', list(range(len(s) + 1))),
+                       ('in pieces', sorted({0, len(s)} | {r.randrange(len(s)) for _ in range(200)}))):
+        want, got, bad_d, bad_p = deframe_both(s, cuts)
+        assert len(want) == 40 and want == got, (name, len(want), len(got))
+        assert bad_d == bad_p == 3, (name, bad_d, bad_p)          # (the two overlong runs and the bad COBS)
+
+
+def test_same_cobs():
+    import random
+    r = random.Random(3)
+    for n in (0, 1, 253, 254, 255, 508, 1000, 3300):
+        for zeros in (0, 1, 3):
+            data = bytes(r.choice((0,) * zeros + (r.randrange(1, 256),)) for _ in range(n))
+            a, b = cobs_encode(data), P.cobs_encode(data)
+            assert a == b, (n, zeros)
+            assert pico.cobs_decode(a[:-1]) == P.cobs_decode(b[:-1]) == data, (n, zeros)
+
+
 if __name__ == '__main__':
     names = [n for n in sorted(globals()) if n.startswith('test_')]
     if len(sys.argv) > 1: names = [n for n in names if any(a in n for a in sys.argv[1:])]
