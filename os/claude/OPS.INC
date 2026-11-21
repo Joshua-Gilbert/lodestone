@@ -274,8 +274,22 @@ op_free:
         jmp     reply
 
 %ifndef RCON
-; year (2), month, day, hour, minute, second
+; year (2), month, day, hour, minute, second.  Refused whole: the time is
+; checked here first, as DOS's 2Dh would, since 2Bh and 2Dh each set the
+; clock and the RTC as they accept; then the date by 2Bh, and 2Dh's own
+; answer tested too.  Fewer than its 7 bytes: 4, as a short GPIB request
 op_settime:
+        cmp     word [rq_len], 9
+        jae     .t
+        mov     al, 4
+        jmp     reply0
+.t:     mov     ax, [reqbuf+6]          ; hour, minute
+        cmp     al, 23
+        ja      .bad
+        cmp     ah, 59
+        ja      .bad
+        cmp     byte [reqbuf+8], 59     ; second
+        ja      .bad
         mov     cx, [reqbuf+2]
         mov     dh, [reqbuf+4]
         mov     dl, [reqbuf+5]
@@ -289,6 +303,8 @@ op_settime:
         xor     dl, dl
         mov     ah, 2Dh
         int     21h
+        inc     al                      ; (refused: no RTC write with it)
+        jz      .bad
         mov     al, [reqbuf+6]          ; the real-time clock too (BCD)
         call    bin2bcd
         mov     ch, al

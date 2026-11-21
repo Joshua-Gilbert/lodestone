@@ -167,7 +167,9 @@ OPS_PROBE = [
     ('write, no NUL in the request', 4, b'\0' + struct.pack('<I', 0) + b'A:\\NONUL.TXT', 0xF0, 0),
     ('gpib clear, 8 bytes', 0x20, _gp(5, 29)[:6], 4, b''),           # (under the 9 before the data: refused)
     ('settime, year 30000', 0x30, struct.pack('<HBBBBB', 30000, 1, 1, 0, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),
-]
+    ('settime, 6 bytes', 0x30, struct.pack('<HBBBB', 2025, 6, 1, 12, 0), {'claude': 4, 'rcon': 0xF6}, 0),
+    ('settime, hour 25', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 25, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),  # (a good
+]                                       # date: refused whole, the clock and the RTC as they were: test_ops_codes)
 
 def ops_want(prog):
     """OPS_PROBE's statuses and replies for 'claude' (CLAUDE.COM) or 'rcon'"""

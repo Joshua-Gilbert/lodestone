@@ -613,10 +613,15 @@ def test_ops_codes():
     driver's) as claude_kernel's OPS_PROBE has them: the table test_resident_term's t_ops_codes holds RCON to (the same
     source in both binaries)."""
     h = T.start([], bridge='pico')
+    Y = h.m.Y
+    date = lambda: (h.m.u16(0x60, Y['cur_year']), h.m.rd(0x60, Y['cur_mon'], 1)[0], h.m.rd(0x60, Y['cur_day'], 1)[0])
+    d0, rtc0 = date(), list(h.m.rtc_set)
     got = CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60), h.m.chip.devices)
     want = CK.ops_want('claude')
     bad = [(g, w) for g, w in zip(got, want) if g != w]
     assert len(got) == len(want) and not bad, bad or got
+    # (the refused SETTIMEs, a short one and a good date with hour 25 among them, set nothing: not the date, not the RTC)
+    assert date() == d0 and h.m.rtc_set == rtc0, (d0, date(), rtc0, h.m.rtc_set)
     T.check(h)
 
 
