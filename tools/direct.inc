@@ -443,15 +443,3 @@ d_rd_end: call    d_cmd_begin
         pop     dx
         pop     ax
         ret
-
-; =====================================================================
-;  Automated test set
-; =====================================================================
-P_POLL  equ 0
-P_488   equ 1
-P_TEK   equ 2
-P_METER equ 3
-REPS    equ 10
-SPREPS  equ 20
-
-; test one device, address BL
