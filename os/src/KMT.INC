@@ -4767,10 +4767,17 @@ mt_i16:
                                         ;  21h or not: as it is)
 .top:   cmp     word [bp+4], 0A000h     ; (Resident Claude's console, at E000h,
         jb      .h                      ;  up: its keys its own, CODE-Tab too;
-        mov     bx, 10Dh                ;  r_inpop, at 10Dh in its stub's
-        call    mt_rbyte                ;  header, if the stub is there with
-        jc      .h                      ;  its header)
-        jnz     .nh
+        cmp     word [cs:mt_tsrs], 0    ;  r_inpop, at 10Dh in its stub's
+        je      .h                      ;  header)
+        push    ds
+        mov     ds, [cs:mt_tsrs]
+        cmp     word [100h], 'CL'       ; (its header still there: not after
+        jne     .hd                     ;  an older CLAUDE /U)
+        cmp     byte [10Dh], 0
+        jmp     short .he
+.hd:    cmp     al, al
+.he:    pop     ds
+        jne     .nh
 .h:     call    mt_hot
 .nh:    cli
         cmp     byte [cs:mt_swreq], 0FFh ; (a task asked for: on the way out
@@ -4915,33 +4922,21 @@ mt_drop:
         mov     byte [bx], 0            ;  nothing drops it and the stub's next
         jmp     short .x                ;  look takes it; none now (ZF)
 
-; Resident Claude's stub there with its hot key on (r_off, at 10Eh, 0: no
-; CLAUDE.COM runs): ZF.  Registers kept
-mt_rhot:
-        push    bx
-        mov     bx, 10Eh
-        call    mt_rbyte
-        pop     bx
-        ret
-
 ; Resident Claude's stub there (MT_TSR; its header still there, as an
-; older CLAUDE /U leaves the address): ZF if the header's byte at BX is 0
-; (CF clear).  None, or no header: CF, and not ZF.  Registers kept
-mt_rbyte:
+; older CLAUDE /U leaves the address) with its hot key on (r_off, at 10Eh,
+; 0: no CLAUDE.COM runs): ZF.  Registers kept
+mt_rhot:
         cmp     word [cs:mt_tsrs], 0
         je      .n
         push    ds
         mov     ds, [cs:mt_tsrs]
         cmp     word [100h], 'CL'
         jne     .p
-        cmp     byte [bx], 0            ; (CF clear)
-        pop     ds
-        ret
+        cmp     byte [10Eh], 0
 .p:     pop     ds
-.n:     or      sp, sp                  ; (not ZF)
-        stc
         ret
-        db      90h                     ; (what follows keeps its parity)
+.n:     or      sp, sp                  ; (none: not ZF)
+        ret
 
 ; CF if key AX is one INT 16h AH=00h and 01h don't give (the 1520's BIOS
 ; drops it: scan codes 85h and up but E0h's, as mt_hot tells them, and
