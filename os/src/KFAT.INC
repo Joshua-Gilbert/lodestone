@@ -815,19 +815,19 @@ f_41:   call    get_path                ; DELETE
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
-f_39:   call    get_path                ; MKDIR
-        jc      .e
-        call    resolve_new
-        jc      .e
-        call    find_named
-        jnc     .acc                    ; already there
+f_39:   call    get_path                ; MKDIR (the checks before the slot:
+        jc      f_41.e                  ;  to f_41's exits, the same code, as
+        call    resolve_new             ;  .acc and .e are out of short reach:
+        jc      f_41.e                  ;  a 2-byte jcc, not taken when the
+        call    find_named              ;  check passes)
+        jnc     f_41.acc                ; already there
         cmp     ax, 2
-        jne     .e
+        jne     f_41.e
         call    dev_lookup              ; a device's name (its directory
-        jnc     .acc                    ;  there): 5, as MS-DOS
+        jnc     f_41.acc                ;  there): 5, as MS-DOS
         mov     ax, [r_dir]
         call    dir_slot                ; (d_lba/d_off: the slot, until the
-        jc      .e                      ;  next dir_entry or dir_find)
+        jc      f_41.e                  ;  next dir_entry or dir_find)
         xor     dx, dx
         mov     [new_dir], dx
         call    fat_keep
@@ -919,7 +919,7 @@ find_dir:
         ret
 
 f_3A:   call    get_path                ; RMDIR
-        jc      .e
+        jc      f_39.e                  ; (f_39's exits, as f_39 f_41's)
         call    find_dir
         jc      .nd
         mov     si, [actp]              ; the current directory (".", or the
@@ -929,9 +929,9 @@ f_3A:   call    get_path                ; RMDIR
         je      .cur                    ;  couldn't be read: 3, ValidateCDS's;
                                         ;  another task's: MT's mt_rd, here)
 .mt:    cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
-        je      .acc                    ;  doesn't look the name up, so
+        je      f_39.acc                ;  doesn't look the name up, so
         cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
-        je      .acc                    ;  (".." it finds, but is refused too)
+        je      f_39.acc                ;  (".." it finds, but is refused too)
         mov     [new_dir], ax
         push    word [d_lba]
         push    word [d_off]
@@ -986,11 +986,12 @@ f_3A:   call    get_path                ; RMDIR
         jc      .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
-
+        db      90h                     ; (a pad, never run: f_3B, f_47 at their
+                                        ;  parity; h2sft's pad takes it back)
 f_3B:   call    get_path                ; CHDIR
-        jc      .e
+        jc      f_3A.e                  ; (f_3A's exit, the same `jmp fail')
         call    find_dir
-        jc      .e
+        jc      f_3A.e
         mov     [cwd_cl], ax
         ; the new path string, worked out whole in cwd_new, then the
         ; drive's own and its cluster changed if it fits: "\" and 63, as
@@ -1122,10 +1123,11 @@ f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         mov     ax, 0100h               ; (DOS returns this)
         jmp     ok_ax
 .bad:   mov     ax, 15
-        jmp     fail
-
+..@ren_e: jmp   fail                    ; (f_56's .e, in short reach of its
+..@ren_acc: jmp f_56.acc                ;  checks, and a hub to its .acc: a
+                                        ;  2-byte jcc, not taken when they pass)
 f_56:   call    get_path                ; RENAME (files; same drive)
-        jc      .e
+        jc      ..@ren_e
         mov     si, [bp+F_DI]
         mov     di, path2_buf
         push    word [bp+F_DS]
@@ -1133,13 +1135,13 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     [bp+F_DS], ax
         call    gpath
         pop     word [bp+F_DS]
-        jc      .e
+        jc      ..@ren_e
         call    find_file               ; the old name (a device's: 5, as
         jc      f_41.nf                 ;  MS-DOS, DELETE's answer)
         test    byte [de+11], A_DIR | A_VOL
-        jnz     .acc
+        jnz     ..@ren_acc
         call    sft_busy
-        jc      .acc
+        jc      ..@ren_acc
         mov     al, [r_drv]
         mov     [ren_drv], al
         mov     si, d_lba               ; d_lba, d_off, de
@@ -1148,24 +1150,24 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         rep     movsw
         mov     si, path2_buf
         call    resolve_si              ; the new name
-        jc      .e
+        jc      ..@ren_e
         mov     ax, path2_buf           ; a device's name (its directory
         call    dev_look_ax             ;  there): 5, as MS-DOS
-        jnc     .acc
+        jnc     ..@ren_acc
         mov     al, [r_drv]
         cmp     al, [ren_drv]
         jne     .dev
         call    new_name
-        jc      .e
+        jc      ..@ren_e
         call    find_named
-        jnc     .acc                    ; the new name exists
+        jnc     ..@ren_acc              ; the new name exists
         cmp     ax, 2
-        jne     .e
+        jne     ..@ren_e
         mov     ax, [r_dir]
         call    dir_slot
-        jc      .e
+        jc      ..@ren_e
         call    fat_flush_act           ; a grown target linked before it is named
-        jc      .e
+        jc      ..@ren_e
         mov     di, si                  ; the old entry, renamed, in the slot
         push    si
         mov     si, ren_de
