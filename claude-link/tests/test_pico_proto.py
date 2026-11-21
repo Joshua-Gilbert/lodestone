@@ -46,6 +46,67 @@ def test_resync_mid_frame():
     assert got == [b'\x82new', b'\x82two'] and p.stats['bad_frames'] == 1, (got, p.stats)
 
 
+MINIMUM = {pico.F_HELLO: 12, pico.F_DATA: 4, pico.F_EVENT: 9, pico.F_CREDIT: 5}
+
+
+def connected(log=None):
+    """A PicoProto past its HELLO, its writes kept."""
+    out = []
+    p = PicoProto(out.append, log=(log.append if log is not None else lambda *a: None))
+    p.feed(cobs_encode(struct.pack('<BBHHIH', pico.F_HELLO, 1, 16383, 240, 0, 0) + b'bridge fw 2026-10-24 (test)'))
+    assert p.connected
+    return p, out
+
+
+def state(p):
+    return (p.connected, p.firmware, p.tx_ring, p.consumed, p.sent, p.gen, p.online, p.sdcs, p.tx_done_at)
+
+
+def test_short_frames_ignored():
+    # A frame too short for its type's fields, of every type gridlink parses: ignored, counted, nothing changed,
+    # and the frames after it still read (it used to raise struct.error out of the reader thread)
+    for t, n in sorted(MINIMUM.items()):
+        for k in range(1, n):
+            p, _ = connected()
+            before = state(p)
+            got = p.feed(cobs_encode(bytes([t]) + bytes(range(1, k))))
+            assert got == b'' and p.stats['bad_frames'] == 1, (hex(t), k, got, p.stats)
+            assert state(p) == before, (hex(t), k, state(p), before)
+            assert p.feed(cobs_encode(struct.pack('<BHB', pico.F_DATA, 0, pico.DF_EOI) + b'next')) == b'next'
+    # whole frames of each minimum length are not bad
+    p, _ = connected()
+    p.feed(cobs_encode(struct.pack('<BHB', pico.F_DATA, 1, 0)))
+    p.feed(cobs_encode(struct.pack('<BBHBI', pico.F_EVENT, 0x1D, 1, 0, 0)))
+    p.feed(cobs_encode(struct.pack('<BI', pico.F_CREDIT, 0)))
+    assert p.stats['bad_frames'] == 0, p.stats
+
+
+def test_short_hello_before_connect():
+    # a short HELLO while PicoBridge waits for the bridge: ignored, not an exception out of open()
+    p = PicoProto(lambda d: None, log=lambda *a: None)
+    p.feed(cobs_encode(bytes([pico.F_HELLO, 1, 0xFF])))
+    assert not p.connected and p.stats['bad_frames'] == 1
+
+
+def test_short_pong_still_counts():
+    # any PONG says the bridge is there: last_pong first, so a short one doesn't make the pinger drop the port
+    p, _ = connected()
+    p.last_pong = 0.0
+    p.feed(cobs_encode(bytes([pico.F_PONG])))
+    assert p.last_pong > 0 and p.pongs == 1, (p.last_pong, p.pongs)
+
+
+def test_short_frames_logged_once():
+    # three short frames, one line (PicoBridge's _once): every frame logging would flood the journal
+    log = []
+    b = PicoBridge(log=log.append)
+    b.proto.connected = True
+    for t in (pico.F_DATA, pico.F_EVENT, pico.F_CREDIT):
+        b.proto.feed(cobs_encode(bytes([t, 1])))
+    short = [l for l in log if 'shorter than its fields' in l]
+    assert len(short) == 1 and b.proto.stats['bad_frames'] == 3, (log, b.proto.stats)
+
+
 if __name__ == '__main__':
     names = [n for n in sorted(globals()) if n.startswith('test_')]
     if len(sys.argv) > 1: names = [n for n in names if any(a in n for a in sys.argv[1:])]

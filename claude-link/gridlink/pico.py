@@ -116,8 +116,20 @@ class PicoProto:
             except ValueError:
                 f = None; s.stats['bad_frames'] += 1
             s.buf.clear()
-            if f: out += s._frame(f)
+            if not f: continue
+            try:
+                out += s._frame(f)
+            except (struct.error, IndexError):  # shorter than its type's fields: the frame is ignored.  Each
+                s.stats['bad_frames'] += 1      #  parser reads its fields before it changes anything, but for
+                #  PONG's, which first takes what a short one still says (last_pong, its flags, a CONFIG if
+                #  offline) and only then reads the rest
+                s.once('bridge: a frame shorter than its fields ignored (type %02Xh, %d bytes; counted in '
+                       'bad_frames)' % (f[0], len(f)), key='short')
         return bytes(out)
+
+    def once(s, msg, key=None):
+        """Something worth one line (PicoBridge's _once: once until the bridge is next up)."""
+        s.log(msg)
 
     def resync(s):
         """A new port: no bytes from the old one's last frame."""
@@ -170,7 +182,7 @@ class PicoProto:
         if t == F_CREDIT:
             s.consumed = struct.unpack_from('<I', f, 1)[0]; s._pump(); return b''
         if t == F_PONG:
-            s.last_pong = time.monotonic(); s.pongs += 1
+            s.last_pong = time.monotonic(); s.pongs += 1   # (first: any PONG says the bridge is there)
             s.pong = dict(zip(('online', 'address', 'listener', 'talker', 'ren', 'llo', 'spms', 'rsv'), f[1:9]))
             if not f[1]:
                 s._config()
@@ -381,9 +393,10 @@ class PicoBridge(PicoLink):
         s.spec, s.addr, s.log = port, addr, log
         s.ser = None; s.port = None; s.wlock = threading.Lock()
         s.proto = PicoProto(s._write, addr=addr, log=log)
+        s.proto.once = lambda msg, key=None: s._once(msg, key, tail='')
         s.inq = collections.deque(); s.cv = threading.Condition()
         s.stop = threading.Event()
-        s.said = set()                      # what _open_once has logged since the bridge was last up
+        s.said = set()                      # what _once has logged since the bridge was last up
 
     @property
     def version(s):
@@ -404,11 +417,12 @@ class PicoBridge(PicoLink):
             pass
         s.ser = None; s.proto.connected = False
 
-    def _once(s, msg):
+    def _once(s, msg, key=None, tail='; retrying every 2 s'):
         """A failure to find or open the bridge, logged once until it is up again: the retries every 2 s
-        would otherwise log it every 2 s, or not at all."""
-        if msg not in s.said:
-            s.said.add(msg); s.log(msg + '; retrying every 2 s')
+        would otherwise log it every 2 s, or not at all.  (key: what counts as the same message, if not
+        its text.)"""
+        if (key or msg) not in s.said:
+            s.said.add(key or msg); s.log(msg + tail)
 
     def _open_once(s):
         import serial
