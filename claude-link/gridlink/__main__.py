@@ -9,7 +9,7 @@ The GRiD picks chat (CLAUDE, gridlink's own agent on an API key) or Term
 """
 import argparse, collections, logging, os, signal, sys, threading, time
 from . import glp
-from .config import Config, MODELS
+from .config import BAUDS, GPIB_ADDR, Config, MODELS, int_in
 from .link import AR488Serial, DebugTrace, serve
 from .pico import PicoBridge
 from .serline import SerialLink, ModemLink
@@ -109,8 +109,10 @@ def main(argv=None):
 
     cfg = Config().load(a.config)
     if a.port: cfg.port = a.port
-    if a.baud: cfg.baud = a.baud
-    if a.address: cfg.address = a.address
+    if a.baud is not None: cfg.baud = int_in('--baud', a.baud, *BAUDS)    # (0 was taken for "not given")
+    if a.address is not None:
+        cfg.address = int_in('--address', a.address, *GPIB_ADDR, exclude=(21,),
+                             what='a GPIB address (0-30), not 21 (the GRiD)')
     if a.bridge: cfg.bridge = a.bridge
     if a.model: cfg.model = MODELS.get(a.model, a.model)
     if a.mode: cfg.mode = a.mode
@@ -120,6 +122,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format='%(asctime)s %(message)s', datefmt='%H:%M:%S')
     log = logging.getLogger('gridlink').info
+    for w in cfg.warnings: log(w)
 
     key = cfg.api_key or os.environ.get('ANTHROPIC_API_KEY')
 
@@ -135,12 +138,12 @@ def main(argv=None):
 
     if cfg.bridge == 'serial':              # a null-modem cable to the GRiD's COM2 (SERLINK /P:2)
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
-        baud = a.baud or (cfg.baud if cfg.baud_set else 19200)
+        baud = a.baud if a.baud is not None else (cfg.baud if cfg.baud_set else 19200)
         t = SerialLink(port, baud, log=log)
         how = 'a serial line on %s at %d baud' % (port, baud)
     elif cfg.bridge == 'modem':             # a USB modem the GRiD dials (SERLINK /D:)
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyACM0'
-        t = ModemLink(port, a.baud or (cfg.baud if cfg.baud_set else 115200), log=log)
+        t = ModemLink(port, a.baud if a.baud is not None else (cfg.baud if cfg.baud_set else 115200), log=log)
         how = 'a modem on %s' % port
     elif cfg.bridge == 'ar488':
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
