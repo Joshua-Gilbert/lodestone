@@ -205,6 +205,83 @@ def xor_rect_unit():
             bad.append((x0, x1, y, h, kept))
     return n, bad
 
+def pointer_unit(path=None):
+    """The core's own pointer as UICORE.INC draws it (show_cursor, move_cursor
+    with compose, hide_cursor), assembled on its own and run under unicorn on
+    a random screen: after each move every byte of the plasma must be the
+    screen under it with the arrow inverted at the new place (cur_shape's
+    rows shifted by x & 7, cut at column 79 and row 399), and hide_cursor
+    must leave the screen as it was.  Moves at every x & 7, overlapping
+    (compose's union, up to 3 bytes wide) and far apart, to x 0 and 639 and
+    to row 399."""
+    import random
+    from unicorn import Uc, UC_ARCH_X86, UC_MODE_16
+    from unicorn.x86_const import (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI,
+                                   UC_X86_REG_DI, UC_X86_REG_BP, UC_X86_REG_SP, UC_X86_REG_CS, UC_X86_REG_DS,
+                                   UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_EFLAGS)
+    s = open(path or os.path.join(GOS, 'src', 'UICORE.INC'), 'rb').read().decode('latin-1')
+    part = lambda a, b: s[s.index(a):s.index(b, s.index(a))]
+    data = (('cur_x', 'dw 0'), ('cur_y', 'dw 0'), ('cur_xb', 'dw 0'), ('cur_save', 'times 26 db 0'), ('new_save', 'times 26 db 0'),
+            ('ubuf', 'times 4 * 26 db 0'), ('cnew_x', 'dw 0'), ('cnew_y', 'dw 0'), ('cnew_xb', 'dw 0'), ('ux0', 'dw 0'),
+            ('uy0', 'dw 0'), ('uw', 'dw 0'), ('uh', 'dw 0'), ('cflags', 'db 0'), ('mx', 'dw 0'), ('my', 'dw 0'),
+            ('mbase', 'dw 1'), ('curvis', 'db 0'))
+    names = ['cur_shape'] + [n for n, d in data]
+    src = ('cpu 286\norg 0\nVSEG equ 0B800h\n'      # (the three calls, then where each name is)
+           'call show_cursor\n hlt\n call move_cursor\n hlt\n call hide_cursor\n hlt\n dw ' + ', '.join(names) + '\n' +
+           part('cur_shape:', 'show_cursor:') + part('show_cursor:', '\n; =====') + part('row_di:', '; mode 40h') +
+           'align 2\n' + ''.join('%s: %s\n' % nd for nd in data))
+    asm, out = os.path.join(OUT, 'PTRUNIT.ASM'), os.path.join(OUT, 'PTRUNIT.BIN')
+    open(asm, 'w').write(src)
+    subprocess.run(['nasm', '-f', 'bin', '-o', out, asm], check=True)
+    code = open(out, 'rb').read()
+    assert code[3] == code[7] == code[11] == 0xF4, code[:12].hex()
+    sym = dict(zip(names, struct.unpack_from('<%dH' % len(names), code, 12)))
+    shape = [code[sym['cur_shape'] + 2 * r] for r in range(13)]
+    mu = Uc(UC_ARCH_X86, UC_MODE_16)
+    mu.mem_map(0, 0x100000)
+    mu.mem_write(0x10000, code)
+    regs = (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP)
+    rnd = random.Random(1520)
+    screen = bytes(rnd.getrandbits(8) for _ in range(0x10000))
+    mu.mem_write(0xB8000, screen)
+    w16 = lambda n, v: mu.mem_write(0x10000 + sym[n], struct.pack('<H', v))
+    def call(at, ax=0, bx=0):
+        vals = (ax, bx, 0x1357, 0x2468, 0x5A5A, 0xA5A5, 0x7777)
+        for r, v in zip(regs, vals): mu.reg_write(r, v)
+        for r, v in ((UC_X86_REG_CS, 0x1000), (UC_X86_REG_DS, 0x1000), (UC_X86_REG_ES, 0x2000),
+                     (UC_X86_REG_SS, 0x3000), (UC_X86_REG_SP, 0xFFFE), (UC_X86_REG_EFLAGS, 0x0202)):
+            mu.reg_write(r, v)
+        mu.emu_start(0x10000 + at, 0x10000 + at + 3, count=100000)
+        return [mu.reg_read(r) for r in regs] == list(vals) and mu.reg_read(UC_X86_REG_SP) == 0xFFFE \
+            and mu.reg_read(UC_X86_REG_ES) == 0x2000 and mu.reg_read(UC_X86_REG_DS) == 0x1000
+    def want(x, y):
+        e, xb = bytearray(screen), x >> 3
+        for r in range(13):
+            yy = y + r
+            if yy >= 400: break
+            o, v = (yy & 3) * 0x2000 + (yy >> 2) * 80 + xb, shape[r] << 8 >> (x & 7)
+            e[o] ^= v >> 8
+            if xb < 79: e[o + 1] ^= v & 0xFF
+        return bytes(e)
+    pts = [(x, y) for x in (0, 1, 7, 8, 9, 15, 100, 101, 102, 103, 104, 105, 106, 107, 300, 631, 632, 633, 636, 639)
+           for y in (0, 1, 2, 3, 5, 150, 386, 387, 388, 391, 398, 399)]
+    walk = [(320, 200)]
+    for x, y in pts:                            # each far, then small steps from it
+        walk += [(x, y)] + [(min(639, max(0, x + dx)), min(399, max(0, y + dy)))
+                            for dx, dy in ((1, 0), (7, 1), (8, -1), (9, 2), (15, -3), (16, 12), (-9, -13), (-1, 0), (0, 14))]
+    walk += [(639, 399), (632, 399), (0, 399), (639, 0), (638, 398), (5, 387), (6, 388), (630, 389)]
+    bad, n = [], 0
+    w16('mx', walk[0][0]); w16('my', walk[0][1])
+    kept = call(0)                              # show_cursor at (mx, my)
+    if bytes(mu.mem_read(0xB8000, 0x10000)) != want(*walk[0]) or not kept: bad.append(('show',) + walk[0] + (kept,))
+    for x, y in walk[1:]:
+        kept = call(4, x, y)                    # move_cursor AX = x, BX = y
+        n += 1
+        if bytes(mu.mem_read(0xB8000, 0x10000)) != want(x, y) or not kept: bad.append((x, y, kept))
+    kept = call(8)                              # hide_cursor: the screen as it was
+    if bytes(mu.mem_read(0xB8000, 0x10000)) != screen or not kept: bad.append(('hide', kept))
+    return n, bad
+
 # ---------------------------------------------------------------------
 def t_core():
     print('== core (UITEST.RUN)')
@@ -212,6 +289,10 @@ def t_core():
     check('xor_rect on its own (%d frames on a random screen: every start bit, 2-41 pixels wide, each bank, heights '
           '2-11, to x 639 and row 399, DF either way): the frame XORed once, corners included, nothing else touched, '
           'the registers, DS and ES kept' % n, n > 20000 and not bad, bad[:5])
+    n, bad = pointer_unit()
+    check('the pointer on its own (%d moves on a random screen: every x & 7, near and far, to x 0 and 639 and row 399): '
+          'each time the screen under it with the arrow inverted there, nothing else touched; hidden: the screen as it was, '
+          'the registers, DS and ES kept' % n, n > 2000 and not bad, bad[:5])
     img = image('core.img', UITEST, os.path.join(GOS, 'src', 'LCMD.COM'))
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     free0, ui0 = free_paras(k)

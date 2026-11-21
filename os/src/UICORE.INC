@@ -1472,17 +1472,14 @@ compose:
         mov     si, bp
         shl     si, 2
         add     si, ubuf
-        mov     cx, [uw]
-.c4:    mov     al, [si]
-        mov     [es:di], al
-        inc     si
-        inc     di
-        loop    .c4
+        mov     cx, [uw]                ; (1 to 3: never 0; DF clear, as for
+        rep     movsb                   ;  .done's copy)
         inc     bp
         jmp     .r4
 .r4d:   pop     es
         popa
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .old1:  cmp     dx, 80                  ; DX = byte col, DI = ubuf row, BX = save index
         jae     .ox
         mov     si, dx
