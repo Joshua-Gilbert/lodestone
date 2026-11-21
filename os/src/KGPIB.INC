@@ -375,8 +375,14 @@ gp_ifc_ren:
         mov     dx, gp_R_AUXMR
         mov     al, gp_AUX_SIFC
         out     dx, al
-        call    gp_wait_tick
-        mov     al, gp_AUX_CIFC
+        push    cx                      ; IFC held for 1500 ISA port reads: each
+        mov     cx, 1500                ;  takes about 1 us whatever the CPU, so
+.w:     in      al, 61h                 ;  1.5 ms at least, a few at most, on the
+        loop    .w                      ;  1520 and the 386s: past the 100 us the
+        pop     cx                      ;  bus asks and a polling device's loop
+        mov     al, gp_AUX_CIFC         ;  (the Pico's, the Nano's).  Not a tick
+                                        ;  (0-55 ms), nor the 7210's ports (an
+                                        ;  ISR2 read clears SRQI)
         out     dx, al
 gp_ren_on: push    ax
         push    dx
@@ -864,18 +870,7 @@ gp_chip_init:
         out     dx, al
         ret
 
-gp_wait_tick:
-        push    ax
-        push    bx
-        call    gp_tick
-        mov     bx, ax
-.w:     call    gp_tick
-        cmp     ax, bx
-        je      .w
-        pop     bx
-        pop     ax
-        ret
-
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 gp_tick:   push    ds
         xor     ax, ax
         mov     ds, ax

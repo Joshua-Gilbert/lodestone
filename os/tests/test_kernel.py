@@ -1205,6 +1205,26 @@ def t_gpirq():
         k.run_file('GPIRQ.COM', 10)
         check('... AH=0Eh AL=1: on again, the same vector, the BIOS\'s still kept', on() == (5, 0, 0x40) + isr, on())
 
+def t_gpifc():
+    """IFC (SIFC to CIFC) at the start-up and at each INT 60h AH=01h: at least the 100 us IEEE-488.1 asks for, and
+    a few ms of simulated time, not a BIOS tick (it was held until 40:6Ch changed: 0-55 ms, a whole tick for a call
+    just after one).  (pcemu charges each pass of the loop a block, 4 us, and its port read nothing, so this shows
+    the loop's count at work, not the 1520's real pulse.)"""
+    com = os.path.join(OUT, 'GPIFC.COM')
+    open(com, 'wb').write(bytes([0xB4, 0x01, 0xCD, 0x60] * 3 + [0xB8, 0x00, 0x4C, 0xCD, 0x21]))   # 3x AH=01h
+    chip = sim7210.NEC7210(sim7210.bus())
+    k = ktest.KPC(image('gpifc.img', com), chip=chip)
+    ev = []
+    chip.aux = lambda v, f=chip.aux: (ev.append((v, k.pc.us)) if v in (0x1E, 0x16) else None, f(v))
+    k.start()
+    k.run_file('GPIFC.COM', 10)
+    pulses, t0 = [], None
+    for v, t in ev:
+        if v == 0x1E: t0 = t
+        elif t0 is not None: pulses.append(t - t0); t0 = None
+    check('IFC: four pulses (the start-up, 3x AH=01h), each 100 us to 20 ms of simulated time',
+          len(pulses) == 4 and all(100 <= p <= 20000 for p in pulses) and not k.crashed, ['%.0f' % p for p in pulses])
+
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (they would be what ex_rel held from
@@ -5558,7 +5578,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_exehuge, t_divide, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_exerel, t_exehuge, t_divide, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
