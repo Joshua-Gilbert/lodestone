@@ -4082,7 +4082,7 @@ res_load:
         cmp     bx, R_PAGES
         jb      .pg
         mov     al, [es:r_hw]           ; the console into the first
-        out     dx, al
+        call    res_eout
         push    es
         push    R_FRAME
         pop     es
@@ -4101,7 +4101,7 @@ res_load:
         mov     [es:RC_NANO], al
         pop     es
         pop     ax                      ; window 0 as it was
-        out     dx, al
+        call    res_eout
         mov     ax, 0F01Ah              ; Lodestone's multitasking (MT_TSR):
         mov     bx, ..@r_idle           ;  our key wait may be switched from,
         stc                             ;  and whose call it is, from its two
@@ -4138,6 +4138,28 @@ res_load:
 .noems: mov     dx, s_r_noems
         mov     al, 1
         jmp     res_quit
+; AL to the page register at DX, once no floppy transfer is in flight (the
+; stub's r_isr has why: another task may be out in one).  Looked at and
+; written with interrupts off, so no task switch comes between; while one
+; is in flight, interrupts on again and another look.  All kept
+res_eout:
+        push    ax
+.a:     cli
+        push    dx
+        mov     dx, 3F4h
+        in      al, dx
+        pop     dx
+        test    al, 10h                 ; (a command under way,
+        jz      .go
+        not     al
+        test    al, 0C0h                ;  and not yet at its result)
+        jz      .go
+        sti
+        jmp     .a
+.go:    pop     ax
+        out     dx, al
+        sti
+        ret
 r_far   dw      r_int67, 0              ; (the stub's thunk, far)
 res_old16 dd    0                       ; (the stub's, till it is in place)
 res_indos dd    0
@@ -4411,6 +4433,10 @@ r_feed: cmp     byte [cs:r_ks], 0
 .x:     ret
 .k:     call    r_front                 ; (the front task's alone: a call from
         jne     .wk                     ;  behind, after a CODE-Tab, tells MT)
+        push    ax                      ; (and not during a floppy's transfer,
+        call    r_isr                   ;  r_isr: the key waits for the next
+        pop     ax                      ;  call.  AX kept: RC_FEED takes the
+        jnz     .wk                     ;  caller's AH)
         push    dx
         push    bx
         xchg    ax, bx                  ; (AX kept in BX)
@@ -4436,6 +4462,7 @@ r_feed: cmp     byte [cs:r_ks], 0
         pop     ax                      ;  wait at our HLT would never end
         stc
         ret
+        times   ($ - $$) & 1 db 90h     ; (r_hot even)
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
 ; move back one), and the console runs, unless a hardware interrupt is in
@@ -4601,8 +4628,15 @@ r_popup:
 
         times   -(R_PAGES != 4 || r_saved != r_hw + 4) db 0
 
-; the PIC's in-service register, then back to the request one (as the
-; kernel's screen capture does): AH, and ZF if nothing is in service
+; May the page registers be written now?  ZF if so: nothing is in service
+; (the PIC's in-service register, then back to the request one, as the
+; kernel's screen capture does: AH), and no floppy transfer is in flight.
+; On the 1520 a page register written during a floppy's DMA resets the
+; machine (2026-11-04), and under Lodestone's multitasking a task behind may
+; be out in one while the front task's key call comes here.  In flight as MT's
+; mt_eout has it: the controller busy with a command (3F4h bit 4) and not
+; yet at its result (bits 7-6 both set); FFh, no controller, is idle.
+; Nothing switches tasks between this and the caller's OUTs.  DX kept
 r_isr:  mov     al, 0Bh
         out     20h, al
         in      al, 20h
@@ -4610,7 +4644,16 @@ r_isr:  mov     al, 0Bh
         mov     al, 0Ah
         out     20h, al
         or      ah, ah
-        ret
+        jnz     .x
+        push    dx
+        mov     dx, 3F4h
+        in      al, dx
+        pop     dx
+        test    al, 10h
+        jz      .x
+        not     al
+        test    al, 0C0h                ; (ZF: its result phase)
+.x:     ret
 
 ; CLAUDE /R allocates the EMS pages through here, far: the kernel gives
 ; pages asked for from outside a program's memory to no program (KEMS.INC),

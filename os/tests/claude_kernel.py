@@ -56,10 +56,11 @@ class KernelHarness(G.EmuHarness):
     router then, Term or chat as the GRiD's HELLO asks.  ems_pages: the
     1520's expanded memory (resident Claude needs it).  irq_exact: pcemu's
     (an IRQ held under CLI taken as soon as IF is set again, as the 1520's
-    PIC gives it; on by default, as ktest.KPC's)."""
+    PIC gives it; on by default, as ktest.KPC's).  fd_wait, disk_model:
+    pcemu's (a floppy transfer that takes time, the 1520's drive timing)."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y',
                  claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0, bridge='ar488', frame_cap=None,
-                 irq_exact=True):
+                 irq_exact=True, fd_wait=False, disk_model='flat'):
         s.tmp = tempfile.mkdtemp(prefix='gridk-')
         disk = [LODE_SYS, LCMD_COM, 'CLAUDE.COM=' + claude_com, 'TESTKEY.COM=' + G.TESTKEY_COM]
         for k, v in (files or {}).items():
@@ -69,7 +70,8 @@ class KernelHarness(G.EmuHarness):
             disk.append(name + '=' + p)
         img = mkimg.build(os.path.join(s.tmp, 'a.img'), disk)
         chip = G.Chip(S.bus())
-        s.m = m = KMachine(img, chip, ems_pages=ems_pages, irq_exact=irq_exact)
+        s.m = m = KMachine(img, chip, ems_pages=ems_pages, irq_exact=irq_exact, fd_wait=fd_wait,
+                           disk_model=disk_model)
         chip.clock = m.clock
         s.wire(chip.devices, bridge, patched, baud, script, mode, term, frame_cap=frame_cap)
         s.sym = G.symbols(os.path.splitext(claude_com)[0] + '.MAP')
