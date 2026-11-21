@@ -453,6 +453,256 @@ def test_reader_error_stops_the_program():
             h.close()
 
 
+STOPS_READING = r'''
+import hashlib
+go = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'go')
+os.write(1, b'ready\r\n')
+while not os.path.exists(go): time.sleep(0.05)        # (the test says when to read again)
+got = b''
+while select.select([0], [], [], 1.0)[0]: got += os.read(0, 65536)
+d = got.rstrip(b'abc')
+os.write(1, b'got %d %s %s\r\n' % (len(d), hashlib.md5(d).hexdigest().encode(), got[len(d):] or b'-'))
+time.sleep(30)
+'''
+
+
+def test_term_program_stops_reading():
+    """A raw-mode program that stops reading its input: the pty fills, the
+    rest waits in Term's queue and the link goes on; past WQ_MAX keys are
+    dropped (said once, and every key after until the program reads again,
+    so none arrives ahead of a dropped one), and what was kept arrives in
+    order when the program reads again (X123).  Before, the 20,481st byte
+    blocked the link."""
+    import hashlib, threading
+    from gridlink import term as T
+    cmd = child(STOPS_READING); go = os.path.join(os.path.dirname(cmd.split()[1]), 'go')
+    h = TermHarness(command=cmd)
+    try:
+        assert h.wait_text('ready'), (h.log, h.grid.screen_text())
+        sent = b''.join(bytes([48 + i % 10]) * 1024 for i in range(120))
+        def writes():
+            for i in range(0, len(sent), 1024): h.term._write(sent[i:i + 1024])
+            h.term._write(b'Z')                                 # (it would fit: dropped all the same)
+        w = threading.Thread(target=writes, daemon=True); w.start(); w.join(5)
+        assert not w.is_alive(), 'a write blocked'
+        assert 0 < h.term.wq_bytes <= T.WQ_MAX, h.term.wq_bytes
+        assert len([l for l in h.log if 'not reading' in str(l)]) == 1, h.log
+        h.grid.type('abc')                                      # keys through the link: never held
+        assert h.settle(), h.log
+        open(go, 'w').close()
+        assert h.wait_text('got '), (h.log, h.grid.screen_text())
+        line = [l for l in h.grid.screen_text() if 'got ' in l][0].split()
+        n, md5, tail = int(line[1]), line[2], line[3]
+        assert 20000 <= n < len(sent) and md5 == hashlib.md5(sent[:n]).hexdigest(), (n, md5)
+        assert tail == '-', tail                                # ('abc' came while it was dropping)
+        assert h.term.wq_bytes == 0 and not h.term.wq
+        again = [str(l) for l in h.log if 'reading again' in str(l)]
+        assert len(again) == 1 and '%d bytes of keys were dropped' % (len(sent) + 1 + 3 - n) in again[0], \
+            (again, len(sent) + 4 - n)
+    finally:
+        h.close()
+
+
+def bare(fd):
+    """A TermSession with only its write queue, writing to fd."""
+    import threading
+    from gridlink import term as T
+    class S(T.TermSession):
+        def __init__(s): pass
+    s = S(); s.said = []; s.log = s.said.append; s.name = 'x'; s.stats = dict(pty_out=0, pty_in=0)
+    s.wlock = threading.Lock(); s.wq = T.deque(); s._wq_clear(); s.wake = None; s.fd = fd
+    return s
+
+
+def fill(w):
+    while True:
+        try: os.write(w, b'.' * 4096)
+        except BlockingIOError: return
+
+
+def full_pipe():
+    r, w = os.pipe()
+    os.set_blocking(w, False)
+    fill(w)
+    return r, w
+
+
+def drain(r):
+    while select_ready(r): os.read(r, 65536)
+
+
+def test_esc_gap_kept_when_queued():
+    """Keys queued behind a full pty keep each lone Esc's own write and its gap."""
+    from gridlink import term as T
+    r, w = full_pipe()
+    s = bare(w)
+    try:
+        s._write(b'\x1b'); s._gap(); s._write(b'a')
+        assert [c[0] for c in s.wq] == [b'\x1b', b'a'] and s.wq[0][1], list(s.wq)
+        drain(r)                                                # the program reads again
+        assert s._flush(w)[0] == [] and [c[0] for c in s.wq] == [b'a']
+        wl, wait = s._flush(w)                                  # the Esc's gap: 'a' waits
+        assert wl == [] and 0 < wait <= T.ESC_GAP and s.wq, (wl, wait)
+        time.sleep(wait + 0.005)
+        assert s._flush(w) == ([], 0.5) and not s.wq
+    finally:
+        os.close(r); os.close(w)
+
+
+def test_queue_drops_till_empty():
+    """Past WQ_MAX: that write and every one after are dropped till the
+    queue empties, even one that would fit; said once, then the count when
+    it reads again; and the next time it fills it is said again (X123)."""
+    from gridlink import term as T
+    r, w = full_pipe()
+    s = bare(w); was = T.WQ_MAX; T.WQ_MAX = 10
+    try:
+        s._write(b'12345678'); s._write(b'abc'); s._write(b'x')
+        assert [c[0] for c in s.wq] == [b'12345678'] and s.wq_dropped == 4, (list(s.wq), s.wq_dropped)
+        assert s._flush(w) == ([w], 0.5) and len(s.said) == 1 and 'not reading' in s.said[0], s.said
+        drain(r)
+        assert s._flush(w) == ([], 0.5) and not s.wq and s.wq_dropped == 0
+        assert len(s.said) == 2 and 'x reading again; 4 bytes of keys were dropped' in s.said[1], s.said
+        s._write(b'y'); drain(r)                                # (straight to the pipe)
+        fill(w)
+        s._write(b'12345678'); s._write(b'abc')
+        assert len(s.said) == 3 and 'not reading' in s.said[2], s.said
+    finally:
+        T.WQ_MAX = was; os.close(r); os.close(w)
+
+
+class Kid:
+    """A stand-in child for _read: wait() blocks till terminate()."""
+    def __init__(s):
+        import threading
+        s.ev = threading.Event(); s.pid = 1
+    def wait(s, timeout=None):
+        s.ev.wait(timeout); return 0
+    def terminate(s): s.ev.set()
+    kill = terminate
+    def poll(s): return 0 if s.ev.is_set() else None
+
+
+def reader(s, fd):
+    """_read on fd for session s (bare()), in a thread, as _start runs it."""
+    import threading
+    wake_r, wake_w = os.pipe()
+    os.set_blocking(wake_r, False); os.set_blocking(wake_w, False)
+    s.wake = wake_w; s.child = Kid(); s.got = []
+    s.feed = s.got.append; s._send_title = lambda: None; s.hide_picture = lambda why: None
+    s._message = lambda text: None; s.web = False
+    t = threading.Thread(target=s._read, args=(fd, s.child, wake_r, wake_w), daemon=True)
+    t.start()
+    return t
+
+
+def test_reader_wakes_for_queued_keys():
+    """A key queued while the reader sits in select (here: behind a lone
+    Esc's gap) is written after the gap, not at select's 0.5 s time-out:
+    the queue's start wakes the reader (X123)."""
+    import socket
+    a, b = socket.socketpair()
+    a.setblocking(False); fd = a.detach()                  # (_read closes it)
+    s = bare(fd)
+    t = reader(s, fd)
+    try:
+        time.sleep(0.1)                                         # (the reader is in its select)
+        t0 = time.monotonic()
+        s._write(b'\x1b'); s._gap(); s._write(b'a')
+        b.settimeout(2); got = b''
+        while len(got) < 2: got += b.recv(16)
+        dt = time.monotonic() - t0
+        assert got == b'\x1ba' and dt < 0.25, (got, dt)
+    finally:
+        s.child.terminate(); b.close(); t.join(5)               # (EOF: the reader ends)
+    assert not t.is_alive() and s.fd is None
+
+
+def test_old_reader_leaves_a_new_session():
+    """The program started again before the old reader has finished (its
+    child gone, the new one running): the old reader's end leaves the new
+    pty, wake pipe, queue and child alone (X123)."""
+    import socket
+    a, b = socket.socketpair()
+    a.setblocking(False); fd = a.detach()
+    s = bare(fd)
+    t = reader(s, fd); old = s.child
+    c, d = socket.socketpair()
+    try:
+        new = Kid()
+        with s.wlock: s.fd = c.fileno(); s.wake = 99; s.wq.append([b'k', False]); s.wq_bytes = 1
+        s.child = new
+        old.terminate(); b.close(); t.join(5)
+        assert not t.is_alive()
+        assert s.fd == c.fileno() and s.wake == 99 and s.wq_bytes == 1 and s.child is new, \
+            (s.fd, s.wake, s.wq_bytes, s.child)
+    finally:
+        c.close(); d.close()
+    # started again while the old reader says its program exited (a Return then)
+    a, b = socket.socketpair()
+    a.setblocking(False); fd = a.detach()
+    s = bare(fd)
+    t = reader(s, fd); old = s.child; new = Kid()
+    def restart(text):                                     # (the old child still there: it goes last)
+        assert s.child is old, s.child
+        s.child = new; s.exited = None
+    s._message = restart
+    old.terminate(); b.close(); t.join(5)
+    assert not t.is_alive() and s.child is new and s.exited is None, (s.child, s.exited)
+
+
+def test_reader_no_data_is_not_the_end():
+    """A read the pty has no data for (EAGAIN: the master is non-blocking)
+    is not the program's end: the reader goes on (X123)."""
+    import socket
+    from gridlink import term as T
+    a, b = socket.socketpair()
+    a.setblocking(False); fd = a.detach()                  # (_read closes it)
+    s = bare(fd)
+    real = os.read; once = []
+    class OS:
+        def __getattr__(o, n): return getattr(os, n)
+        def read(o, f, n):
+            if f == fd and not once: once.append(1); raise BlockingIOError(11, 'EAGAIN')
+            return real(f, n)
+    T.os = OS()
+    t = None
+    try:
+        t = reader(s, fd)
+        b.sendall(b'hello')
+        end = time.time() + 3
+        while not s.got and time.time() < end: time.sleep(0.02)
+        assert once and s.got == [b'hello'] and t.is_alive(), (once, s.got, t.is_alive())
+    finally:
+        T.os = os; s.child.terminate(); b.close()               # (EOF: the reader ends)
+        if t is not None: t.join(5)
+    assert not t.is_alive() and s.fd is None
+
+
+
+def test_restart_closes_its_fds():
+    """Each start opens a pty and a wake-up pipe; the program's end closes
+    all three, so starting it again and again leaks none (X123)."""
+    h = TermHarness(command=child("os.write(1, b'ready\\r\\n')\ntime.sleep(0.2)\n"))
+    try:
+        def fds(): return len(os.listdir('/proc/self/fd'))
+        assert h.wait_text('ready'), (h.log, h.grid.screen_text())
+        h.term.reader.join(5)
+        n0 = fds()
+        for i in range(5):
+            assert h.term.start(), h.log
+            h.term.reader.join(5)
+            assert not h.term.reader.is_alive()
+        assert fds() == n0, (n0, fds())
+    finally:
+        h.close()
+
+
+def select_ready(fd):
+    import select
+    return bool(select.select([fd], [], [], 0)[0])
+
+
 def test_switch_quiesces_chat():
     import threading
     from gridlink.router import Router
