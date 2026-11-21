@@ -14,10 +14,16 @@
 ;  twice, starting at an even and at an odd address (every label inside
 ;  flips), and timed on the PIT (channel 0 in mode 2 while it runs) from
 ;  the message's first byte to its last:
-;    read  K  the kernel's gp_fast_read (count and LF stop in memory)
+;    read  K  the kernel's gp_fast_read as GPIBLOOP 1.0 found it (KGPIB
+;             1.21, before the fast-loop rework: count and LF stop in
+;             memory)
 ;    read  R  the count in CX (LOOP), no LF stop, END ends it
-;    write K  the kernel's gp_fast_write (INC of a word in memory a byte)
+;    write K  the kernel's gp_fast_write as 1.0 found it (INC of a word
+;             in memory a byte)
 ;    write R  without it
+;  (Since 1.22 the kernel's fast loops are built on read 2 and write 9,
+;  below, with the LF stop, the write's ERR check and, from 1.23, the
+;  frame check added.)
 ;  1.1 (after 1.0 on the 1520: read K 70 KB/s, R 129; write K 77, R 88):
 ;    read  K and R at their faster alignment, and 2: R with the spin out
 ;          of line (a byte that is there costs no taken jump but LOOP's)
