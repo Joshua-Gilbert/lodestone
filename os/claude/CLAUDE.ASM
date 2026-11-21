@@ -2678,8 +2678,11 @@ take_snapshot:
 ; ---- running DOS programs -----------------------------------------
 ; flags (1: bit0 capture, bit1 snapshot at exit), timeout (2),
 ; key script length (2), key script, command line.  The timeout is the
-; Pi's own wait: we cannot end a program, so it is skipped here
-op_run: mov     si, reqbuf+2
+; Pi's own wait: we cannot end a program, so it is skipped here.  The
+; last RUN's snapshot block goes first (the Pi has fetched its SCREEN by
+; now): left by a RUN that failed, it took 32 KB from every later program
+op_run: call    snap_free
+        mov     si, reqbuf+2
         lodsb
         mov     [run_flags], al
         lodsw                           ; (the timeout)

@@ -526,6 +526,32 @@ def test_run_script_length_checked():
     T.check(h)
 
 
+def test_run_failed_snap_freed():
+    """A RUN with {SNAP} in its key script that fails before its program runs (F3h, a command line too long
+    for the tail) made the snapshot's block at the top of memory first: the next RUN frees it at its start, so
+    its program gets all the memory again.  It used to stay until a SCREEN reply freed it, which a failed RUN
+    never gets, and every later RUN's program had 32 KB less."""
+    import threading
+    from gridlink import glp
+    h = T.start([], mode='auto')
+    g = h.session.grid
+    snap = (32768 + 11 + 15) // 16                  # (the snapshot's block: SNAPMAX)
+    def call(args):
+        res = {}
+        th = threading.Thread(target=lambda: res.update(r=g.call(glp.OP_RUN, args, timeout=30)))
+        th.start()
+        assert h.run_until(lambda: not th.is_alive(), 60), 'no answer'
+        return res.get('r')
+    long_cmd = b'X' * 130 + b'\0'                   # (no such program: COMSPEC /C, and over the tail's 126)
+    keys = b'\xff\xfe\x00'                          # ({SNAP})
+    st, r = call(struct.pack('<BHH', 0, 10, len(keys)) + keys + long_cmd)
+    assert st == 0xF3 and h.var('snapseg', 2), (st, r, h.var('snapseg', 2))
+    st, r = call(struct.pack('<BHH', 0, 10, 0) + long_cmd)
+    held = [(hex(s), n) for s, o, n in mcbs(h) if o == h.claude_psp and n == snap]
+    assert st == 0xF3 and h.var('snapseg', 2) == 0 and not held, (st, r, h.var('snapseg', 2), held)
+    T.check(h)
+
+
 def test_in_place_ask():
     """An ASK in fragments (Pi frames of 448 bytes; gridlink's own ASKs are one frame), its
     last read in place after the first: the 6 bytes its header went over are put back before open_ask copies
@@ -541,6 +567,7 @@ def test_in_place_ask():
 
 
 T.test_run_script_length_checked = test_run_script_length_checked
+T.test_run_failed_snap_freed = test_run_failed_snap_freed
 T.test_in_place_ask = test_in_place_ask
 
 
