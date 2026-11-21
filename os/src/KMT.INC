@@ -370,31 +370,7 @@ mt_vfr      db      09h, 1Bh
 %if mt_vfr - mt_vrun != MT_NVEC
 %error "mt_vfr: just after mt_vrun (mt_own, mt_pinned)"
 %endif
-mt_fv       times   MT_NFV * 2 dw 0     ; the front task's 09h and 1Bh while
-                                        ;  another runs (mt_vfr's order)
-mt_vr       dw      0                   ; (mt_vrep: the memory, its end, the
-mt_ve       dw      0                   ;  table put back from, at DS:mt_vsb,
-mt_vsb      dw      0                   ;  and 1 if the vector table is done
-mt_vtab     db      0                   ;  too; mt_vfr's from mt_vfs)
-mt_vfs      times   MT_NFV * 2 dw 0
-mt_mv       dd      0                   ; (mt_move: INT 67h AH=57h's block: the
-mt_mvs      db      0                   ;  length, then the source and the
-            dw      0, 0, 0             ;  destination, each its type, handle,
-mt_mvd      db      0                   ;  offset, and segment or page)
-            dw      0, 0, 0
-mt_psv      db      0                   ; (mt_pmap: window 0 as it was)
-mt_hold     times   EMS_NH db 0         ; a parked task's programs' EMS handles:
-mt_hown     times   EMS_NH dw 0         ;  that task (0: none), their owners
-mt_xr       dw      0                   ; (mt_inr: a parked task's own region,
-mt_xe       dw      0                   ;  while its TX is looked at: its own
-                                        ;  vectors into it aren't another's,
-                                        ;  who may be there now; else empty)
-mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
-mt_vp0      dw      0                   ; (mt_vtty: where it was)
-mt_vw       db      0                   ; (mt_vscr: the window's width, its
-mt_vn       db      0                   ;  lines, attribute, rows blanked)
-mt_va       db      0
-mt_vb       db      0
+; (mt_fv to mt_vb: in the BSS, below)
 ; a text mode as the 1520's BIOS sets it (int10.asm VidSetMode; the
 ; tables in at_compat.asm): columns and Mode Control by mode, then the
 ; BIOS data of mode 3, a new task's
@@ -7986,9 +7962,10 @@ CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK + 256 ; (KCRASH.INC: the ring, t
 %else
 CR_BSS      equ     0
 %endif
-MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_TASKS * MT_ENT + MT_INIL + 20h + MW_BSS + MT_SSTK + CR_BSS + 15) / 16
+MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_TASKS * MT_ENT + MT_INIL + 20h + MW_BSS + MT_ZV + MT_SSTK + CR_BSS + 15) / 16
                                         ; (then the lists, a header, KMW's
-                                        ;  sessions, the stack)
+                                        ;  sessions, variables, the stack)
+MT_ZV       equ     mt_zve - mt_zv
 section mttbss
 mt_tx0      resb    TX0_PARAS * 16      ; (at MT_TX0P * 16; no TX_GSN: task 0
                                         ;  never ends)
@@ -7998,6 +7975,33 @@ mt_ini      resb    MT_INIL             ; (mt_lists)
 mt_hdr      resb    20h                 ; (MT_UI: an .EXE's header)
 mw_ses      resb    (MW_MAX + 1) * SE_SIZE  ; (KMW.INC: the sessions)
 mw_tmp      resb    NWIN * 4            ; (mw_raise: the window stack, reordered)
+mt_zv:                                  ; (variables that start as zeros)
+mt_fv       resw    MT_NFV * 2          ; the front task's 09h and 1Bh while
+                                        ;  another runs (mt_vfr's order)
+mt_vr       resw    1                   ; (mt_vrep: the memory, its end, the
+mt_ve       resw    1                   ;  table put back from, at DS:mt_vsb,
+mt_vsb      resw    1                   ;  and 1 if the vector table is done
+mt_vtab     resb    1                   ;  too; mt_vfr's from mt_vfs)
+mt_vfs      resw    MT_NFV * 2
+mt_mv       resd    1                   ; (mt_move: INT 67h AH=57h's block: the
+mt_mvs      resb    1                   ;  length, then the source and the
+            resw    3                   ;  destination, each its type, handle,
+mt_mvd      resb    1                   ;  offset, and segment or page)
+            resw    3
+mt_psv      resb    1                   ; (mt_pmap: window 0 as it was)
+mt_hold     resb    EMS_NH              ; a parked task's programs' EMS handles:
+mt_hown     resw    EMS_NH              ;  that task (0: none), their owners
+mt_xr       resw    1                   ; (mt_inr: a parked task's own region,
+mt_xe       resw    1                   ;  while its TX is looked at: its own
+                                        ;  vectors into it aren't another's,
+                                        ;  who may be there now; else empty)
+mt_vs       resb    VIDLEN              ; (mt_v10: the BIOS data worked on)
+mt_vp0      resw    1                   ; (mt_vtty: where it was)
+mt_vw       resb    1                   ; (mt_vscr: the window's width, its
+mt_vn       resb    1                   ;  lines, attribute, rows blanked)
+mt_va       resb    1
+mt_vb       resb    1
+mt_zve:
             resb    MT_SSTK             ; (mt_swnow's stack)
 %ifdef CRASHLOG
 mt_crb      resb    CR_N * 16           ; (KCRASH.INC)
