@@ -40,8 +40,8 @@ term_type   resb 1              ; 0 normal, 1 ^C, 2 critical error, 3 TSR
 onebyte     resb 1
 cur_year    resw 1
 cur_mon     resb 1
-cur_day     resb 1
-            alignb 2
+cur_day     resb 1              ; (just after cur_mon: clock_init sets both
+            alignb 2            ;  as one word)
 kstack_end  resb 1536           ; INT 21h stack (a screen capture may use
 kstack_top:                     ;  its bottom 1 KB as a buffer: CAP_SEG)
             resb 512
@@ -819,14 +819,22 @@ clock_init:
         pop     dx
         cmp     ax, 1980
         jb      .x
-        mov     [cur_year], ax
+        xchg    ax, bx                  ; BX = the year
         mov     al, dh
-        call    bcd2bin
-        mov     [cur_mon], al
+        call    bcd2bin                 ; (AH = 0)
+        mov     cl, al                  ; CL = the month, 1-12
+        dec     ax
+        cmp     al, 12 - 1
+        ja      .x
         mov     al, dl
         call    bcd2bin
-        mov     [cur_day], al
-.x:     ret
+        mov     ch, al                  ; CH = the day, 1-31
+        dec     ax
+        cmp     al, 31 - 1
+        ja      .x                      ; (else 1980-01-01, as with CF: a
+        mov     [cur_year], bx          ;  CMOS that lost its battery may
+        mov     [cur_mon], cx           ;  answer anything; mdays indexes a
+.x:     ret                             ;  table by the month)
 
 bcd2bin:                                ; AL BCD -> AL binary
         push    cx

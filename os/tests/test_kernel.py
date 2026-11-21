@@ -1225,6 +1225,23 @@ def t_gpifc():
     check('IFC: four pulses (the start-up, 3x AH=01h), each 100 us to 20 ms of simulated time',
           len(pulses) == 4 and all(100 <= p <= 20000 for p in pulses) and not k.crashed, ['%.0f' % p for p in pulses])
 
+def t_rtcdate():
+    """The date from the RTC at start-up (INT 1Ah AH=04h): a month outside 1-12 or a day outside 1-31 (a CMOS that
+    lost its battery) leaves 1980-01-01, as a stopped clock does; month 0 had indexed the byte before the month
+    table, 13 and up past it.  A valid date is taken."""
+    for cx, dx, want in ((0x2026, 0x1231, (2026, 12, 31)), (0x2026, 0x0101, (2026, 1, 1)), (0x2026, 0x0015, (1980, 1, 1)),
+                         (0x2026, 0x1315, (1980, 1, 1)), (0x2026, 0x0600, (1980, 1, 1)), (0x2026, 0x0632, (1980, 1, 1)),
+                         (0x2026, 0xFFFF, (1980, 1, 1))):
+        k = ktest.KPC(image('rtc.img'))
+        def int1a(f=k.pc.int1a, pc=k.pc, cx=cx, dx=dx):
+            if pc.r('ah') == 4: pc.w('cx', cx); pc.w('dx', dx); pc.cf(0)
+            else: f()
+        k.pc.int1a = int1a
+        k.start()
+        got = (k.u16('cur_year'), k.rd('cur_mon', 1)[0], k.rd('cur_day', 1)[0])
+        check('RTC %04X %04X: the date %04d-%02d-%02d, the Executive up' % ((cx, dx) + want),
+              got == want and not k.crashed and k.pc.mode() == 0x40, (got, k.where()))
+
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (they would be what ex_rel held from
@@ -5578,7 +5595,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_exerel, t_exehuge, t_divide, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_rtcdate, t_exerel, t_exehuge, t_divide, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
