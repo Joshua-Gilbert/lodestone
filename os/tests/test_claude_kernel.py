@@ -362,8 +362,9 @@ def test_run_memory_and_reconnect():
     same = lambda d: {k: v for k, v in d.items() if k != 'date'}
     assert same(h.session.hello) == same(hello) and hello['cwd'] == 'A:\\', (h.session.hello, hello)
     assert run(3, 'and again') == (got, mine, out)
-    g5 = run(5, 'and with a mark', 3)[0]
-    assert g5 == got - (32768 + 11 + 15) // 16 - 1, (g5, got)       # (the snapshot's block and its MCB)
+    g5, m5 = run(5, 'and with a mark', 3)[:2]
+    assert g5 == got - (32768 + 11 + 15) // 16 - 1 - (m5 - mine), (g5, got, m5, mine)  # (the snapshot's block and
+                                                    #  its MCB, and the paragraph the 3-byte script may add to ours)
     print('     with {SNAP} in its script %d paragraphs (%.1f KB)' % (g5, g5 / 64))
     T.check(h, fails=1)
 
@@ -654,6 +655,39 @@ def test_nak_resend_keeps_the_check():
 
 
 T.test_nak_resend_keeps_the_check = test_nak_resend_keeps_the_check
+
+
+def test_naks_fail_the_link():
+    """A Pi that NAKs every frame of the GRiD's (the GRiD's frames damaged on the way, the Pi's intact): each NAK
+    is an answer, and each resend restarted link_wait's 2 s, so the GRiD resent for ever with 'Connected' on the
+    band.  Now the 8th NAK in a row fails the link (the frame and seven resends), a NAK doesn't count as the bridge
+    answering, and after three such runs the band says no answer comes; the frames getting through again, the
+    link comes back and the chat goes on."""
+    h = T.start([T.reply(('text', 'Back after the NAKs.'))])
+    assert h.run_until(h.idle, 20), h.screen()
+    st = {'on': True, 'frames': []}
+    to_pi = h.nano.to_pi
+    def tp(data, t):
+        if st['on'] and len(data) >= 8 and data[0] == 0x47:       # (a GRiD frame: the Pi answers NAK)
+            st['frames'].append(h.var('n_fail', 2))
+            h.link._answer_nak()
+            return
+        return to_pi(data, t)
+    h.nano.to_pi = tp
+    f0, t0 = h.var('n_fail', 2), h.m.us
+    failed = h.run_until(lambda: h.var('n_fail', 2) >= f0 + 3 and 'No answer from the bridge' in h.screen(), 15)
+    dt = (h.m.us - t0) / 1e6
+    per = [st['frames'].count(f0 + i) for i in range(3)]
+    st['on'] = False
+    assert failed and per == [8, 8, 8] and dt < 6, (failed, dt, per, h.var('n_fail', 2), h.screen())
+    print('     three failed runs of 8 NAKs in %.1f s simulated' % dt)
+    assert h.run_until(lambda: 'Reconnected' in h.screen(), 20) and h.run_until(h.idle, 20), h.screen()
+    assert h.turn('hello again', sim_s=60), h.screen()
+    assert 'NAKs.' in h.screen(), h.screen()
+    T.check(h, fails=h.var('n_fail', 2))
+
+
+T.test_naks_fail_the_link = test_naks_fail_the_link
 
 P7_DATA = b''.join(b'p7 line %05d: the quick brown fox jumps over the lazy dog %s\r\n' % (i, b'#' * (i % 11))
                    for i in range(480))         # (36 KB: three writes, three reads)

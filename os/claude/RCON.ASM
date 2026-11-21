@@ -1580,7 +1580,8 @@ lstate      resb 1
 TERMLINK_RESET_VARS
 pend_chunk  resw 1
 done_type   resb 1
-t_sent      resw 1
+            alignb 2                    ; (the words from here even, whatever
+t_sent      resw 1                      ;  TERMLINK_RESET_VARS holds)
 t_last      resw 1
 t_reset     resw 1
 n_fail      resw 1
