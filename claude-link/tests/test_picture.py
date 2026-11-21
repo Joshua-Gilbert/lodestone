@@ -187,6 +187,42 @@ def test_plot_and_clicks():
     PL.Plot([{'y': [1, float('nan'), None, 3]}])
 
 
+def test_click_search():
+    """at()'s nearest point is the one a scan of every point finds (ties:
+    the first), from an index by x: a click on 200,000 points is quick (P12)."""
+    import random
+    random.seed(5)
+    def scan(p, x, y):
+        best = None
+        for i, (px, py) in enumerate(p.pts):
+            for k in range(len(px)):
+                if px[k] is None or py[k] is None: continue
+                d = (px[k] - x) ** 2 + (py[k] - y) ** 2
+                if best is None or d < best[0]: best = (d, i, k)
+        return (best[1], best[2]) if best is not None and best[0] <= 40 ** 2 else None
+    p = PL.Plot([{'x': [random.uniform(0, 10) for _ in range(300)], 'y': [random.uniform(0, 5) for _ in range(300)],
+                  'style': 'points'},
+                 {'x': [1, 2, 2, 3, 4], 'y': [1, None, 2, 2, 1]},
+                 {'y': [3, 3, 3, 3, 3, 3]}, {'x': [5, 5, 6], 'y': [4, 4, 4]}, {'x': [5, 6], 'y': [4, 4]}])
+    c = p.at(int(p.ax.px(5)), int(p.ay.px(4)))['nearest']              # a tie: the first series' first
+    assert (c['series'], c['index']) == ('series 4', 0), c
+    for _ in range(300):
+        x, y = random.randint(0, PL.W - 1), random.randint(0, PL.H - 1)
+        n = p.at(x, y)['nearest']
+        got = None if n is None else ([sr['name'] or 'series %d' % (i + 1) for i, sr in enumerate(p.series)]
+                                      .index(n['series']), n['index'])
+        assert got == scan(p, x, y), (x, y, got, scan(p, x, y))
+    xs = [i / 1000 for i in range(200000)]
+    t = time.time()
+    big = PL.Plot([{'x': xs, 'y': [math.sin(v) for v in xs]}])
+    assert time.time() - t < 2.0, time.time() - t
+    clicks = [(int(big.ax.px(v)), int(big.ay.px(math.sin(v))) + 3) for v in range(5, 200, 20)]
+    t = time.time()
+    for x, y in clicks: assert big.at(x, y)['nearest'] is not None
+    assert (time.time() - t) / len(clicks) < 0.005, (time.time() - t) / len(clicks)   # (a scan of all: ~30 ms)
+    assert scan(big, *clicks[3]) == (0, big.at(*clicks[3])['nearest']['index'])
+
+
 def test_tick_labels():
     assert PL.tick_label(1.5e9, 0.5e9, 9) == '1.5G'
     assert PL.tick_label(250, 50, 0) == '250'
