@@ -1624,18 +1624,18 @@ do_if:  mov     byte [if_not], 0
         call    skipsp
         jmp     run_cmd
 .x:     ret
-.syn:   jmp     err_syntax
+.syn:   jmp     err_syntax              ; (do_for's too)
 
 ; FOR %V IN (set) DO command: the command once for each item of the set
 ; (the names that match, for one with * or ?), the item in place of %V
-do_for: cmp     byte [for_on], 0
-        jne     .syn                    ; (not one inside another)
-        lodsb
+do_for: cmp     byte [for_on], 0        ; (its syntax errors: do_if's .syn,
+        jne     do_if.syn               ;  just above, in short reach; not
+        lodsb                           ;  one FOR inside another)
         cmp     al, '%'
-        jne     .syn
+        jne     do_if.syn
         lodsb
         cmp     al, ' '
-        jbe     .syn
+        jbe     do_if.syn
         mov     [for_var], al
         call    getarg1
         push    si
@@ -1643,15 +1643,15 @@ do_for: cmp     byte [for_on], 0
         mov     di, s_in
         call    streqi
         pop     si
-        jne     .syn
+        jne     do_if.syn
         call    skipsp
         lodsb
         cmp     al, '('
-        jne     .syn
+        jne     do_if.syn
         mov     [for_item], si          ; (for now: the set's start)
 .p:     lodsb
         or      al, al
-        jz      .syn
+        jz      do_if.syn
         cmp     al, ')'
         jne     .p
         mov     byte [si-1], 0
@@ -1661,10 +1661,10 @@ do_for: cmp     byte [for_on], 0
         mov     di, s_do
         call    streqi
         pop     si
-        jne     .syn
+        jne     do_if.syn
         call    skipsp
         cmp     byte [si], 0
-        je      .syn
+        je      do_if.syn
         mov     [for_cmdp], si          ; (for now: the command's start)
         mov     bx, FB_PARAS            ; the set, the command and the DTA
         mov     ah, 48h                 ;  in a block of their own, out of
@@ -1742,7 +1742,6 @@ do_for: cmp     byte [for_on], 0
         mov     byte [for_on], 0
         dec     byte [for_n]
         jmp     for_free
-.syn:   jmp     err_syntax
 
 ; FOR's block given back, and the DTA ours again (DS = CS)
 for_free:
