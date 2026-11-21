@@ -1238,6 +1238,108 @@ def t_gpifc():
     check('... each held for 1500 port 61h reads, the count KGPIB.INC gives (CX 1499 to 1 at the loop\'s block)',
           len(reads) == 4 and all(r == (1499, 1) for r in reads), reads)
 
+def t_gpcmdfail():
+    """A command byte the bus doesn't take (sim7210 gives no CO after it): INT 60h's write (AH=02h) and read
+    (AH=03h) to device 6 fail at the next command or at the wait after the last one, with the time-out (AX 1)
+    after one command's time-out (9 ticks), not two: an exit that let the failure through would wait again at the
+    next command, or for data (2 s).  After UNL, MTA (MLA) and LAD (TAD) in turn; and AH=06h's SDC, at the UNL
+    after it."""
+    src = os.path.join(OUT, 'GPCF.ASM')
+    open(src, 'w').write("""cpu 286
+org 100h
+        xor     ax, ax
+        mov     es, ax
+        mov     ax, [es:46Ch]
+        mov     [t0], ax
+        push    ds
+        pop     es
+        mov     al, [82h]
+        and     al, 0DFh
+        cmp     al, 'R'
+        je      .r
+        cmp     al, 'C'
+        je      .c
+        mov     ax, 0201h
+        mov     bx, 6
+        mov     cx, 3
+        mov     si, msg
+        int     60h
+        jmp     .p
+.r:     mov     ax, 0300h
+        mov     bx, 6
+        mov     cx, 64
+        mov     di, buf
+        int     60h
+        jmp     .p
+.c:     mov     ax, 0600h
+        mov     bx, 6
+        int     60h
+.p:     push    ax
+        xor     ax, ax
+        mov     es, ax
+        mov     ax, [es:46Ch]
+        sub     ax, [t0]
+        mov     [dtk], ax
+        pop     ax
+        push    ax
+        mov     al, ah
+        call    hx
+        pop     ax
+        call    hx
+        mov     dl, ' '
+        mov     ah, 2
+        int     21h
+        mov     ax, [dtk]
+        call    hx
+        mov     ax, 4C00h
+        int     21h
+hx:     push    ax
+        shr     al, 4
+        call    .d
+        pop     ax
+        and     al, 15
+.d:     add     al, '0'
+        cmp     al, '9'
+        jbe     .p
+        add     al, 7
+.p:     mov     dl, al
+        mov     ah, 2
+        int     21h
+        ret
+t0      dw      0
+dtk     dw      0
+msg     db      'ID?'
+buf     times 64 db 0
+""")
+    com = os.path.join(OUT, 'GPCF.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    chip = sim7210.NEC7210(sim7210.bus())
+    hold = [None]                                   # (the command byte after which no CO comes)
+    def cdor(v, f=chip.cdor):
+        atn = chip.atn
+        f(v)
+        if atn and v == hold[0]: chip.co = False
+    chip.cdor = cdor
+    k = ktest.KPC(image('gpcf.img', os.path.join(GOS, 'src', 'LCMD.COM'), com), chip=chip); k.start()
+    sh = Shell(k)
+    o = sh.run('gpcf w')
+    check('GPCF W with the bus answering: no error', o.split('\n')[0].startswith('0000 '), o)
+    my = int(re.search(r'^gp_MYADDR\s+equ\s+(\d+)', open(os.path.join(GOS, 'src', 'KGPIB.INC')).read(), re.M).group(1))
+    for how, cmds in (('w', ((0x3F, 'UNL: MTA'), (0x40 + my, 'MTA: LAD'), (0x26, 'LAD: the wait after it'))),
+                      ('r', ((0x3F, 'UNL: MLA'), (0x20 + my, 'MLA: TAD'), (0x46, 'TAD: the wait after it'))),
+                      ('c', ((0x04, 'SDC: the UNL after it'),))):
+        for b, what in cmds:
+            hold[0] = b
+            o = sh.run('gpcf ' + how)
+            hold[0] = None
+            r = o.split('\n')[0].split()
+            check('INT 60h %s, no CO after %s fails: AX 1 (time-out) after one time-out (9-12 ticks)'
+                  % ({'w': 'AH=02h', 'r': 'AH=03h', 'c': 'AH=06h (SDC)'}[how], what), len(r) == 2 and r[0] == '0001'
+                  and 9 <= int(r[1], 16) <= 12 and not k.crashed, o)
+    sh.run('gpcf w')
+    o = sh.run('gpcf r')
+    check('... and then ID? written and its answer read: no error', o.split('\n')[0].startswith('0000 ') and not k.crashed, o)
+
 def t_rtcdate():
     """The date from the RTC at start-up (INT 1Ah AH=04h): a year outside 1980-2099 (f_2B's range), a month
     outside 1-12, a day past the month's length (February 29 in a leap year only) or a digit that isn't BCD (a
@@ -5816,8 +5918,240 @@ def t_cmdword():
     check('a program named by a path of 70 characters ("%s hello"): its tail is " hello" (%r)' % (p, t),
           t is not None and t.strip() == b'hello', t)
 
+XITS = r"""cpu 286
+org 100h
+%macro dos 0
+        int     21h
+        mov     [sdx], dx
+        call    pr
+%endmacro
+        push    ds
+        pop     es
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, n_a
+        int     21h
+        mov     [h1], ax
+        mov     ah, 40h
+        mov     bx, [h1]
+        mov     cx, 10
+        mov     dx, dig
+        int     21h
+        mov     ah, 56h                 ; RENAME of an open file
+        mov     dx, n_a
+        mov     di, n_c
+        dos
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, n_b
+        int     21h
+        mov     bx, ax
+        mov     ah, 3Eh
+        int     21h
+        mov     ah, 56h                 ; RENAME onto a file there
+        mov     dx, n_b
+        mov     di, n_a
+        dos
+        mov     ah, 3Ah                 ; RMDIR ""
+        mov     dx, n_e
+        dos
+        mov     ah, 3Ah                 ; RMDIR "\" (the current directory)
+        mov     dx, n_r
+        dos
+        mov     ah, 39h                 ; RMDIR "D\" (a trailing \)
+        mov     dx, n_d
+        int     21h
+        mov     ah, 3Ah
+        mov     dx, n_ds
+        dos
+        mov     ah, 3Bh                 ; RMDIR "\" from D (the root: no last
+        mov     dx, n_d                 ;  name, not the current directory)
+        int     21h
+        mov     ah, 3Ah
+        mov     dx, n_r
+        dos
+        mov     ah, 3Bh
+        mov     dx, n_r
+        int     21h
+        mov     ah, 3Ah
+        mov     dx, n_d
+        int     21h
+        mov     ah, 39h                 ; MKDIR ""
+        mov     dx, n_e
+        dos
+        mov     ah, 3Bh                 ; CHDIR ""
+        mov     dx, n_e
+        dos
+        mov     ax, 4200h               ; a seek past the end, then a read
+        mov     bx, [h1]
+        xor     cx, cx
+        mov     dx, 100
+        dos
+        mov     ah, 3Fh
+        mov     bx, [h1]
+        mov     cx, 10
+        mov     dx, buf
+        dos
+        mov     ax, 4409h               ; IOCTL 09h, drive A:
+        mov     bl, 1
+        mov     dx, 0FFFFh
+        dos
+        call    pdx
+        mov     ax, 440Ah               ; IOCTL 0Ah, the open file
+        mov     bx, [h1]
+        mov     dx, 0FFFFh
+        dos
+        call    pdx
+        mov     ah, 3Eh
+        mov     bx, [h1]
+        int     21h
+        mov     si, drvs                ; FIND NEXT with the DTA's drive byte changed
+.f:     lodsb
+        or      al, al
+        jz      .fx
+        push    ax
+        mov     ah, 4Eh
+        xor     cx, cx
+        mov     dx, n_w
+        int     21h
+        pop     ax
+        mov     [80h], al
+        mov     ah, 4Fh
+        dos
+        jmp     .f
+.fx:    mov     ah, 41h
+        mov     dx, n_a
+        int     21h
+        mov     ah, 41h
+        mov     dx, n_b
+        int     21h
+        mov     ax, 4C00h
+        int     21h
+pr:     jc      .e
+        push    ax
+        mov     al, 'K'
+        call    pc
+        pop     ax
+        push    ax
+        mov     al, ah
+        call    hx
+        pop     ax
+        call    hx
+        jmp     .sp
+.e:     push    ax
+        mov     al, 'E'
+        call    pc
+        pop     ax
+        call    hx
+.sp:    mov     al, ' '
+        jmp     pc
+pdx:    mov     al, 'D'
+        call    pc
+        mov     ax, [sdx]
+        push    ax
+        mov     al, ah
+        call    hx
+        pop     ax
+        call    hx
+        mov     al, ' '
+        jmp     pc
+hx:     push    ax
+        shr     al, 4
+        call    .d
+        pop     ax
+        and     al, 15
+.d:     add     al, '0'
+        cmp     al, '9'
+        jbe     pc
+        add     al, 7
+pc:     push    ax
+        push    dx
+        mov     dl, al
+        mov     ah, 2
+        int     21h
+        pop     dx
+        pop     ax
+        ret
+n_a     db      'A.TXT', 0
+n_b     db      'B.TXT', 0
+n_c     db      'C.TXT', 0
+n_e     db      0
+n_r     db      '\', 0
+n_d     db      'D', 0
+n_ds    db      'D\', 0
+n_w     db      '*.*', 0
+dig     db      '0123456789'
+drvs    db      26, 2, 3, 0
+h1      dw      0
+sdx     dw      0
+buf     times 10 db 0
+"""
+def t_errexits():
+    """The answers of error exits that go through a 2-byte jcc to a hub (XITS.COM; each answer as origin/main gave
+    it before those jumps were made short): RENAME of an open file 5, RENAME onto a file there 5, RMDIR, MKDIR and
+    CHDIR of "" 3, RMDIR of "\\" 16 (the current directory) and from a subdirectory 5 (no last name), of "D\\" 3,
+    a read after a seek past the end 0 bytes and no error, IOCTL 4409h (drive A:) and 440Ah (an open
+    file) no error, DX 0 (local), AX kept; FIND NEXT after FIND FIRST with the DTA's drive byte made Z:, B: (no disk:
+    not mounted) or C: (none here): 18.  ^C typed at INT 21h 01h and 08h: "^C", the program ends there."""
+    src = os.path.join(OUT, 'XITS.ASM'); open(src, 'w').write(XITS)
+    com = os.path.join(OUT, 'XITS.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    cc = os.path.join(OUT, 'CCWAIT.COM')            # CCWAIT 1 or 8: that call, then "AFTER", exit code 5
+    open(cc, 'wb').write(bytes([0xB4, 0x01, 0x80, 0x3E, 0x82, 0x00, 0x38, 0x75, 0x02, 0xB4, 0x08, 0xCD, 0x21,
+                                0xBA, 0x19, 0x01, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x05, 0x4C, 0xCD, 0x21]) + b'AFTER$')
+    k = ktest.KPC(image('xits.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, cc)); k.start()
+    sh = Shell(k)
+    o = sh.run('xits')
+    want = 'E05 E05 E03 E10 E03 E05 E03 E03 K0064 K0000 K4409 D0000 K440A D0000 E12 E12 E12'
+    check('XITS: RENAME open 5, onto a file 5; RMDIR "" 3, "\\" 16 (current), "D\\" 3, "\\" from D 5; MKDIR, CHDIR '
+          '"" 3; a seek past the end, a read: 0 bytes; IOCTL 09h, 0Ah: DX 0; FIND NEXT on Z:, B:, C: 18 (%s)' % want,
+          o.split('\n')[0].strip() == want and not k.crashed, o)
+    files = sorted(fatcheck.read_files(k.pc.drives[0].img))
+    check('... its files deleted again, none renamed', files == ['A:\\CCWAIT.COM', 'A:\\LCMD.COM', 'A:\\LODE.SYS', 'A:\\XITS.COM'], files)
+    for fn in '18':
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key('ccwait ' + fn); k.key(ktest.ENTER)
+        k.key(0x2E03)
+        o = k.pc.text_screen().rstrip()
+        check('^C at INT 21h 0%sh: "^C", the program ends there (no "AFTER", exit code not its 5), the prompt back' % fn,
+              '^C' in o and 'AFTER' not in o and k.u16('last_exit') & 0xFF != 5 and o.endswith('A:\\>') and not k.crashed,
+              (o[-200:], hex(k.u16('last_exit'))))
+    # a full root directory (224 entries): MKDIR finds no slot, RENAME (which takes a new slot for the new name)
+    # neither
+    src = os.path.join(OUT, 'FULLD.ASM')
+    open(src, 'w').write(XITS.split('pr:     jc')[0].split('push    ds')[0] + """
+        push    ds
+        pop     es
+        mov     ah, 39h
+        mov     dx, n_x
+        dos
+        mov     ah, 56h
+        mov     dx, n_f
+        mov     di, n_z
+        dos
+        mov     ax, 4C00h
+        int     21h
+pr:     jc""" + XITS.split('pr:     jc')[1].split('n_a     db')[0] + """
+n_x     db      'X', 0
+n_f     db      'F000.DAT', 0
+n_z     db      'Z.DAT', 0
+sdx     dw      0
+""")
+    full = os.path.join(OUT, 'FULLD.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', full, src], check=True)
+    empty = os.path.join(OUT, 'EMPTY.DAT'); open(empty, 'wb').write(b'')
+    k = ktest.KPC(image('fulld.img', os.path.join(GOS, 'src', 'LCMD.COM'), full,
+                        *['F%03d.DAT=%s' % (i, empty) for i in range(220)])); k.start()
+    n = sum(1 for i in range(224) if k.pc.drives[0].img[19 * 512 + i * 32] not in (0, 0xE5))
+    sh = Shell(k)
+    o = sh.run('fulld')
+    files = fatcheck.read_files(k.pc.drives[0].img)
+    check('a full root (%d of 224 entries): MKDIR X 5, RENAME F000.DAT Z.DAT 5, nothing made or renamed' % n,
+          n == 224 and o.split('\n')[0].strip() == 'E05 E05' and 'A:\\F000.DAT' in files and 'A:\\Z.DAT' not in files
+          and 'A:\\X' not in files and not k.crashed, (n, o, len(files)))
+
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
