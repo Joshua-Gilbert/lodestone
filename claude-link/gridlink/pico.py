@@ -73,7 +73,7 @@ class PicoProto:
 
     def __init__(s, write, addr=7, log=print):
         s.write, s.addr, s.log = write, addr, log
-        s.buf = bytearray(); s.firmware = ''; s.early = False; s.holds = s.holds_glp = False
+        s.buf = bytearray(); s.skip = False; s.firmware = ''; s.early = False; s.holds = s.holds_glp = False
         s.can_quiet = False; s.quiet = False    # (CONFIG bit 2: SRQ never driven, the status byte as ever)
         s.can_ring = False                      # (WAKE: the GRiD's screen saver ended by a ring, CLAUDE 1.14)
         s.sdcs = 0                             # SDCs from the GRiD (resident Claude's background: it stopped)
@@ -94,20 +94,34 @@ class PicoProto:
         with s.lock: return s._feed(data)
 
     def _feed(s, data):
+        # By runs between 0x00s, not bytes (pico-bridge's Deframer.feed, protocol.py): each run but the last
+        # ends a frame; the last waits in buf for the rest.  A frame past 4096 bytes is dropped up to its 0x00.
         out = bytearray()
-        for b in data:
-            if b:
-                s.buf.append(b)
-                if len(s.buf) > 4096: s.buf.clear(); s.stats['bad_frames'] += 1
+        runs = bytes(data).split(b'\0')
+        last = len(runs) - 1
+        for i, run in enumerate(runs):
+            if s.skip:
+                if i == last: break
+                s.skip = False; continue
+            if s.buf or i == last:
+                s.buf += run; run = s.buf
+            if len(run) > 4096:                 # no frame is this long: resynchronise at the next 0x00
+                s.buf.clear(); s.stats['bad_frames'] += 1
+                s.skip = i == last
                 continue
-            if not s.buf: continue
+            if i == last: break
+            if not run: continue
             try:
-                f = cobs_decode(bytes(s.buf))
+                f = cobs_decode(bytes(run))
             except ValueError:
-                s.stats['bad_frames'] += 1; s.buf.clear(); continue
+                f = None; s.stats['bad_frames'] += 1
             s.buf.clear()
             if f: out += s._frame(f)
         return bytes(out)
+
+    def resync(s):
+        """A new port: no bytes from the old one's last frame."""
+        s.buf.clear(); s.skip = False
 
     def _frame(s, f):
         t = f[0]
@@ -409,7 +423,7 @@ class PicoBridge(PicoLink):
             except Exception as e:
                 s._once('bridge: cannot open %s (%s)' % (p, e)); continue
             s.ser, s.port = ser, p
-            s.proto.buf.clear()
+            s.proto.resync()
             s.proto.hello()
             t_end = time.monotonic() + 3
             while time.monotonic() < t_end and not s.proto.connected:
