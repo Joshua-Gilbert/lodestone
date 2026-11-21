@@ -83,6 +83,10 @@ find_first:
         int     21h
         ret
 
+..@wr_big:                              ; (op_write's: no NUL in the request,
+        mov     al, 0F0h                ;  F0h; here, in short reach of its
+        jmp     reply0                  ;  loop and out of op_read's way)
+
 ; offset (4), length (2), path
 op_read:
         mov     dx, reqbuf+8
@@ -132,16 +136,16 @@ op_read:
 
 ; mode (1: 0 create, 1 at offset, 2 append), offset (4), path, data
 op_write:
-        mov     si, reqbuf+7
-.z:     lodsb
-        or      al, al
-        jnz     .z
-        mov     [wr_data], si
-        mov     cx, reqbuf
-        add     cx, [rq_len]
-        sub     cx, si
-        mov     [wr_len], cx
-        mov     dx, reqbuf+7
+        mov     dx, reqbuf+7            ; (the path)
+        mov     di, dx
+        mov     cx, [rq_len]            ; its NUL within the request, else
+        sub     cx, 7                   ;  F0h, as for a RUN's script past it
+        jbe     ..@wr_big               ;  (the same bytes as the unbounded
+        xor     al, al                  ;  scan before, so op_read.errc stays
+        repne   scasb                   ;  in short reach below)
+        jne     ..@wr_big
+        mov     [wr_data], di
+        mov     [wr_len], cx            ; (what is left after it: the data)
         cmp     byte [reqbuf+2], 0
         jne     .open
         xor     cx, cx
@@ -277,7 +281,9 @@ op_settime:
         mov     dl, [reqbuf+5]
         mov     ah, 2Bh
         int     21h
-        mov     ch, [reqbuf+6]
+        inc     al                      ; (FFh: a date DOS refuses, 1980-2099
+        jz      .bad                    ;  only: then the century's DIV below
+        mov     ch, [reqbuf+6]          ;  can't overflow)
         mov     cl, [reqbuf+7]
         mov     dh, [reqbuf+8]
         xor     dl, dl
@@ -319,6 +325,8 @@ op_settime:
         call    draw_title
         xor     al, al
         jmp     reply0
+.bad:   mov     al, 0Dh                 ; (DOS's "invalid data"; nothing set)
+        jmp     reply0
 
 %ifdef PROFILE
 op_prof:                                ; (CLAUDEP: gridlink.bench --prof)
@@ -343,7 +351,8 @@ op_gpib:
         call    gg_call
         mov     [GP_OTMO], ax
         mov     ax, [rq_len]
-        sub     ax, 9
+        sub     ax, 9                   ; (the 9 bytes before the data, which
+        jb      .bad                    ;  may be none: fewer, 4)
         mov     [gp_dlen], ax
         mov     cx, [reqbuf+7]
         cmp     cx, IOSIZE - 2

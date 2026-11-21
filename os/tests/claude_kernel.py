@@ -162,6 +162,9 @@ OPS_PROBE = [
     ('gpib remote, none', 0x20, _gp(8, 20), 0, b''),
     ('gpib op 10', 0x20, _gp(10, 29), 4, b''),
     ('op 0Bh, none such', 0x0B, b'', {'claude': 0xFF, 'rcon': 0xF6}, b''),
+    ('write, no NUL in the request', 4, b'\0' + struct.pack('<I', 0) + b'A:\\NONUL.TXT', 0xF0, 0),
+    ('gpib clear, 8 bytes', 0x20, _gp(5, 29)[:6], 4, b''),           # (under the 9 before the data: refused)
+    ('settime, year 30000', 0x30, struct.pack('<HBBBBB', 30000, 1, 1, 0, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),
 ]
 
 def ops_want(prog):
