@@ -232,8 +232,7 @@ f_4B:   cmp     byte [bp+F_AX], 0
         mov     word [ex_max], 0FFFFh
         jmp     .env
 .bg:    jmp     .big                    ; (too big: a 2-byte jcc to it, not
-        db      90h                     ;  taken when it fits; the pad, never
-                                        ;  run, keeps the load loops' parity)
+                                        ;  taken when it fits)
 .exe:   mov     byte [ex_isexe], 1
         mov     ax, [ex_hdr+4]          ; pages
         mov     dx, [ex_hdr+2]          ; bytes in the last page
@@ -529,6 +528,10 @@ f_4B:   cmp     byte [bp+F_AX], 0
         push    cs
         pop     es
         jmp     short .big
+        db      90h                     ; (a pad, never run: with .bg's hub the
+                                        ;  environment scan, the name copy, the
+                                        ;  load and relocation loops, .el, .nm,
+                                        ;  .ld and .rp, stay even)
 .e2s:   mov     ax, 11                  ; bad format
 .e2:    push    ax                      ; load failed: give everything back
         push    es

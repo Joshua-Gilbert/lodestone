@@ -814,8 +814,8 @@ f_41:   call    get_path                ; DELETE
         call    dev_lookup
         mov     ax, 2                   ; (CF kept)
         jc      .e
-.acc:   mov     ax, 5
-.e:     jmp     fail
+.acc:   mov     ax, 5                   ; (MKDIR's exits too, f_39: if these
+.e:     jmp     fail                    ;  change, those do)
 
 f_39:   call    get_path                ; MKDIR (the checks before the slot:
         jc      f_41.e                  ;  to f_41's exits, the same code, as
@@ -889,8 +889,8 @@ f_39:   call    get_path                ; MKDIR (the checks before the slot:
         call    fat_set
 .e4:    pop     ax
         jmp     .e
-.acc:   mov     ax, 5
-.e:     jmp     fail
+.acc:   mov     ax, 5                   ; (RMDIR's exits too, f_3A: if these
+.e:     jmp     fail                    ;  change, those do)
 
 section .bss
 new_dir     resw 1
@@ -920,6 +920,10 @@ find_dir:
         stc
         ret
 
+        db      90h                     ; (a pad, never run: the walk over the
+                                        ;  directory's entries, .chk, .ck and
+                                        ;  .nx, even, and f_3B, f_47 at their
+                                        ;  parity; h2sft's pad takes it back)
 f_3A:   call    get_path                ; RMDIR
         jc      f_39.e                  ; (f_39's exits, as f_39 f_41's)
         call    find_dir
@@ -986,10 +990,8 @@ f_3A:   call    get_path                ; RMDIR
 .np3:   stc                             ;  flags dev_lookup's)
         mov     ax, 3                   ; (CF kept)
         jc      .e
-.acc:   mov     ax, 5
-.e:     jmp     fail
-        db      90h                     ; (a pad, never run: f_3B, f_47 at their
-                                        ;  parity; h2sft's pad takes it back)
+.acc:   mov     ax, 5                   ; (CHDIR's .e too, f_3B: if this changes,
+.e:     jmp     fail                    ;  that does)
 f_3B:   call    get_path                ; CHDIR
         jc      f_3A.e                  ; (f_3A's exit, the same `jmp fail')
         call    find_dir
