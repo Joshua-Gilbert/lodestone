@@ -153,8 +153,8 @@ def ini(text):
 # With the 1520's drive timing (disk_model 'real': seeks, rotation) a copy's time depends on where its files are on
 # the disk, and so on the system files' sizes in front of them: LODEMT.SYS a sector shorter moved t_dwait's copy
 # from 8.4% to 10.6% over its time with MT's INT 15h off.  So on such a floppy what follows LODE.SYS and LODEMT.SYS
-# starts at a fixed cluster, PIN_AT, a filler (PIN.BIN) between, with 16 sectors of room for the two to grow
-# (LODE.SYS 101 sectors and LODEMT.SYS 42 now, so they end at cluster 145).  There t_dwait's figures, 2026-11-20:
+# starts at a fixed cluster, PIN_AT, a filler (PIN.BIN) between, with 17 sectors of room for the two to grow
+# (LODE.SYS 101 sectors and LODEMT.SYS 42 now, clusters 2-144; PIN.BIN 145-161).  There t_dwait's figures, 2026-11-21:
 # the copy alone 21.31 s, MT's INT 15h off or on; with MTSPIN behind 23.26 s off, 24.46 s on (5.2% more)
 PIN_AT = 162
 
@@ -379,7 +379,8 @@ def tstate(k):
     """MT's own table: ([(task, TS_* state, name)], front, running)."""
     seg, Y = mt_seg(k), k.Y
     out = []
-    if seg is None: return [(-1, 0, 'no MT block: the arena broken')], None, None   # (the checks fail, not the run)
+    if seg is None:                     # (the checks fail, not the run: 9 entries, more than MT_TASKS, so no count
+        return [(-1, 0, 'no MT block: the arena broken')] * 9, None, None   #  of tasks a check asks for)
     for i in range(8):
         b = Y['mt_tab'] + i * MT_ENT
         st = k.pc.rd(seg, b, 1)[0]
@@ -7363,13 +7364,14 @@ def t_image():
         k = ktest.KPC(A.image('mt_zv.img', 'LODEMT.SYS=' + MTSYS, A.LCMD, ini(b'MULTITASK=1\r\n')), ems_pages=88)
         if fill: code_hooks(k, [mtb_at], lambda a: k.pc.wr(fill, 0, bytes([0x5A]) * (equ('MT_PARAS') * 16)))
         k.start(10); k.mcb0 = k.u16('first_mcb')
-        s = mt_seg(k)
-        return s, bytes(k.pc.rd(s, Y['mt_zv'], Y['mt_zve'] - Y['mt_zv']))
+        s = mt_seg(k)                   # (the whole BSS: past the image to the block's end; none: MT off)
+        return s, (bytes(k.pc.rd(s, equ('MT_LEN'), equ('MT_PARAS') * 16 - equ('MT_LEN'))) if s else b'')
     s0, z0 = zv(0)
-    s1, z1 = zv(s0)
-    check('... and they are as after a start on clear memory when MT\'s block (%04Xh) was full of 5Ah as mt_boot began '
-          '(%d of them non-zero at the prompt either way)' % (s1, sum(1 for b in z0 if b)), s0 == s1 and z0 == z1,
-          (hex(s0), hex(s1), z0.hex(), z1.hex()))
+    s1, z1 = zv(s0 or 0)
+    diff = sum(1 for a, b in zip(z0, z1) if a != b)
+    check('... and MT\'s whole BSS (MT_LEN to the block\'s end, %d bytes, mt_zv to mt_zve among them) is as after a '
+          'start on clear memory when the block (%s) was full of 5Ah as mt_boot began (%d bytes differ)'
+          % (len(z0), s1 and '%04Xh' % s1, diff), s0 and s0 == s1 and z0 == z1, (s0, s1, diff))
     ex = sysb[Y['done.sw']:Y['done.sw'] + 5]
     check('done.sw in LODE.SYS is MOV SS,AX / MOV SP,BX / POPA (8E D0 89 DC 61: what mt_boot patches), the bytes after it '
           'POP DS / POP ES / IRET, and ctrlc\'s copy of them is somewhere else (untouched)',
@@ -7791,13 +7793,18 @@ def dk_run(k, owner, sim=120, isr=False):
 
 def dk_check(k, dk, what, task1, file, exact, sw):
     t = dk.tasks()
-    check('%s: its end through INT 21h held at the gate (%d passes there with the owner out; %d entries to mt_kdie, '
+    if dk.ent and (dk.ent[0][0] == 0xFF or dk.lay[1:2] != [(1, task1)]):
+        check('%s: STAGING MISSED (the test\'s set-up, not a fault found): the kill landed with no owner out (task 1 '
+              'there: %s), so the case wasn\'t tried; the copy behind must last longer' % (what, dk.lay[1:2]), False,
+              (dk.lay, dk.ent[:4]))
+        return
+    check('%s: its end through INT 21h held at the gate (%d passes there with the owner out, not refused; %d entries to mt_kdie, '
           '%d with the owner out, one more after each refusal; its SP the same at each: drift %d bytes), MT_END '
           'reached in it once, the owner back (mt_down then %s), the task gone; nothing halted or stopped (mt_kdie.h '
           'passed %d times, %d with interrupts off; %s); task 1 ended, %s; task 3 counted on (%d); %d waits given away'
-          % (what, dk.held, len(dk.ent), len(dk.out()), dk.drift(), ['%02X' % d for d in dk.ends], len(dk.h),
+          % (what, dk.held - dk.no, len(dk.ent), len(dk.out()), dk.drift(), ['%02X' % d for d in dk.ends], len(dk.h),
              dk.h.count(False), k.pc.stopped, file, spun(k, 'C.TXT'), sw),
-          dk.lay[1:3] == [(1, task1), (2, 'MTSPIN.COM')] and dk.out() and dk.held >= 1
+          dk.lay[1:3] == [(1, task1), (2, 'MTSPIN.COM')] and dk.out() and dk.held - dk.no >= 1
           and len(dk.ent) == 1 + len(dk.h) and dk.drift() == 0 and dk.ends == [0xFF] and not set(t) & {1, 2, 4}
           and (A.disk_file(k, 'KK.TXT') or b'').startswith(b'0 ') and all(dk.h) and exact and spun(k, 'C.TXT') > 0
           and sw >= 10 and not k.pc.stopped and not k.crashed,
