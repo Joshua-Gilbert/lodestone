@@ -4219,6 +4219,8 @@ run_app:
         mov     ax, 8                   ; (one at a time)
         stc
         ret
+.hbad:  jmp     .bad                    ; (the failures, in a short jump's
+.hbig:  jmp     .big                    ;  reach)
 .free:  pusha
         mov     [run_ret], di
         mov     dx, si
@@ -4233,29 +4235,29 @@ run_app:
         int     21h
         jc      .errc
         cmp     ax, 16
-        jne     .bad
+        jne     .hbad
         cmp     word [run_hdr], 'GR'
-        jne     .bad
+        jne     .hbad
         cmp     word [run_hdr+2], 'UN'
-        jne     .bad
+        jne     .hbad
         cmp     word [run_hdr+4], UI_API
-        ja      .bad
+        ja      .hbad
         mov     ax, [run_hdr+10]        ; fixups after the image: room for them
         add     ax, [run_hdr+12]
-        jc      .bad                    ; (a damaged header: counts that
+        jc      .hbad                   ; (a damaged header: counts that
         cmp     ax, 4000h               ;  overflow when doubled)
-        jae     .bad
+        jae     .hbad
         shl     ax, 1
         mov     [run_hdr+14], ax        ; (the fixups' bytes, in the header's
         cmp     ax, [run_hdr+8]         ;  spare word: mkrun.py writes 0)
         jae     .room
         mov     ax, [run_hdr+8]
 .room:  add     ax, [run_hdr+6]
-        jc      .big
+        jc      .hbig
         add     ax, [run_base]
-        jc      .big
+        jc      .hbig
         cmp     ax, 0FFF0h
-        ja      .big
+        ja      .big                    ; (not by .hbig: .abs stays even)
         add     ax, 15
         shr     ax, 4
         mov     bx, ax
