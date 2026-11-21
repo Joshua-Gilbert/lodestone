@@ -2212,3 +2212,21 @@ On the author's 1520: the supply needs a few volts more under load (worn filter 
 
 **On the 1520 (2026-11-04, on the variac):** it works.
 
+## A kill while a disk is out, and smaller code (2026-11-20)
+
+**A task killed while another was out on the floppy or C: halted the machine.** MT_KILL sends the task to `mt_kdie` when it next runs, and if that was while another task was out on a disk, its MT_END went through M10's gate. `mt_kdie` built that call's frame with PUSHF after its own CLI, so the gate saw interrupts off, refused the call (AX = 5), and its IRET came back to `mt_kdie`'s HLT with interrupts off: nothing could wake the machine.
+- The frame's flags are 0202h: the gate holds the dying task as it holds any call, and the task ends once the owner is back.
+- After its HLT, `mt_kdie` starts again: an end the gate still refuses (an interrupt in service) is tried again after each interrupt.
+- `mt_switch`'s branch for a task ended where it couldn't be at once leaves a task waiting at the gate (`TS_WAITD`) alone. It used to send it back to `mt_kdie` every round, and each time 20 bytes of its stack were left behind; a long wait wrapped its stack round its segment.
+
+**Smaller and faster code, nothing else changed:**
+- `mt_rbyte` reads a byte of Resident Claude's header for both `mt_i16` (r_inpop) and `mt_rhot` (r_off).
+- `mw_clipq`, with the Executive in front, tells a session's window by its address (at or above `run_base`) instead of walking every session's record for each window on each clipped primitive.
+- A window started from a window draws the band once, not twice, when the Executive's question is pending.
+- The variables that start as zeros (`mt_fv` to `mt_vb`, 178 bytes) are in MT's BSS, which `mt_boot` clears, instead of in the file.
+- The API's error checks that fail to one exit (MT_WIN, MT_TOPEN, MT_PUB, MT_FRONT, MT_KILL, MT_END, parking, unparking, a region's growth, `mw_start`) jump short to one shared jump there: a check that passes is faster, a failure takes one jump more.
+
+**Figures:** LODEMT.SYS 21,484 bytes (21,746 before: 42 sectors, one fewer, so ROM 1 has 4,608 bytes left, 4,096 before); `mt_tend` 53ECh (54F2h before); `mt_bend` 6132h (6190h before): MT's block 5 paragraphs smaller (614h, 619h before). MEMSZ with the switch on 554.1 KB.
+
+**Tests:** test_mt's `t_dkill` (3 checks): a task computing, killed by MTKILL K while a copy behind is out on the floppy, again with an interrupt in service when its end is first tried, and on C:. Each checks that the task ends once the owner is back, that its stack pointer is the same at each try, that the copy is exact and that a third task counts on. Without the fix the machine stops at `mt_kdie`'s HLT with interrupts off. On a floppy with the 1520's drive timing, test_mt now puts what follows LODE.SYS and LODEMT.SYS at cluster 146, so a copy's time doesn't change with the system files' sizes.
+
