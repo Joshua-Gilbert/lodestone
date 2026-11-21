@@ -31,7 +31,7 @@ INT 10h call, where on the 1520 one can, mid-transfer or mid-scroll.  Code
 that must hold while a tick comes in the middle of a BIOS call (MT's
 mt_in13 / mt_inb) is tested by setting those flags by hand (test_mt).
 """
-import collections, ctypes, datetime, os, struct
+import collections, ctypes, datetime, os, struct, sys
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INTR, UC_HOOK_INSN, UC_HOOK_BLOCK, UC_PROT_ALL
 from unicorn import x86_const as X
 
@@ -74,7 +74,12 @@ def exc_forget(mu):
         c, at = _ctx(t); b = ctypes.string_at(at, c.size)
         found = [i for i in range(0, len(a) - 3, 4) if a[i:i + 4] == b'\xff' * 4 and b[i:i + 4] == bytes(4)]
         _exc_at.append(found[0] if len(found) == 1 else None)   # (not found: this unicorn is left as it is)
-    if _exc_at[0] is None: return
+    if _exc_at[0] is None:                                      # (said once, at the first fault it can't forget:
+        if len(_exc_at) == 1:                                   #  a later one would hang a test without a word)
+            _exc_at.append(None)
+            print('pcemu: exc_forget found no exception word in this unicorn: a second divide error will not be '
+                  'delivered', file=sys.stderr)
+        return
     c, at = _ctx(mu)
     ctypes.memmove(at + _exc_at[0], b'\xff' * 4, 4)
     mu.context_restore(c)
