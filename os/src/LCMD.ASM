@@ -1254,6 +1254,8 @@ bat_read:
         call    bat_gone                ; (CF: it ended the batch file)
         jnc     .o
         ret
+.ch:    jmp     .ce                     ; (in short reach of the read's)
+        times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so .f even)
 .h:     xchg    bx, ax
         mov     dx, [bat_pos]
         mov     cx, [bat_pos + 2]
@@ -1263,9 +1265,9 @@ bat_read:
         mov     cx, LBUF + 1            ; (127 and CR LF: whole)
         mov     ah, 3Fh
         int     21h
-        jc      .ce
+        jc      .ch
         or      ax, ax
-        jz      .ce
+        jz      .ch
         inc     word [bat_line]
         ; up to the end of the line; seek back to the next one
         mov     cx, ax
@@ -2547,6 +2549,10 @@ tick:   push    ds
         mov     ax, [46Ch]
         pop     ds
         ret
+run_saver.q:                            ; (a copy of its .x, in short reach
+        pop     es                      ;  of its first two tests)
+        popa
+        ret
 
 ; the Executive's screen saver (INT 21h F0h AL=5 told where), the text
 ; screen kept meanwhile in memory taken for it and put back, the key that
@@ -2557,11 +2563,11 @@ run_saver:
         call    mt_mine                 ; (with multitasking, only in front:
         jc      .on                     ;  behind, the screen isn't ours)
         cmp     al, ah
-        jne     .x
+        jne     .q
 .on:    mov     ah, 0Fh
         int     10h
         cmp     al, 3
-        ja      .x
+        ja      .q
         mov     [sv_mode], al
         mov     ah, 3
         xor     bh, bh
@@ -3492,11 +3498,12 @@ cparse: call    plus_join               ; ("a + b": "a+b")
         mov     [plus], al              ; (not 0: a "+" list)
         xor     bx, bx
         jmp     short .st
+.lh:    jmp     .long                   ; (in short reach of the two)
 .ch:    inc     bx
         cmp     bx, 79
-        ja      .long
+        ja      .lh
 .st:    cmp     di, plist + LBUF
-        jae     .long
+        jae     .lh
         mov     dl, al
         stosb
         jmp     .l
@@ -4962,16 +4969,16 @@ do_start:
 ; but failed)
 do_wait:
         call    task_arg
-        jc      .er
+        jc      .eh
         cmp     bl, [mt_me]
         mov     si, e_tnot
-        je      .er
+        je      .eh
         mov     [wtask], bl
         call    .get
-        jc      .er
+        jc      .eh
         or      ah, ah
         mov     si, e_notask
-        jz      .er
+        jz      .eh
         or      al, al                  ; (free: the last one there ended)
         jz      .end
         mov     [wgen], ah
@@ -4990,6 +4997,7 @@ do_wait:
 .tk:    cbw                             ;  gets here with MT on only)
         int     16h                     ; (AH = 0: AL is 3 or 0)
         jmp     short .cc
+.eh:    jmp     .er                     ; (in short reach of the first four)
 .fw:    push    ds
         push    40h
         pop     ds
@@ -5370,6 +5378,8 @@ skipz:  xor     al, al
         mov     cx, 0FFFFh
         repne   scasb
 .x:     ret
+env_set_line.syn:                       ; (in short reach of its two)
+        jmp     err_syntax
 
 ; SI = "NAME=value" (or "NAME="): set or remove it
 env_set_line:
@@ -5452,7 +5462,6 @@ env_set_line:
         pop     es
         mov     si, e_envfull
         jmp     err
-.syn:   jmp     err_syntax
 
 ; ---------------------------------------------------------------------
 ; the prompt from PROMPT ($P$G by default)
