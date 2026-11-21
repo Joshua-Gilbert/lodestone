@@ -21,6 +21,7 @@ pseudo-terminal, and runs:
      main loop closes while a PING write is in flight
   M  core 1's liveness guard: core 1 keeps moving while the bus is idle and while it waits to talk, and when it
      stops, core 0 stops petting the watchdog
+  N  frames from the bridge shorter than their fields: the daemon ignores and counts them
 
 usage: run_sim_tests.py [--results PATH]
 
@@ -929,6 +930,106 @@ def port_gone_under_read():
           f"threads {[t.name for t in pinger]}, {ports[-1].pings} PINGs")
 
 
+def short_frames():
+    """Frames from the bridge shorter than their type's fields (bytes lost inside a frame: a tty overrun) reach
+    the daemon's parser.  Each must be ignored and counted; before, struct.error ended the daemon."""
+    say("N  frames shorter than their fields, from the bridge (the daemon in this process, no port)")
+    import logging
+    sys.path.insert(0, PI)
+    from gpibbridge import daemon, protocol as P
+    logging.getLogger("gpib-bridge").setLevel(logging.CRITICAL)
+    b = daemon.Bridge(daemon.load_config(None))
+    b.write = lambda frame: None                 # (no port)
+    hello = struct.pack("<BBHHIH", P.F_HELLO, P.PROTO_VERSION, 1023, P.DATA_CHUNK, 0, 0) + b"bridge fw fake"
+    whole = [struct.pack("<BHB", P.F_DATA, 0, 0),           # (each as long as the fields the daemon reads)
+             struct.pack("<BBHBI", P.F_EVENT, 0x13, 0, 0, 0),       # UNTALK (the Pico's time stamp after it)
+             struct.pack("<BI", P.F_CREDIT, 0),
+             struct.pack("<B" + P.PONG_FMT[1:], P.F_PONG, 1, 10, *[0] * 16)]
+    errors = []
+
+    def feed(frame):
+        try:
+            for f in b.deframer.feed(P.cobs_encode(frame)):
+                if f:
+                    b.on_frame(f)
+        except Exception as e:
+            errors.append(f"{frame.hex()}: {e!r}")
+
+    for n in range(1, 12):                       # a HELLO cut short, before the bridge is connected
+        feed(hello[:n])
+    check("a short HELLO is ignored and counted, the daemon not connected by it",
+          not errors and not b.connected and b.deframer.bad == 11, f"{errors} bad={b.deframer.bad}")
+    feed(hello)
+    check("... and a whole HELLO after it connects", b.connected and not errors, repr(errors))
+    bad0, cuts = b.deframer.bad, 0
+    for f in whole:
+        for n in range(1, len(f)):
+            feed(f[:n])
+            cuts += 1
+    check(f"{cuts} DATA, EVENT, CREDIT and PONG frames cut short: each ignored and counted, the daemon lives",
+          not errors and b.deframer.bad - bad0 == cuts and b.connected, f"{errors[:3]} bad +{b.deframer.bad - bad0}")
+    b.last_pong = 0.0
+    feed(whole[3])
+    check("... and a whole PONG after them is taken", b.last_pong > 0 and b.pico.get("address") == 10, str(b.pico))
+    check("the daemon's status counts them", b.status_dict().get("bad_frames") == b.deframer.bad)
+    import contextlib
+    import io
+    from gpibbridge import ctl as C
+    text = io.StringIO()
+    with contextlib.redirect_stdout(text):
+        C.show_status(b.status_dict())
+    check("... and gpibctl status shows the count", f"{b.deframer.bad} bad frames" in text.getvalue(), text.getvalue())
+
+    # A reopen (a new Deframer) keeps the count, and the first short frame on it is logged again; a port that
+    # doesn't answer HELLO is warned of once, until it does.
+    lg, said = logging.getLogger("gpib-bridge"), []
+
+    class Said(logging.Handler):
+        def emit(self, rec):
+            said.append((rec.levelno, rec.getMessage()))
+    h = Said(logging.WARNING)
+    lg.addHandler(h)
+    lg.setLevel(logging.WARNING)
+    lg.propagate = False
+    ptys = []
+    bad_frames = lambda: b.status_dict()["bad_frames"]   # noqa: E731
+    try:
+        m, s = os.openpty()
+        ptys += [m, s]
+        b.close()
+        b.cfg = dict(b.cfg, port=os.ttyname(s))
+        bad = bad_frames()
+        opened = b.try_open()
+        check("a reopen keeps the bad-frame count", opened and bad_frames() == bad and b.deframer.bad == 0,
+              f"opened={opened} {bad} -> {bad_frames()}")
+        feed(whole[2][:2])
+        shorts = sum("too short" in t for _, t in said)
+        check("... and logs the first short frame on the new connection",
+              shorts == 1 and bad_frames() == bad + 1, f"{shorts} lines, bad {bad_frames()}")
+        for _ in range(3):                       # the port opens, says nothing for 3 s, is closed; and again
+            if not b.ser:
+                b.try_open()
+            b.hello_at -= 10
+            b.tick()
+        hellos = sum("did not answer HELLO" in t for _, t in said)
+        b.try_open()
+        feed(hello)
+        b.close()
+        b.try_open()
+        b.hello_at -= 10
+        b.tick()
+        again = sum("did not answer HELLO" in t for _, t in said) - hellos
+        check("a port that doesn't answer HELLO is warned of once, and again once it has answered",
+              hellos == 1 and again == 1 and not errors, f"{hellos}, then {again}; {errors}")
+    finally:
+        b.close()
+        for fd in ptys:
+            os.close(fd)
+        lg.removeHandler(h)
+        lg.setLevel(logging.CRITICAL)
+        lg.propagate = True
+
+
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(description="the bridge firmware and the Pi daemon on a simulated bus")
@@ -952,6 +1053,7 @@ def main(argv=None):
         address_change(sim)
         if os.path.isdir(LODESTONE_LINK):
             gridlink_auto_srq(sim)
+        short_frames()
         port_gone_under_read()
     finally:
         try:

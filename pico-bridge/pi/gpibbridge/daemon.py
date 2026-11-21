@@ -14,6 +14,7 @@ import logging
 import os
 import selectors
 import socket
+import struct
 import sys
 import threading
 import time
@@ -83,7 +84,10 @@ class Bridge(handlers.Context):
         self.address = cfg["address"]
         self.ser = None
         self.port = None
-        self.deframer = P.Deframer()
+        self.deframer = P.Deframer()         # (a new one at every open: its bad count starts again)
+        self.bad_before = 0                  # bad frames of the ports closed before this one
+        self.short_said = False              # a short frame has been logged on this connection
+        self.hello_warned = set()            # ports said not to answer HELLO, until they do
         self.firmware = "?"
         self.tx_ring = 0
         self.connected = False
@@ -170,7 +174,9 @@ class Bridge(handlers.Context):
             except (serial.SerialException, OSError):
                 pass                         # a pty (the simulation) has no DTR
             self.ser, self.port = s, p
+            self.bad_before += self.deframer.bad
             self.deframer = P.Deframer()
+            self.short_said = False
             self.connected = False
             self.hello_at = time.monotonic()
             self.write(P.hello_req())
@@ -196,6 +202,7 @@ class Bridge(handlers.Context):
                       hello["proto"], P.PROTO_VERSION)
             self.close()
             return
+        self.hello_warned.discard(self.port)
         self.firmware = hello["fw"]
         self.tx_ring = hello["tx_ring"]
         self.consumed = hello["consumed"]
@@ -245,7 +252,15 @@ class Bridge(handlers.Context):
                 self.on_frame(f)
 
     def on_frame(self, f):
-        kind, d = P.parse(f)
+        try:
+            kind, d = P.parse(f)
+        except struct.error:                 # shorter than its type's fields (bytes lost inside a frame):
+            self.deframer.bad += 1           #  ignored, as a frame that fails COBS is (PROTOCOL.md)
+            if not self.short_said:
+                self.short_said = True
+                log.warning("a frame of type 0x%02X too short (%d bytes): ignored (logged once per connection; "
+                            "gpibctl status counts them)", f[0], len(f))
+            return
         if kind == "hello":
             self.on_connected(d)
             return
@@ -363,7 +378,12 @@ class Bridge(handlers.Context):
             return
         if not self.connected:
             if now - self.hello_at > 3:
-                log.warning("%s did not answer HELLO: not the bridge firmware (bench firmware?)", self.port)
+                if self.port in self.hello_warned:   # (said once; the daemon retries it every few seconds)
+                    log.debug("%s did not answer HELLO", self.port)
+                else:
+                    self.hello_warned.add(self.port)
+                    log.warning("%s did not answer HELLO: not the bridge firmware (bench firmware?); "
+                                "not said again for it until it answers", self.port)
                 self.close()
             return
         if now - self.last_pong > 6:
@@ -393,12 +413,17 @@ class Bridge(handlers.Context):
                 except OSError:
                     pass
 
+    def bad_frames(self):
+        """Frames dropped since the daemon started: failed COBS, overlong, or shorter than their fields."""
+        return self.bad_before + self.deframer.bad
+
     def status_dict(self):
         return {"port": self.port, "connected": self.connected, "firmware": self.firmware,
                 "address": self.address, "handler": self.handler.name if self.handler else None,
                 "gen": self.gen, "status_byte": self.status, "rsv": self.rsv, "ren": self.ren, "llo": self.llo,
                 "pending_reply_bytes": sum(len(p[1]) for p in self.pending),
                 "in_flight": (self.sent_total - self.consumed) & 0xFFFFFFFF,
+                "bad_frames": self.bad_frames(),
                 "stats": dict(self.stats), "pico": self.pico}
 
     def control(self, req, conn):

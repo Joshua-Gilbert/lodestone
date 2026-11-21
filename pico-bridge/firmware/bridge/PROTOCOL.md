@@ -2,7 +2,8 @@
 
 The Pico is a USB CDC serial port (`/dev/ttyACM0`, or `/dev/gpib-bridge` with the udev rule). The baud rate
 is ignored. Every frame is **COBS-encoded and ends with one 0x00 byte**, so either side can resynchronise
-at the next 0x00. A decoded frame is one type byte and its fields, little-endian. The
+at the next 0x00. A decoded frame is one type byte and its fields, little-endian. A frame shorter than its
+type's fields (bytes lost inside it) is ignored, by either side, like one that fails COBS. The
 reference code is `host_link.c` (Pico) and `pi/gpibbridge/protocol.py` (Pi).
 
 ## Pi → Pico

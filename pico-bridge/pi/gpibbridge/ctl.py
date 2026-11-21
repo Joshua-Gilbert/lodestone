@@ -58,7 +58,8 @@ def show_status(r):
           + (" with SRQ" if r["rsv"] else ""))
     st = r.get("stats", {})
     print(f"Pi:   {st.get('messages', 0)} messages in, {st.get('bytes_in', 0)} bytes in, "
-          f"{st.get('bytes_out', 0)} bytes out, {st.get('handler_errors', 0)} handler errors")
+          f"{st.get('bytes_out', 0)} bytes out, {st.get('handler_errors', 0)} handler errors, "
+          f"{r.get('bad_frames', 0)} bad frames from the Pico")
     if p:
         print(f"Pico: {p['commands']} commands, {p['bytes_in']} bytes in, {p['bytes_out']} bytes out, "
               f"{p['polls']} polls, {p['events_lost']} events lost, {p['rx_holds']} NRFD holds, "
