@@ -3203,7 +3203,7 @@ int16:  test    ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         cmp     byte [cs:ks_active], 0
         je      .chain
         push    ax                      ; a real key waiting?
-        mov     ah, 1
+        inc     ah                      ; (the caller's kind: 00h/10h -> 01h/11h)
         pushf
         call    far [cs:old16]
         pop     ax
