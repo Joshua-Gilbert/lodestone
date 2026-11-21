@@ -2122,11 +2122,11 @@ edit_line:
 .mv:    mov     [ed_pos], dl
         mov     al, dl
         call    ed_at
-        jmp     .key
+.kh:    jmp     .key                    ; (and the keys that do nothing)
 .r:     cmp     ah, 4Dh                 ; Right
         jne     .h
         cmp     dl, dh
-        jae     .key
+        jae     .kh
         inc     dl
         jmp     .mv
 .h:     cmp     ah, 47h                 ; Home
@@ -2140,12 +2140,12 @@ edit_line:
 .d:     cmp     ah, 53h                 ; Del
         jne     .u
         cmp     dl, dh
-        jae     .key
+        jae     .kh
 .del:   mov     cx, 1
         call    ed_cut
         jmp     .show
 .bs:    or      dl, dl
-        jz      .key
+        jz      .kh
         dec     dl
         mov     [ed_pos], dl
         jmp     .del
@@ -2157,7 +2157,7 @@ edit_line:
         jne     .dn
         mov     si, [hist_cur]
         cmp     si, hist
-        jbe     .key
+        jbe     .kh
         call    hist_back
         mov     [hist_cur], si
         jmp     .get
@@ -2165,7 +2165,7 @@ edit_line:
         jne     .f3
         mov     si, [hist_cur]
         cmp     si, [hist_end]
-        jae     .key
+        jae     .kh
 .db:    lodsb
         or      al, al
         jnz     .db
@@ -2181,16 +2181,16 @@ edit_line:
         mov     [ed_pos], al
         jmp     .show
 .f3:    cmp     ah, 3Dh                 ; F3: the rest of the last line
-        jne     .key
+        jne     .kf
         mov     si, [hist_end]
         cmp     si, hist
-        jbe     .key
+        jbe     .kf
         call    hist_back
         mov     cl, dh                  ; past as much as is typed
         xor     ch, ch
 .fk:    jcxz    .fc
         cmp     byte [si], 0
-        je      .key
+        je      .kf
         inc     si
         dec     cx
         jmp     .fk
@@ -2206,6 +2206,7 @@ edit_line:
         jmp     .fl
 .fd:    mov     dl, dh
         jmp     .gset
+.kf:    jmp     .key                    ; (F3's: in short reach)
 .brk:   mov     al, dh                  ; Ctrl-C: the line is dropped
         call    ed_at
         mov     si, s_ctrlc
@@ -2302,7 +2303,7 @@ edit_line:
         mov     cx, 10h
         mov     ah, 4Eh
 .tfind: int     21h
-        jc      .beep
+        jc      .bh
 .tdot:  cmp     byte [dta + 30], '.'    ; (not . and ..)
         je      .tskip
         mov     si, dta + 30            ; (nor a name with a space inside:
@@ -2315,7 +2316,7 @@ edit_line:
         int     21h
         jnc     .tdot
 .twrap: cmp     byte [ed_wrap], 0       ; past the last: the first again
-        jne     .beep                   ;  (once: every name left has a
+        jne     .bh                     ;  (once: every name left has a
         inc     byte [ed_wrap]          ;  space, or there is none)
         jmp     .tfirst
 .tnext: call    set_dta
@@ -2324,6 +2325,7 @@ edit_line:
         int     21h
         jnc     .tdot
         jmp     .twrap
+.bh:    jmp     .beep                   ; (Tab's: in short reach)
 .tput:  mov     si, dta + 30            ; the name found, in place of the
         call    strlen                  ;  one typed (if it fits)
         test    byte [dta + 21], 10h    ; (a directory: with its \)
@@ -2336,7 +2338,7 @@ edit_line:
         sub     ah, al
         add     ah, cl
         cmp     ah, LBUF - 2
-        ja      .beep
+        ja      .bh
         push    cx
         mov     cl, al
         xor     ch, ch
