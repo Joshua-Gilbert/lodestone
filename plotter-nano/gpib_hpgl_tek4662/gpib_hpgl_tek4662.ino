@@ -4,6 +4,16 @@
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
  *
+ * v7.7: a device clear starts afresh. SDC (while listening) and DCL drop the
+ *    HP-GL in hand, the rest of a label being drawn, and the bytes queued
+ *    before the clear; bytes sent after it are kept. A label whose ETX never
+ *    came (a plot cancelled in the middle of one) no longer eats the next
+ *    plot. What is already queued for the 4662 is still drawn. IFC is not a
+ *    clear (KGPIB sends it after any failed bus operation). LISTEN_ONLY takes
+ *    DCL only. The serial-poll talker also tests ATN in the same cli as it
+ *    drives DIO. The 4662 commands that would stop its status replies (R,
+ *    U, G, F and BLOCK START at PLOTTER_ADDR) are no longer passed.
+ *
  * v7.6: labels and the 4662's own commands.
  *    - HP-GL's SI/SR (size), ES (extra space), DI/DR (direction), CS/CA with
  *      SS/SA or SO/SI in a label (character sets) and DF become the 4662's
@@ -1260,7 +1270,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.6"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.7"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL (and ESC 4662 commands) for testing; '?' bus and flow, '#' ask the plotter, '!' settings"));
