@@ -4050,8 +4050,6 @@ res_load:
         mov     dx, [res_old16 + 2]
         mov     [es:r_old16], ax
         mov     [es:r_old16 + 2], dx
-        mov     [es:r_pold16], ax
-        mov     [es:r_pold16 + 2], dx
         mov     ax, [res_indos]
         mov     [es:r_indos], ax
         mov     ax, [res_indos + 2]
@@ -4294,6 +4292,7 @@ r_off    db     0               ; 10Eh: not 0, no pop-up (CLAUDE.COM runs)
 r_bgon   db     0               ; 10Fh (version 5): 1 background looks at key
                                 ;  calls (the console's to say), 2 in one
         r_at    r_sig, 100h
+        r_at    r_old16, 107h           ; (RCON.ASM's R_OLD16)
         r_at    r_inpop, 10Dh
         r_at    r_off, 10Eh
         r_at    r_bgon, 10Fh
@@ -4303,8 +4302,8 @@ r_bgon   db     0               ; 10Fh (version 5): 1 background looks at key
 %endif
 r_hw     db     0, 0, 0, 0      ; our pages' register values
 r_saved  db     0, 0, 0, 0      ; the program's windows meanwhile
-r_params:                       ; the console's, ES:BX (RCON.ASM P_*)
-r_pold16 dd     0               ;  the BIOS's INT 16h
+r_params:                       ; the console's, ES:BX (RCON.ASM P_*; the
+                                ;  BIOS's INT 16h it reads at r_old16)
 r_indos  dd     0               ;  DOS's busy flag (INT 21h AH=34h)
 r_ss     dw     0
 r_sp     dw     0

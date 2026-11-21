@@ -125,12 +125,12 @@ reqbuf  equ (IOSEG - 0E000h) * 16       ; (DS = E000h: windows 0-3 are DS:0-FFFF
 TXMAX   equ 3300                ; GRiD -> Pi payload per frame (CLAUDE.COM's: a read's
                                 ;  reply in three frames)
 txframe equ reqbuf + REQMAX     ; the frame being sent, after them
-P_OLD16 equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
-P_INDOS equ 4
-P_SS    equ 8                   ;  the stack the stub came on: the INT 16h call's
-P_KS    equ 12                  ;  r_ks, then r_pend
-P_MT    equ 14                  ;  r_mt: Lodestone's tasks (0:0 none)
-P_BGT   equ 18                  ;  r_bgt: the tick of the stub's last background look
+P_INDOS equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
+P_SS    equ 4                   ;  the stack the stub came on: the INT 16h call's
+P_KS    equ 8                   ;  r_ks, then r_pend
+P_MT    equ 10                  ;  r_mt: Lodestone's tasks (0:0 none)
+P_BGT   equ 14                  ;  r_bgt: the tick of the stub's last background look
+R_OLD16 equ 107h                ; the stub's r_old16 (its header): the BIOS's INT 16h
 R_BGON  equ 10Fh                ; the stub's r_bgon (its header): 0 no background,
                                 ;  1 look at key calls, 2 this call is a look
 R_BGT   equ 4                   ; (the stub's: ticks between looks)
@@ -164,9 +164,9 @@ rc_main:
         cld
         mov     [parms], bx             ; (the stub's, for the feeder)
         mov     [parms + 2], es
-        mov     ax, [es:bx + P_OLD16]   ; the BIOS's INT 16h, and is DOS busy?
+        mov     ax, [es:R_OLD16]        ; the BIOS's INT 16h, and is DOS busy?
         mov     [old16], ax
-        mov     ax, [es:bx + P_OLD16 + 2]
+        mov     ax, [es:R_OLD16 + 2]
         mov     [old16 + 2], ax
         cmp     byte [es:R_BGON], 2     ; a background look
         jne     .pu
