@@ -280,6 +280,7 @@ class Link:
         s.clock = time.monotonic              # (the emulator tests give theirs: the rings' timing is the GRiD's)
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
         s.trace = None                        # a deque while gridlink.bench --trace runs: (time, event)
+        s.trace_sink = None                   # what trace is otherwise (gridlink -v: a DebugTrace)
         s.spec = None                         # the reply held in the bridge for the GRiD's next frame (_speculate),
                                               #  with that frame's seq
         s.last_kind = None                    # the kind of our last answer
@@ -535,7 +536,7 @@ class Link:
                 s.grid_wake = bool(body[1] & glp.GF_WAKE)
             if mt != glp.G_POLL:
                 try: s.on_message(mt, body)
-                except Exception as e: s.log('link: handler error: %r' % e)
+                except Exception: s.log('link: handler error: %s' % traceback.format_exc().rstrip())
         if spec is not None and (t == glp.G_POLL if spec[0] is not None else f.more and f.fl) \
                 and s.t.hold_used():
             s._commit(spec)                     # the bridge has answered it with the held reply
@@ -625,6 +626,15 @@ class Link:
 def _name(kind, n):
     """A frame for gridlink.bench --trace: REQUEST+ (MORE), CELLS ...; 'big' when it carries 512 bytes or more."""
     return glp.NAMES.get(kind & 0x7F, '%02X' % (kind & 0x7F)) + ('+' if kind & glp.MORE else '') + (' big' if n >= 512 else '')
+
+
+class DebugTrace:
+    """gridlink -v: Link.trace and PicoProto.trace, the timeline gridlink.bench --trace reads, as debug lines
+    (each frame each way, each ring, each bridge event)."""
+    def __init__(s, debug): s.debug = debug
+
+    def append(s, e):
+        s.debug('trace: %s' % ' '.join(str(x) for x in e[1:]))
 
 
 def serve(transport, link, stop):

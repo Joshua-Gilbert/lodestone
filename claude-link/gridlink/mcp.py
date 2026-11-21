@@ -9,7 +9,7 @@ only ever ones inside ~/grid.
 
     python3 -I -c '...from gridlink.mcp import main; main()'   (what .mcp.json runs)
 """
-import collections, json, os, re, socket, stat, sys, tempfile, threading, time
+import collections, json, os, re, socket, stat, sys, tempfile, threading, time, traceback
 from . import glp, keys as K, screen
 from .grid import READ_CHUNK, GridError, is_device, is_grid_path, is_plain_query, norm
 
@@ -1039,8 +1039,10 @@ class ToolServer:
                 c.settimeout(None)                # the answer takes what the GRiD takes
                 res = s.request(line)
                 f.write(json.dumps({'content': res[0], 'isError': bool(res[1])}).encode() + b'\n'); f.flush()
-            except Exception as e:                # the client went away
+            except OSError as e:                  # the client went away
                 s.log('mcp: %r' % e)
+            except Exception:
+                s.log('mcp: %s' % traceback.format_exc().rstrip())
 
     def request(s, line):
         try:
@@ -1061,7 +1063,7 @@ class ToolServer:
                 if tool not in PICTURE_TOOLS: return s.tools.call(tool, args)
             return s.tools.call(tool, args)       # (grid_pick waits for the user, not the GRiD)
         except Exception as e:
-            s.log('mcp: %r' % e); return [text('gridlink: %s' % e)], True
+            s.log('mcp: %s' % traceback.format_exc().rstrip()); return [text('gridlink: %s' % e)], True
 
     def link_request(s, args):
         """Not a tool (Claude Code never sees it): gridlink.bench reads the link's
@@ -1088,9 +1090,10 @@ class ToolServer:
                 if proto is not None: proto.trace = L.trace
             elif args['trace'] == 'stop':
                 from .pico import retime          # (the bridge's events on its own clock, when it stamps them)
-                tr = [[round(t, 6), e] for t, e in retime(list(L.trace or ()))]
-                L.trace = None
-                if proto is not None: proto.trace = None
+                kept = L.trace if isinstance(L.trace, collections.deque) else ()   # (no 'start': none, and
+                tr = [[round(t, 6), e] for t, e in retime(list(kept))]             #  -v's DebugTrace is no list)
+                L.trace = getattr(L, 'trace_sink', None)      # (gridlink -v's debug lines again, if on)
+                if proto is not None: proto.trace = L.trace
             else:
                 return [text("gridlink: trace is 'start' or 'stop'")], True
         if 'usb' in args:                     # [count, size]: PINGs through the bridge's USB (PicoBridge only)

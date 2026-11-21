@@ -10,7 +10,7 @@ The GRiD picks chat (CLAUDE, gridlink's own agent on an API key) or Term
 import argparse, collections, logging, os, signal, sys, threading, time
 from . import glp
 from .config import Config, MODELS
-from .link import AR488Serial, serve
+from .link import AR488Serial, DebugTrace, serve
 from .pico import PicoBridge
 from .serline import SerialLink, ModemLink
 from .router import build_link
@@ -162,6 +162,9 @@ def main(argv=None):
         threading.Thread(target=S.run, daemon=True, name='agent').start()
         return S
     R, link = build_link(cfg, t, make_agent, log)
+    if a.verbose:                       # every frame, ring and bridge event as a debug line
+        link.trace = link.trace_sink = DebugTrace(logging.getLogger('gridlink').debug)
+        if getattr(t, 'proto', None) is not None: t.proto.trace = link.trace
     if key:             # import it now: in the link thread it could outlast the GRiD's wait
         threading.Thread(target=lambda: __import__('anthropic'), daemon=True).start()
     stop = threading.Event()
