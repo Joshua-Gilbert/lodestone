@@ -947,7 +947,8 @@ rw_where:
         ret
 ..@fr_none: jmp file_read.none          ; (a position past the end: a 2-byte
         db      90h                     ;  jcc, not taken otherwise; the pad,
-                                        ;  never run, keeps file_read even)
+                                        ;  never run, keeps file_read's loop
+                                        ;  labels at their parity)
 file_read:
         call    rw_start
         jc      ..@fr_err
