@@ -10,18 +10,23 @@
 ;  byte value; the bridge sends back the last message it got.
 ;
 ;    1. CPU (PIO): 16 messages out, 16 echoes in, the last one checked.
-;    2. DMA:       the same through 8237 channel 3 (GPIBDMA 1.0 found the
-;                  7210's DRQ there).  Out: mode 4Bh (single, memory to
-;                  the 7210), all but the last byte, which goes by the CPU
-;                  with EOI.  In: mode 47h (single, the 7210 to memory),
-;                  every byte; the 7210 holds RFD after the END byte.
+;    2. DMA:       the same through 8237 channel 3.  GPIBDMA 1.0 found the
+;                  7210's DRQ there with no DMA transfer: every channel
+;                  masked, it sampled the 8237s' request bits (port 08h
+;                  bits 4-7, port D0h bits 4-7) with IMR2's DMAI or DMAO
+;                  off, on, then off, and channel 3's bit followed it
+;                  (removed; in git history at dd601f4).
+;                  Out: mode 4Bh (single, memory to the 7210), all but the
+;                  last byte, which goes by the CPU with EOI.  In: mode
+;                  47h (single, the 7210 to memory), every byte; the 7210
+;                  holds RFD after the END byte.
 ;  Each echo is compared with what was sent.  A DMA that ends at once with
 ;  wrong bytes means DACK isn't wired to the 7210 (the 8237 runs its
 ;  cycles, nothing answers them).  Channel 3 is masked again after every
 ;  message and on any error.
 ;
-;  Chip-level like GPIBDMA; at the end GRIDGPIB, if loaded, sets the chip up
-;  again (INT 60h AH=01h: rearm.inc).
+;  Chip-level (it drives the 7210 itself); at the end GRIDGPIB, if
+;  loaded, sets the chip up again (INT 60h AH=01h: rearm.inc).
 ;  Appends what it prints to GPIBXFER.TXT.
 ; =====================================================================
 cpu 286
@@ -571,7 +576,7 @@ place:  mov     ax, ds
         mov     [rxp], bx
         ret
 
-; ---- output (as GPIBDMA) -----------------------------------------------
+; ---- output: the screen and GPIBXFER.TXT --------------------------------
 out_str:
         push    ax
         push    si

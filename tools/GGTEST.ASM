@@ -1,10 +1,10 @@
 ; =====================================================================
-;  GGTEST.COM - the GPIBTEST read-only test set through GRIDGPIB  (Lodestone)
+;  GGTEST.COM - a read-only GPIB test set through GRIDGPIB  (Lodestone)
 ;  Build: nasm -f bin -o GGTEST.COM GGTEST.ASM
 ;
-;  Needs GRIDGPIB loaded.  Same scan, same instruments, same read-only
-;  commands and repetitions as GPIBTEST 1.0 (direct) and D488TEST 1.0
-;  (Driver488), so the three logs compare line by line.  Every bus
+;  Needs GRIDGPIB loaded.  Scans the bus, names each instrument, and
+;  times a fixed set of read-only commands and repetitions on it
+;  (testcore.inc), one line each in the log.  Every bus
 ;  operation goes through the driver's INT API, exactly as a program
 ;  such as TM5000 will use it.  Output: screen + A:\GGTEST.TXT
 ; =====================================================================
@@ -151,7 +151,7 @@ quit:   call    pit_done
 gint:   int     60h                     ; patched to the driver's vector
         ret
 
-; ---- driver wrappers with the GPIBTEST calling convention ------------
+; ---- driver wrappers with testcore.inc's calling convention ----------
 ; spoll: BL = addr -> AL = status, CF on error
 spoll:  push    bx
         mov     ah, 05h

@@ -1,4 +1,5 @@
-; direct uPD7210 access (GPIBTEST 1.0 primitives, labels prefixed d_)
+; direct uPD7210 access (GPIBTEST 1.0's primitives, labels prefixed d_;
+; GPIBTEST is removed, in git history at dd601f4)
 d_chip_init:
         mov     dx, R_AUXMR
         mov     al, AUX_CR              ; chip reset
