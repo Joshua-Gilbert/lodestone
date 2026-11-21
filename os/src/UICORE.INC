@@ -372,13 +372,14 @@ font_boot:
         cmp     al, 9
         ja      .dn
         imul    bx, bx, 10
-        cmp     bx, 100                 ; (three digits: 30, capped here, as
-        jae     .cap                    ;  saver_set takes BL alone: of a
+        cmp     bx, 100                 ; (a digit after 10 or more: 30;
+        jae     .cap                    ;  capped here, as saver_set takes
+                                        ;  BL alone: of a
         add     bl, al                  ;  count of 256 or more it would see
         jmp     .d                      ;  the low byte, 260 as 4 minutes,
                                         ;  530 as 18; and before the add,
                                         ;  which wraps BL: 256 would be 0)
-.cap:   mov     bl, 30                  ; (three digits or more: 30)
+.cap:   mov     bl, 30                  ; (100 or more: 30; 005 is 5)
 .dn:    dec     si
         call    saver_set
         jmp     .next
