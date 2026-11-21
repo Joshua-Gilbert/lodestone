@@ -1551,19 +1551,7 @@ def t_divide():
     check('... and the shell works on', 'Lodestone version' in sh.run('ver'))
 
 DIVT = os.path.join(OUT, 'DIVT.COM')
-def divide_at(k, cond):
-    """A divide error raised as the 286 raises it (the flags, CS and the faulting instruction's IP pushed, IF and
-    TF cleared, INT 00h's vector taken) at the first block start where cond(pc) holds, once: for code that has no
-    DIV of its own to fault.  -> a list that gets the CS:IP."""
-    at = []
-    def h(pc):
-        if at or not cond(pc): return
-        at.append((pc.r('cs'), pc.r('ip')))
-        fl = pc.r('flags'); pc.push(fl); pc.push(pc.r('cs')); pc.push(pc.r('ip'))
-        off, seg = struct.unpack('<HH', pc.rd(0, 0, 4))
-        pc.w('flags', fl & ~0x300); pc.w('cs', seg); pc.w('ip', off); pc.mu.emu_stop()
-    k.hooks.append(h)
-    return at
+divide_at = ktest.divide_at
 
 def t_divctx():
     """A divide error outside a program's own plain code (DIVT.ASM).  A program with its own INT 00h handler
@@ -1621,6 +1609,33 @@ def t_divctx():
     check('... one in the Executive\'s prompt\'s own code: it ends, the Executive back ("LCMD.COM ended")',
           at and k.pc.mode() == 0x40 and k.u16('cur_psp') == k.u16('root_psp') and k.band()[:1] == ['LCMD.COM ended']
           and not k.crashed, (at, k.band(), k.where()))
+
+def t_divirq():
+    """A divide error in an interrupt handler (DIVT T's resident INT 1Ch hook, armed through its byte at CS:0103h)
+    ends the program that was interrupted, here the Executive's prompt, not the hook's owner, and the interrupt is
+    never ended at the PIC: with pcemu's 8259 model on (PIC_ISR), IRQ 0 is left in service.  A limit the kernel
+    documents, pinned as it stands so that a fix fails this on purpose."""
+    subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
+    old = pcemu.PIC_ISR
+    pcemu.PIC_ISR = True
+    try:
+        k = ktest.KPC(image('divirq.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT)); k.start()
+        sh = Shell(k)
+        sh.run('divt t')
+        seg, top = k.pc.u16(0, 0x1C * 4 + 2), k.u16('cur_psp')
+        isr0 = k.pc.isr
+        k.pc.tty.clear()
+        k.pc.wr(seg, 0x103, b'\x01')
+        k.run_for(1.0); k.run_for(1.0)
+        check('(a limit: a divide error in an interrupt handler leaves the interrupt in service) DIVT T\'s INT 1Ch '
+              'hook divides: "Divide overflow", the program interrupted (the Executive\'s prompt) ends, the Executive '
+              'back ("LCMD.COM ended"); DIVT stays resident, its hook disarmed; IRQ 0 still in service at the PIC',
+              not isr0 & 1 and k.pc.isr & 1 and 'Divide overflow' in ''.join(k.pc.tty) and top != k.u16('root_psp')
+              and k.u16('cur_psp') == k.u16('root_psp') and k.pc.mode() == 0x40 and k.band()[:1] == ['LCMD.COM ended']
+              and k.pc.u16(0, 0x1C * 4 + 2) == seg and k.pc.u16(seg - 1, 1) == seg and k.pc.rd(seg, 0x103, 1) == b'\x00'
+              and not k.crashed, (hex(isr0), hex(k.pc.isr), ''.join(k.pc.tty), k.band(), k.where()))
+    finally:
+        pcemu.PIC_ISR = old
 
 def t_trunc():
     """CREATE onto a file there (here a redirection): truncated and stamped,
@@ -6151,7 +6166,7 @@ sdx     dw      0
           and 'A:\\X' not in files and not k.crashed, (n, o, len(files)))
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_divirq, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

@@ -150,8 +150,13 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; stack, so a handler that returns runs it again, for ever.  As MS-DOS:
 ; "Divide overflow" on a line of its own, and the program ends with exit
 ; code 0 (MS-DOS's termination type is ^C's, 1; ours 0).  Through INT 21h,
-; with interrupts on, so multitasking's gate can hold the call; one it
-; refuses is made again.  Inside the kernel (InDOS) no message: that call
+; with interrupts on: while a floppy owner is out, multitasking's gate
+; (KMT.INC's mt_gate) holds a fault in plain code until the owner has run,
+; then the 4Ch goes through.  A call the gate refuses is made again, but
+; the gate refuses for reasons the faulting context may hold itself (an
+; interrupt in service, InDOS, mt_inb, mt_crit, mt_swing, the mouse event
+; handler's m33_busy): then every retry is refused and the machine spins
+; here with interrupts on.  Inside the kernel (InDOS) no message: that call
 ; would take the stack this one runs on, and 4Ch never comes back to it
 int00:  sti
         push    cs

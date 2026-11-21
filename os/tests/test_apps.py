@@ -1101,10 +1101,12 @@ def t_divrun():
     and is drawn over by the Executive.  run_cleanup frees the .RUN's UI_ALLOC block and its window, and the UI
     block shrinks back; the mouse is the Executive's again."""
     print('== a divide error in a .RUN (its own loop, a UI_DISPATCH handler) and in the Executive')
-    from test_kernel import divide_at
+    from ktest import divide_at
     mkrun.build(os.path.join(HERE, 'DIVRUN.ASM'), DIVRUN)
     k = ktest.KPC(image('divrun.img', DIVRUN, MEMSZ)); k.pc.mouse = True; k.start()
     free0 = free_paras(k)
+    jfree = lambda: list(k.pc.rd(k.u16('root_psp'), 0x18, 20)).count(0xFF)     # (the root's handle table)
+    j0 = jfree()
     for key, where in (('M', 'its own loop'), ('D', 'a key handler UI_DISPATCH calls')):
         k.select('DIVRUN.RUN'); k.key(ktest.ENTER)
         up = has(k, 'Divide test') and k.rd('run_active', 1) == b'\x01' and free_paras(k) != free0
@@ -1116,6 +1118,9 @@ def t_divrun():
               and not has(k, 'Divide test') and k.band()[:1] == ['Select a file and confirm'] and 'DIVRUN.RUN' in k.exec_list()
               and k.rd('run_active', 1) == b'\x00' and k.u16('wdepth') == 0 and free_paras(k) == free0 and not k.crashed,
               (up, ''.join(k.pc.tty), k.band(), k.rd('run_active', 1), k.u16('wdepth'), free_paras(k), free0, k.where()))
+    check('(a limit: a .RUN\'s open files stay open after its divide error) DIVRUN.RUN\'s file, opened in each of '
+          'the two runs, still takes a slot of the root\'s handle table: %d free, %d before' % (jfree(), j0),
+          jfree() == j0 - 2, (jfree(), j0))
     click(k, 40, 48)
     s1 = k.u16('sel')
     k.select('DIVRUN.RUN'); k.key(ktest.ENTER); k.key(ktest.ESC)

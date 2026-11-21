@@ -6475,6 +6475,28 @@ def t_divmt():
           'message, task 1 ends; MTSPIN counts on (%d); memory and files as before; the prompt goes on' % spun(k, 'S3.TXT'),
           at1 == [(1, 0, 1, False, False)] and spun(k, 'S3.TXT') > 0 and b1.back() and 'Lodestone version' in outs[0]
           and 'Z1\nDivide overflow' in outs[1], (at1, spun(k, 'S3.TXT'), b1.now(), outs))
+    # two window sessions (DIVRUN.RUN, the calculator by CODE-K) and MTSPIN a task behind: DIVRUN's divide error
+    # ends both sessions; MTSPIN runs on
+    k = boot('mt_div2.img', b'MULTITASK=1\r\n', 88, A.DIVRUN, A.CALCRUN, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    k.key(A.CODE['P']); k.run_for(1.0)
+    typ(k, 'start /w mtspin.com 1000 s5.txt', 0.5); typ(k, 'exit', 1.0); k.key(ktest.ENTER)
+    k.pc.run_until(lambda: 'DIVRUN.RUN' in k.exec_list(), 10); k.run_for(0.5)
+    k.select('DIVRUN.RUN'); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    bkey(k, A.CODE['K'], t=0.8)
+    two = (mb('mw_n'), A.has(k, 'Calculator'))
+    bkey(k, 0x6D00, t=0.5)                          # (the window key: DIVRUN's session in front again)
+    cur = mb('mw_cur')
+    bkey(k, 'M', t=1.0)
+    after = (mb('mw_n'), mb('mw_cur'), k.rd('run_active', 1)[0], k.u16('wdepth'), A.has(k, 'Calculator'),
+             A.has(k, 'Divide test'), [t for t, *_ in tstate(k)[0]])
+    waitfile(k, 'S5.TXT', 60.0); k.run_for(0.3)
+    check('(a limit: a divide error in a window .RUN ends every window session) DIVRUN.RUN and the calculator as '
+          'two window sessions (%s), MTSPIN a task behind; DIVRUN\'s divide error (session %d in front): no session '
+          'left (mw_n 0, run_active 0, wdepth 0), the calculator\'s window gone too; MTSPIN runs on to its end (%d)'
+          % (two, cur, spun(k, 'S5.TXT')), two == (2, True) and cur == 1 and after == (0, 0, 0, 0, False, False, [0, 2])
+          and spun(k, 'S5.TXT') > 0 and tstate(k)[0] == [(0, 1, 'Executive')] and not k.crashed, (two, cur, after, tstate(k)))
 
 QUITRUN = os.path.join(HERE, 'QUITRUN.RUN')
 
