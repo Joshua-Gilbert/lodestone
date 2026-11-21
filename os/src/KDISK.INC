@@ -1704,7 +1704,7 @@ buf_inval:
         xor     bx, bx
 .l:     mov     cl, [buf_drv+bx]
         mov     ch, cl
-        and     ch, 0F3h                ; (2, 6, 10, 14: C:'s)
+        and     ch, 3                   ; (2 + 4n: C:'s, whatever the high part)
         cmp     ch, 2
         jne     .c
         mov     cl, ch
