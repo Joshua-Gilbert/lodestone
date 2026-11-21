@@ -345,6 +345,8 @@ def t_core():
     check('form: ESC cancels and changes nothing', has(k, 'Find: world 1 1') and not has(k, 'Fill in form'), screen(k))
     k.key(CODE['F']); k.key(ktest.DOWN); f1 = k.u16('fm_cur'); k.key(ktest.DOWN, ktest.DOWN); f3 = k.u16('fm_cur'); k.key(ktest.ESC)
     check('form: Down goes to the next field, and from the last back to the first', (f1, f3) == (1, 0), (f1, f3))
+    k.key(CODE['F']); k.key(ktest.TAB); f1 = k.u16('fm_cur'); k.key(ktest.ESC)
+    check('form: Tab in a text field ends its edit and goes to the next field', f1 == 1, f1)
     # fixes of 2026-10-06
     k.key(CODE['F'])
     click(k, 320, 5)                    # above the form's window
