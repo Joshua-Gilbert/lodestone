@@ -217,7 +217,7 @@ gp_addressed:
         push    ax
         call    gp_ensure_ctrl
         pop     ax
-        jc      gp_cmdfail
+        jc      ..@gp_cf
         push    ax
         mov     al, gp_UNL
         call    gp_send_cmd
@@ -235,20 +235,24 @@ gp_addressed:
         pop     ax
 .n:     mov     al, gp_UNL
         call    gp_send_cmd
-        jc      gp_cmdfail
+        jc      ..@gp_cf
         xor     ax, ax
         jmp     gp_fin_ax
 .f:     pop     ax
-        jmp     gp_cmdfail
+..@gp_cf: jmp   gp_cmdfail              ; (the failed commands out of
+                                        ;  gp_cmdfail's short reach come here: a
+                                        ;  2-byte jcc, not taken when they go)
 ; universal command AL (DCL)
 gp_uni:    push    ax
         call    gp_ensure_ctrl
         pop     ax
-        jc      gp_cmdfail
+        jc      ..@gp_cf
         call    gp_send_cmd
         jc      gp_cmdfail
         xor     ax, ax
         jmp     gp_fin_ax
+        db      90h                     ; (a pad, never run: what follows at
+                                        ;  its parity)
 
 gp_f_timeout:
         mov     ax, [gp_tdata]             ; old value in ms
