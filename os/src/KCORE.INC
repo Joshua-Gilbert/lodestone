@@ -148,7 +148,8 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 
 ; INT 00h, a divide error: the 286 leaves the DIV's own address on the
 ; stack, so a handler that returns runs it again, for ever.  As MS-DOS:
-; "Divide overflow", and the program ends (exit code 255).  Through INT 21h,
+; "Divide overflow" on a line of its own, and the program ends with exit
+; code 0 (MS-DOS's termination type is ^C's, 1; ours 0).  Through INT 21h,
 ; with interrupts on, so multitasking's gate can hold the call; one it
 ; refuses is made again.  Inside the kernel (InDOS) no message: that call
 ; would take the stack this one runs on, and 4Ch never comes back to it
@@ -160,10 +161,10 @@ int00:  sti
         mov     dx, s_divov
         mov     ah, 9
         int     21h
-.q:     mov     ax, 4CFFh
+.q:     mov     ax, 4C00h
         int     21h
         jmp     .q
-s_divov db      'Divide overflow', 13, 10, '$'
+s_divov db      13, 10, 'Divide overflow', 13, 10, '$'
 
 int25:  mov     ax, 0207h               ; absolute disk I/O: not supported
         stc

@@ -1300,22 +1300,29 @@ def t_exehuge():
     check('... and a one-page .EXE still runs', 'RAN' in o and not k.crashed, o)
 
 def t_divide():
-    """A divide error (INT 00h): "Divide overflow" and the program ends, exit code 255, as MS-DOS.  The kernel had
-    no handler: the 286 leaves the DIV's address on the stack, so the BIOS's IRET ran it again for ever."""
+    """A divide error (INT 00h): "Divide overflow" on a line of its own and the program ends, exit code 0, as
+    GRiD MS-DOS 3.30 (measured in the emulator from its ROM image: CR LF before and after, 4Dh's AL 0).  The
+    kernel had no handler: the 286 leaves the DIV's address on the stack, so the BIOS's IRET ran it again for
+    ever.  (Three in one machine: pcemu's exc_forget.)"""
     msg = lambda at: bytes([0xB4, 0x09, 0xBA, at & 0xFF, at >> 8, 0xCD, 0x21])
     code = msg(0x115) + bytes([0x31, 0xDB, 0xF7, 0xF3]) + msg(0x11D) + bytes([0xCD, 0x20])
     assert len(code) == 0x14
     open(os.path.join(OUT, 'DIV0.COM'), 'wb').write(code + b'\x90BEFORE.$AFTER$')
-    k = ktest.KPC(image('div0.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(OUT, 'DIV0.COM'))); k.start()
+    open(os.path.join(OUT, 'EXIT7.COM'), 'wb').write(bytes([0xB8, 0x07, 0x4C, 0xCD, 0x21]))
+    k = ktest.KPC(image('div0.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(OUT, 'DIV0.COM'),
+                        os.path.join(OUT, 'EXIT7.COM'))); k.start()
     k.run_file('DIV0.COM', 20)
     check('a program that divides by zero, from the Executive: it ends, the Executive back',
           not k.crashed and k.pc.mode() == 0x40 and any('DIV0.COM ended' in l for l in k.band()), (k.crashed, k.band()))
     sh = Shell(k)
     o = sh.run('div0')
     check('... from the prompt: "Divide overflow", nothing after the DIV runs, the prompt back',
-          'BEFORE.Divide overflow' in o and 'AFTER' not in o and not k.crashed and 'A:\\>' in k.pc.text_screen().rstrip()[-8:], o)
-    o = sh.run('if errorlevel 255 echo E255')
-    check('... its exit code is 255', 'E255' in o.replace('echo E255', ''), o)
+          'BEFORE.\nDivide overflow\n' in o and 'AFTER' not in o and not k.crashed and 'A:\\>' in k.pc.text_screen().rstrip()[-8:], o)
+    sh.run('exit7')                                     # (an exit code that isn't 0 first)
+    sh.run('div0')
+    o = sh.run('if errorlevel 1 echo E1')
+    o2 = sh.run('if not errorlevel 1 echo E0')
+    check('... its exit code is 0', 'E1' not in o.replace('echo E1', '') and 'E0' in o2.replace('echo E0', ''), (o, o2))
     o = sh.run('div0 > nul')
     check('... the message is standard output\'s', 'Divide overflow' not in o and not k.crashed, o)
     check('... and the shell works on', 'Lodestone version' in sh.run('ver'))
