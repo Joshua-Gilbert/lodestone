@@ -289,6 +289,7 @@ EEPROM. Pick a free GPIB address; 7 is free on your bus.
 bash install.sh
 nano ~/.config/gridlink/config.toml        # port, address, model, your bus
 echo 'sk-ant-...' > ~/.config/gridlink/api_key; chmod 600 ~/.config/gridlink/api_key   # chat only
+cd ~/gridlink                              # where install.sh put gridlink and its venv
 venv/bin/python -m gridlink --console      # chat in the terminal, no GRiD needed
 sudo systemctl enable --now gridlink        # then leave it running
 ```
@@ -297,17 +298,21 @@ The API key (chat only) comes from the Claude Console
 (console.anthropic.com); usage is billed per token. `/cost` shows the
 session's running total. Term needs no key (see above).
 
-CLAUDE 1.15 and resident Claude's console 1.13 need gridlink from
-2026-10-22 on: they check frames only with the Fletcher sum.
-With an older gridlink the GRiD keeps resetting the link, saying "No
-answer from the bridge at GPIB address 7".
+#### Which gridlink a GRiD program needs
 
-CLAUDE 1.16 in a Lodestone terminal window (CODE-A with multitasking on)
-tells gridlink how many rows the window shows, and gridlink makes Claude
-Code's terminal that tall (PROTOCOL.md, EVENT 08h): Claude Code 2.1 pins
-its prompt box to the foot and its logo to the top, and a window showing
-19 of 24 rows lost the logo. An older gridlink keeps 24 rows, as before.
-The same goes for `CLAUDE /W` in a window: gridfox lays out for the pty's
+gridlink's version is the date it was released: `~/gridlink/venv/bin/python
+-m gridlink --version` prints it, and it is the first line gridlink logs. The
+GRiD program's version is in its banner and its HELLO (`grid=CLAUDE 1.18`).
+
+| On the GRiD | gridlink | Bridge firmware | With older ones |
+|---|---|---|---|
+| Resident Claude's console 1.10 on: files and GPIB in the background once the user is back in the program (1.11: `grid_program` there too) | 2026-10-24 on (bit 3) | Pico 2, 2026-10-24 on (quiet) | the tools say the user has gone back, until the console is up again |
+| CLAUDE 1.14, the screen saver inside CLAUDE full screen (EVENT 07h) | 2026-10-27 on (bit 4) | Pico 2, 2026-10-22b on (WAKE) | no saver inside CLAUDE |
+| CLAUDE 1.15 on, resident Claude's console 1.13 on (2026-10-29): frames checked only with the Fletcher sum | 2026-10-22 on | any | the GRiD keeps resetting the link, saying "No answer from the bridge at GPIB address 7" |
+| CLAUDE 1.16 in a Lodestone terminal window: it says how many rows the window shows (EVENT 08h), and Claude Code's terminal is made that tall | 2026-11-04 on (its HELLO answer's bit 5) | any | the terminal stays 24 rows, and Claude Code 2.1, which pins its logo to the top and its prompt box to the foot, loses the logo in a window showing 19 |
+| CLAUDE 1.19, console 1.14: the 8th NAK in a row fails the link; requests checked against what they carry (PROTOCOL.md) | as 1.15 and 1.13: nothing new | any | (nothing breaks: gridlink never NAKs every frame or sends such requests) |
+
+`CLAUDE /W` in a window works as Term does: gridfox lays out for the pty's
 rows (the address at the top, the status line at the foot) and follows
 each resize (docs/gridfox.md, "In a Lodestone window").
 
@@ -321,8 +326,7 @@ CLAUDE          chat (CLAUDE /T: Term; CLAUDE /W: Firefox; CLAUDE /A:nn if the b
 ```
 
 It connects, sets the GRiD's clock from the Pi, and shows the welcome.
-It needs gridlink from 2026-10-22 on; with an older one it keeps
-resetting, saying "No answer from the bridge at GPIB address 7".
+Which gridlink it needs: the table under "2. The Pi".
 
 ### Without the GPIB cartridge: the modem or a serial cable
 
@@ -492,10 +496,13 @@ every byte checked.
 
 ## Status
 
-CLAUDE 1.15 and resident Claude's console 1.13 (2026-10-29: no CRC on the
-GRiD) need gridlink from 2026-10-22 on. An
-older gridlink shows up as CLAUDE resetting the link with "No answer from
-the bridge at GPIB address 7".
+Which gridlink and bridge firmware each CLAUDE and console needs is the
+table under "2. The Pi", and its last column says what an older one
+looks like: only with CLAUDE 1.15 and console 1.13 on does the GRiD keep
+resetting the link ("No answer from the bridge at GPIB address 7"); with
+the others a feature is missing (no saver inside CLAUDE, a 24-row
+terminal in a window, the background tools saying the user has gone
+back).
 
 The emulator suites in `tests/` run the real CLAUDE.COM under an emulated
 DOS 3.30 with the real GRIDGPIB driver, talking through the 7210 and AR488

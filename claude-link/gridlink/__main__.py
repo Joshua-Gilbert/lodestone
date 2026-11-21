@@ -8,7 +8,7 @@ The GRiD picks chat (CLAUDE, gridlink's own agent on an API key) or Term
 (CLAUDE /T: the real Claude Code on this Pi, on your Claude subscription).
 """
 import argparse, collections, logging, os, signal, sys, threading, time
-from . import glp
+from . import glp, __version__
 from .config import BAUDS, GPIB_ADDR, Config, MODELS, int_in
 from .link import AR488Serial, DebugTrace, serve
 from .pico import PicoBridge
@@ -105,6 +105,7 @@ def main(argv=None):
     ap.add_argument('--term-command', help='Term: the program to run (default: claude)')
     ap.add_argument('--save-bridge', action='store_true', help='store bridge settings in its EEPROM')
     ap.add_argument('-v', '--verbose', action='store_true')
+    ap.add_argument('--version', action='version', version='gridlink ' + __version__)
     a = ap.parse_args(argv)
 
     cfg = Config().load(a.config)
@@ -122,6 +123,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format='%(asctime)s %(message)s', datefmt='%H:%M:%S')
     log = logging.getLogger('gridlink').info
+    log('gridlink %s' % __version__)
     for w in cfg.warnings: log(w)
 
     key = cfg.api_key or os.environ.get('ANTHROPIC_API_KEY')

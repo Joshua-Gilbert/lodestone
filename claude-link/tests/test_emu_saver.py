@@ -8,7 +8,7 @@ a stand-in Claude Code in a pty, and in chat.
 
     python3 tests/test_emu_saver.py
 """
-import os, sys, threading, time
+import os, re, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from grid_emu import EmuHarness, FakeSaver
 from gridlink import glp
@@ -105,7 +105,7 @@ def test_saver_and_a_tool_call():
         th = threading.Thread(target=lambda: res.update(r=h.router.term.grid.get_info()))
         th.start()
         assert h.run_until(lambda: not th.is_alive(), 20), 'the call never came back'
-        assert 'CLAUDE 1.18' in res.get('r', {}).get('grid', ''), res
+        assert re.search(r'CLAUDE 1\.\d+', res.get('r', {}).get('grid', '')), res   # (any CLAUDE's INFO)
         assert not sv.up(), 'still up'
         assert T.in_step(h), T.mismatch(h)
         T.check(h)

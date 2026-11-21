@@ -130,8 +130,8 @@ def test_held_replies():
 
 
 def test_nak_before_any_frame():
-    # A damaged first HELLO (no good frame yet): the NAK goes with the Fletcher sum, which CLAUDE 1.15 and the
-    # console 1.13 read (they have no CRC); an older CLAUDE's good CRC HELLO then has its answer in CRC
+    # A damaged first HELLO (no good frame yet): the NAK goes with the Fletcher sum, which CLAUDE from 1.15 and the
+    # console from 1.13 read (they have no CRC); an older CLAUDE's good CRC HELLO then has its answer in CRC
     from gridlink.link import Link
     class T:
         frame_limit = 4104

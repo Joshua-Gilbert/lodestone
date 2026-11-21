@@ -134,6 +134,42 @@ def test_verbose_wiring():
         if env is not None: os.environ['ANTHROPIC_API_KEY'] = env
 
 
+def test_version():
+    # gridlink --version prints the version (a date, README's compatibility table's) and exits; a start logs it
+    # first, before the bridge (D12)
+    import contextlib, io, logging
+    import gridlink, gridlink.__main__ as M
+    assert re.fullmatch(r'\d{4}-\d\d-\d\d', gridlink.__version__), gridlink.__version__
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out): M.main(['--version'])
+        assert False, 'no exit'
+    except SystemExit as e:
+        assert e.code in (0, None), e.code
+    assert out.getvalue() == 'gridlink %s\n' % gridlink.__version__, out.getvalue()
+    lines = []
+    class Grab(logging.Handler):
+        def emit(s, r): lines.append(r.getMessage())
+    class Bridge:
+        frame_limit = glp.PATCHED_FRAME_MAX; patched = True; version = 'test'
+        def __init__(s, *a, **kw): lines.append('(bridge made)')
+        def open(s): pass
+        def configure(s): return s.version
+        def answer(s, frame): pass
+    g = Grab(); lg = logging.getLogger('gridlink'); lg.addHandler(g)
+    old = M.PicoBridge, M.serve
+    M.PicoBridge, M.serve = Bridge, lambda t, link, stop: None
+    env = os.environ.pop('ANTHROPIC_API_KEY', None)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'c.toml'); open(p, 'w').write('[bridge]\nkind = "pico"\n')
+            M.main(['--config', p])
+    finally:
+        M.PicoBridge, M.serve = old; lg.removeHandler(g)
+        if env is not None: os.environ['ANTHROPIC_API_KEY'] = env
+    assert lines and lines[0] == 'gridlink %s' % gridlink.__version__, lines
+
+
 def test_trace_stop_restores_sink():
     # the MCP bridge's _link trace (gridlink.bench --trace) under -v: 'stop' with no 'start' is an empty trace
     # (the DebugTrace is no list), and 'stop' puts the DebugTrace back
