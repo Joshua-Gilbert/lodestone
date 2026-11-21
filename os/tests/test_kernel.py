@@ -1262,21 +1262,97 @@ def t_rtcdate():
         check('RTC %04X %04X: the date %04d-%02d-%02d, the Executive up' % ((cx, dx) + want),
               got == want and not k.crashed and k.pc.mode() == 0x40, (got, k.where()))
 
+def execerr():
+    """EXECERR.COM NAME: its block shrunk to itself, EXEC (4B00h) of NAME with an empty tail -> "E=" and AL in
+    hex if it failed (CF), else "OK" after what the program printed.  -> its path."""
+    src = os.path.join(OUT, 'EXECERR.ASM')
+    open(src, 'w').write("""cpu 286
+org 100h
+        mov     sp, stk
+        mov     bx, (stk - $$ + 100h + 15) >> 4
+        mov     ah, 4Ah
+        int     21h
+        mov     si, 81h
+.s:     lodsb
+        cmp     al, ' '
+        je      .s
+        lea     dx, [si - 1]
+.n:     cmp     al, ' '
+        je      .z
+        cmp     al, 0Dh
+        je      .z
+        lodsb
+        jmp     .n
+.z:     mov     byte [si - 1], 0
+        mov     [pb + 4], cs
+        mov     [pb + 8], cs
+        mov     [pb + 12], cs
+        push    cs
+        pop     es
+        mov     bx, pb
+        mov     [cs:ssp], sp
+        mov     ax, 4B00h
+        int     21h
+        cli
+        mov     bx, cs
+        mov     ss, bx
+        mov     sp, [cs:ssp]
+        sti
+        mov     ds, bx
+        jc      .e
+        mov     dx, s_ok
+        mov     ah, 9
+        int     21h
+        jmp     .x
+.e:     push    ax
+        mov     dx, s_e
+        mov     ah, 9
+        int     21h
+        pop     ax
+        push    ax
+        shr     al, 4
+        call    .d
+        pop     ax
+        and     al, 15
+        call    .d
+.x:     mov     ax, 4C00h
+        int     21h
+.d:     add     al, '0'
+        cmp     al, '9'
+        jbe     .p
+        add     al, 7
+.p:     mov     dl, al
+        mov     ah, 2
+        int     21h
+        ret
+pb      dw      0, tail, 0, 5Ch, 0, 6Ch, 0
+tail    db      0, 0Dh
+ssp     dw      0
+s_ok    db      'OK$'
+s_e     db      'E=$'
+        times   256 db 0
+stk:
+""")
+    com = os.path.join(OUT, 'EXECERR.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    return com
+
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (they would be what ex_rel held from
     before: the INT 21h stack's low area since 2026-11-03); the whole one runs."""
     import struct
     code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
-    def exe(nrel, rels=b''):
-        size = 32 + len(code) + len(rels)
+    def exe(nrel, rels=b'', more=0):
+        size = 32 + len(code) + len(rels) + more
         hdr = struct.pack('<2s13H', b'MZ', size % 512, (size + 511) // 512, nrel, 2, 0x20, 0x20,
                           1, 0x100, 0, 0, 0, 32 + len(code), 0)
         return hdr + bytes(32 - len(hdr)) + code + rels
-    for n, data in (('CUT.EXE', exe(3)), ('WHOLE.EXE', exe(1, struct.pack('<HH', 0x30, 0)))):
+    for n, data in (('CUT.EXE', exe(3)), ('WHOLE.EXE', exe(1, struct.pack('<HH', 0x30, 0))), ('SHORT.EXE', exe(0, more=3000))):
         open(os.path.join(OUT, n), 'wb').write(data)
     k = ktest.KPC(image('exe.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'CUT.EXE=' + os.path.join(OUT, 'CUT.EXE'),
-                        'WHOLE.EXE=' + os.path.join(OUT, 'WHOLE.EXE'))); k.start()
+                        'WHOLE.EXE=' + os.path.join(OUT, 'WHOLE.EXE'), 'SHORT.EXE=' + os.path.join(OUT, 'SHORT.EXE'),
+                        execerr())); k.start()
     sh = Shell(k)
     src = open(os.path.join(GOS, 'src', 'KFILE.INC')).read()
     eq = lambda n: int(re.search(r'^%s\s+equ\s+(\d+)' % n, src, re.M).group(1))
@@ -1285,37 +1361,62 @@ def t_exerel():
     o = sh.run('cut')
     check('relocation table past the end: not run', 'RAN' not in o and not k.crashed, o)
     check('... the handles it inherited given back (SFT counts as before)', refs() == r0, (r0, refs()))
+    o = sh.run('execerr cut.exe')
+    check('... EXEC\'s answer: 11 (bad format)', 'E=0B' in o and 'RAN' not in o, o)
+    o = sh.run('execerr short.exe')
+    check('an .EXE shorter than its header says (its image\'s read short): EXEC answers 11, the handles given back',
+          'E=0B' in o and 'RAN' not in o and refs() == r0 and not k.crashed, (o, r0, refs()))
     o = sh.run('whole')
     check('... the same with its table there: runs', 'RAN' in o and not k.crashed, o)
+    o = sh.run('execerr whole.exe')
+    check('... and EXEC of it answers no error', 'RAN' in o and 'OK' in o, o)
 
 def t_exehuge():
-    """An .EXE whose header says its image is 1 MB or more: EXEC refuses it.  The size's paragraph count was a
-    16-bit quotient: 801h pages faulted at the DIV (which, with no INT 00h handler, ran again for ever), and 800h
-    wrapped to a tiny block."""
+    """An .EXE whose header says its image (the file's size by the header, less the header) is F0000h bytes
+    (960 KB) or more: EXEC refuses it as a bad format (11), before the DIV that makes its paragraph count, which
+    overflows from 1 MB up; up to EFFFFh it gets as far as the memory check (8, as no such block is there).  The
+    count was a 16-bit quotient: 801h pages faulted at the DIV (which, with no INT 00h handler, ran again for
+    ever), and 800h wrapped to a tiny block."""
     code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
-    def exe(pages):
-        last = 32 + len(code) if pages == 1 else 0          # (the one-page file's own size; the others: whole pages)
+    def exe(pages, last=0):
+        if pages == 1: last = 32 + len(code)                # (the one-page file's own size; the others: whole pages)
         hdr = struct.pack('<2s13H', b'MZ', last, pages, 0, 2, 0x20, 0x20, 1, 0x100, 0, 0, 0, 32 + len(code), 0)
         return hdr + bytes(32 - len(hdr)) + code
-    files = []
-    for n, pages in (('BIG801.EXE', 0x801), ('BIG800.EXE', 0x800), ('BIGFFFF.EXE', 0xFFFF), ('SMALL.EXE', 1)):
-        open(os.path.join(OUT, n), 'wb').write(exe(pages)); files.append(os.path.join(OUT, n))
+    files = [execerr()]
+    # (an image of EFFFFh: 780h whole pages and 1Fh bytes, less the 20h of the header; F0000h one more byte)
+    for n, pages, last in (('BIG801.EXE', 0x801, 0), ('BIG800.EXE', 0x800, 0), ('BIGFFFF.EXE', 0xFFFF, 0), ('SMALL.EXE', 1, 0),
+                           ('EFFFF.EXE', 0x781, 0x1F), ('F0000.EXE', 0x781, 0x20)):
+        open(os.path.join(OUT, n), 'wb').write(exe(pages, last)); files.append(os.path.join(OUT, n))
+    mx = bytearray(exe(1)); mx[0x0A:0x0C] = b'\xff\xff'     # (its minimum extra FFFFh: the sum carries)
+    for n, data in (('MINFFFF.EXE', mx), ('COMFE01.COM', b'\xc3' * 0xFE01), ('COM64K.COM', b'\xc3' * 0x10010)):
+        open(os.path.join(OUT, n), 'wb').write(data); files.append(os.path.join(OUT, n))
     k = ktest.KPC(image('exehuge.img', os.path.join(GOS, 'src', 'LCMD.COM'), *files)); k.start()
     sh = Shell(k)
-    def arena():
+    def arena():                        # (free neighbours merged: EXECERR's shrink leaves its block cut in two)
         seg, out = k.u16('first_mcb'), []
         while len(out) < 200:
             t, own, sz = chr(k.pc.rd(seg, 0, 1)[0]), k.pc.u16(seg, 1), k.pc.u16(seg, 3)
-            out.append((seg, own, sz))
+            if out and own == 0 and out[-1][1] == 0: out[-1] = (out[-1][0], 0, out[-1][2] + sz + 1)
+            else: out.append((seg, own, sz))
             if t != 'M': break
             seg += sz + 1
         return out
     a0 = arena()
-    for n in ('big801', 'big800', 'bigffff'):
+    for n in ('big801', 'big800', 'bigffff', 'f0000'):
         o = sh.run(n)
-        check('%s.EXE, an image of 1 MB or more by its header: refused, the prompt back' % n.upper(),
+        check('%s.EXE, an image of F0000h bytes or more by its header: refused, the prompt back' % n.upper(),
               'RAN' not in o and 'Divide' not in o and not k.crashed and 'A:\\>' in k.pc.text_screen(), o)
         check('... the arena as it was', arena() == a0, (a0, arena()))
+        o = sh.run('execerr %s.exe' % n)
+        check('... EXEC\'s answer: 11 (bad format), the arena as it was', 'E=0B' in o and arena() == a0, (o, arena()))
+    o = sh.run('execerr effff.exe')
+    check('EFFFF.EXE, an image of EFFFFh bytes: under the bound, refused by the memory check (8), the arena as it was',
+          'E=08' in o and 'RAN' not in o and arena() == a0 and not k.crashed, (o, arena()))
+    for n, what in (('minffff.exe', 'an .EXE whose minimum extra memory carries past FFFFh paragraphs'),
+                    ('comfe01.com', 'a .COM of FE01h bytes'), ('com64k.com', 'a .COM of 64 KB and more')):
+        o = sh.run('execerr ' + n)
+        check('%s: too big, EXEC answers 8, the arena as it was' % what,
+              'E=08' in o and 'RAN' not in o and arena() == a0 and not k.crashed, (o, arena()))
     o = sh.run('small')
     check('... and a one-page .EXE still runs', 'RAN' in o and not k.crashed, o)
 
@@ -5537,7 +5638,13 @@ def t_execabort():
     open(com, 'wb').write(code + b'Q' * (4096 - len(code)))
     badx = os.path.join(OUT, 'BADX.EXE')            # a header bigger than the file: EXEC says 11 (bad format)
     open(badx, 'wb').write((b'MZ' + struct.pack('<4H', 88, 2, 0, 0x40)).ljust(600, b'\0'))
-    k = ktest.KPC(image('exabort.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, os.path.join(HERE, 'UPPER.COM'), badx, SCR))
+    bigx = os.path.join(OUT, 'BIGX.EXE')            # an .EXE of 4 KB that prints HELLO
+    size = 32 + 4096
+    open(bigx, 'wb').write((struct.pack('<2s13H', b'MZ', size % 512, (size + 511) // 512, 0, 2, 0x20, 0x20, 1, 0x100,
+                                        0, 0, 0, 0x1C, 0) + bytes(4)) + code.ljust(4096, b'Q'))
+    EXE_FAIL = '17'                                 # (23: the data error's code, as INT 21h gives a Fail)
+    k = ktest.KPC(image('exabort.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, os.path.join(HERE, 'UPPER.COM'), badx, SCR,
+                        execerr(), bigx))
     k.start()
     pc, d = k.pc, k.pc.drives[0]
     def lbas(name):                     # the file's sectors (1.44 MB FAT12)
@@ -5598,6 +5705,22 @@ def t_execabort():
     k.key('cls'); k.key(ktest.ENTER)
     k.key('badx'); k.key(ktest.ENTER)
     check('... then BADX.EXE: "Bad command or file name"', 'Bad command or file name' in pc.text_screen(), pc.text_screen())
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('execerr badx.exe'); k.key(ktest.ENTER)
+    check('... EXEC\'s answer for it: 11 (bad format: a header bigger than the file)',
+          'E=0B' in pc.text_screen() and arena() == a0, (pc.text_screen(), arena()))
+    # an .EXE's image unreadable, answered Fail: EXEC answers the read's error (not 11, a short file's)
+    d.bad = {lbas(b'BIGX    EXE')[3]}
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('execerr bigx.exe'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Fail?' in pc.text_screen() or pc.crash, 10)
+    o1 = pc.text_screen()
+    d.bad = set()
+    pc.keys.append(ord('f')); k.settle()
+    o = pc.text_screen().rstrip()
+    check('a read error in BIGX.EXE\'s image under EXECERR, answered Fail: EXEC answers %sh, memory and the files as '
+          'before' % EXE_FAIL, 'Data error reading drive A' in o1 and o.endswith('E=%s\nA:\\>' % EXE_FAIL)
+          and 'HELLO' not in o and arena() == a0 and refs() == r0 and not k.crashed, (o1[-200:], o[-200:], arena(), refs()))
     # once a program runs, Abort ends it again (EXEC's flag not left set): UPPER reading BIG.COM's bad sector
     d.bad = {sec[1]}
     k.key('cls'); k.key(ktest.ENTER)

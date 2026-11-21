@@ -248,7 +248,9 @@ f_4B:   cmp     byte [bp+F_AX], 0
         sub     ax, cx
         sbb     dx, 0
         cmp     dx, 0Fh                 ; (unsigned: a negative size is FFFFh;
-        jae     .bad                    ;  1 MB and up would overflow the DIV)
+        jae     .bad                    ;  refused from F0000h, 960 KB, up: 1 MB
+                                        ;  and up would overflow the DIV, and
+                                        ;  F0000h-FFFFFh can't be had anyway)
         mov     [ex_left], ax
         mov     [ex_left+2], dx
         add     ax, 15
