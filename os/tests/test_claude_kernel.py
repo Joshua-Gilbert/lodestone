@@ -920,9 +920,10 @@ T.test_run_temp_setting = test_run_temp_setting
 
 def test_run_long_temp_comspec():
     """A TEMP or a COMSPEC longer than its buffer (a hand-typed SET; LODE.INI's TEMP= stops at 64): env_get
-    copied it to the NUL, so a TEMP of 68+ characters ran outname into the tail, and a COMSPEC of 80+ ran exec_path
+    copied it to the NUL, so a TEMP of 69+ characters ran outname into the tail, and a COMSPEC of 80+ ran exec_path
     into outname, and the captured RUN's file was made under a garbage name.  Now each is cut to its room: TEMP at
-    67 characters, so outname is that and "\\CLAUDE.OUT" in its 80 bytes; COMSPEC at 79, outname untouched."""
+    68 characters (68 kept whole, 69 cut), so outname is that and "\\CLAUDE.OUT" and its NUL in its 80 bytes;
+    COMSPEC at 79, outname untouched."""
     import threading
     from unicorn import UC_HOOK_CODE
     from gridlink import glp
@@ -953,9 +954,12 @@ def test_run_long_temp_comspec():
         assert len(seen) == n + 1, seen
         return res.get('r'), seen[-1]
     try:
-        set_env(b'COMSPEC=A:\\LCMD.COM', b'TEMP=A:\\' + b'D' * 70)
+        set_env(b'COMSPEC=A:\\LCMD.COM', b'TEMP=A:\\' + b'D' * 65)          # (68 characters: kept whole)
         r, (out, path) = run()
-        assert out == b'A:\\' + b'D' * 64 + b'\\CLAUDE.OUT' and path == b'A:\\LCMD.COM', (r, out, path)
+        assert out == b'A:\\' + b'D' * 65 + b'\\CLAUDE.OUT' and path == b'A:\\LCMD.COM', (r, out, path)
+        set_env(b'COMSPEC=A:\\LCMD.COM', b'TEMP=A:\\' + b'D' * 66)          # (69: cut at 68)
+        r, (out, path) = run()
+        assert out == b'A:\\' + b'D' * 65 + b'\\CLAUDE.OUT' and path == b'A:\\LCMD.COM', (r, out, path)
         set_env(b'COMSPEC=A:\\' + b'C' * 90)
         r, (out, path) = run()
         assert out == b'A:\\CLAUDE.OUT' and path == b'A:\\' + b'C' * 76, (r, out, path)

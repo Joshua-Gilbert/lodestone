@@ -3061,12 +3061,13 @@ get_comspec:
 .x:     ret
 
 ; outname = %TEMP%\CLAUDE.OUT, %TMP%\CLAUDE.OUT or X:\CLAUDE.OUT.  The
-; value cut at 67 characters: "\CLAUDE.OUT" and the NUL fit outname's 80
-; (TEMP's documented limit is 64, as LODE.INI's and LCMD's pipe_name)
+; value cut at 68 characters: "\CLAUDE.OUT" and the NUL fit outname's 80
+; (env_get's CX counts the NUL too).  TEMP's documented limit is 64, as
+; LODE.INI's and LCMD's pipe_name
 make_outname:
         mov     si, s_temp
         mov     di, outname
-        mov     cx, 80 - 12
+        mov     cx, 80 - 11
         call    env_get
         jnc     .have
         mov     si, s_tmp               ; (CX as it was)
