@@ -1725,6 +1725,7 @@ def t_bg_floppy():
         # counted at the stub's r_isr and its OUTs' paths, and at res_load's res_eout (CLAUDE.COM's own CS), each with
         # a transfer in flight or not: {(phase, label, in flight): n}
         n = {'phase': 'install'}
+        ms = mt_seg(pc)
         at, eout = {}, {h.sym[x]: x for x in ('res_eout', 'res_eout.a', 'res_eout.go')}
         watch = pc.watch
         def w(addr):
@@ -1732,6 +1733,8 @@ def t_bg_floppy():
             if x:
                 k = (n['phase'], x, pc.fd_dma())
                 n[k] = n.get(k, 0) + 1
+                if x in ('r_popup', 'r_bg.go') and pc.rd(ms, pc.Y['mt_down'], 1)[0] != 0xFF:
+                    n['owner out'] = n.get('owner out', 0) + 1      # (the console in with a disk's owner out)
             watch(addr)
         pc.watch = w
         def cnt(phase, name, dma=True): return n.get((phase, name, dma), 0)
@@ -1800,8 +1803,9 @@ def t_bg_floppy():
         h.wait(lambda: pc.mode() == 3 and h.inpop() == 0, 5)
         h.k.key(ENTER, settle=False)            # (MTLAUNCH's line)
         ok = copied('X2.COM')
-        check('... the copy exact; no page register written under a transfer all the while (%d)' % fdw(),
-              ok and fdw() == 0 and not pc.crash, (ok, fdw(), pc.crash))
+        check('... the copy exact; no page register written under a transfer all the while (%d), and the console never '
+              'in with a disk\'s owner out (%d times)' % (fdw(), n.get('owner out', 0)),
+              ok and fdw() == 0 and not pc.crash and n.get('owner out', 0) == 0, (ok, fdw(), pc.crash, n))
         # the transfers over: the looks and the pop-up as ever, with the controller there, and with none (3F4h FFh)
         h.cmd('emsuse')
         n0 = looks['n']
@@ -1833,6 +1837,15 @@ def t_bg_floppy():
         pcemu.FD_STRICT = strict
         h.close()
 
+def mt_seg(pc):
+    """Lodestone's multitasking: its segment (the system's block named MT), or None."""
+    seg, at = pc.u16(0x60, pc.Y['first_mcb']), None
+    for _ in range(300):
+        t, own, size = pc.rd(seg, 0, 1)[0], pc.u16(seg, 1), pc.u16(seg, 3)
+        if pc.rd(seg, 8, 2) == b'MT' and own == 8: at = seg + 1
+        if t != ord('M'): return at
+        seg += size + 1
+    return at
 
 def t_bg_screen():
     """CLAUDE 1.11: grid_program in the background.  Back in the program, Claude reads its screen as it is

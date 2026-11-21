@@ -4138,10 +4138,11 @@ res_load:
 .noems: mov     dx, s_r_noems
         mov     al, 1
         jmp     res_quit
-; AL to the page register at DX, once no floppy transfer is in flight (the
-; stub's r_isr has why: another task may be out in one).  Looked at and
-; written with interrupts off, so no task switch comes between; while one
-; is in flight, interrupts on again and another look.  All kept
+; AL to the page register at DX, once the floppy controller is plainly idle
+; (the stub's r_isr has why, and the test: another task may be out on a
+; disk).  Looked at and written with interrupts off, so no task switch
+; comes between; while it is not, interrupts on again and another look (no
+; bound of its own, as r_isr).  All kept
 res_eout:
         push    ax
 .a:     cli
@@ -4149,10 +4150,9 @@ res_eout:
         mov     dx, 3F4h
         in      al, dx
         pop     dx
-        test    al, 10h                 ; (a command under way,
-        jz      .go
-        not     al
-        test    al, 0C0h                ;  and not yet at its result)
+        cmp     al, 0FFh                ; (no controller)
+        je      .go
+        test    al, 1Fh                 ; (a command, a result or a seek)
         jz      .go
         sti
         jmp     .a
@@ -4427,6 +4427,8 @@ r_front:
 ; none now (AX kept), else AX = the key (not ZF), taken if AH is a read.  The
 ; console's feeder runs with its page in window 0 and the program's back
 ; after; when the keys are done it sets r_pend, and the console comes.
+; None while r_isr says no: a disk's owner out, or a hardware interrupt in
+; service (a reader in a handler gets none till it has sent its EOI).
 r_feed: cmp     byte [cs:r_ks], 0
         jne     .k
 .no:    stc
@@ -4472,7 +4474,9 @@ r_feed: cmp     byte [cs:r_ks], 0
 ; made with none in service.  With Lodestone's tasks, only in a call of
 ; the front task's: the console takes the front screen and keys.  Taken
 ; in another task's call, it tells MT once (mt_tsrk, r_pend 2), which
-; gives the front task a turn as for a key.  Registers kept.  (Never called with the
+; gives the front task a turn as for a key.  The fold (OR AL, 0F0h) takes any 2Bx0h as the hot key: the 1520's
+; keyboard gives none but CODE-\ (its key gives 2B5Ch, 2B7Ch, 2B1Ch and
+; 2BF0h / 2B00h); a national keyboard driver could.  Registers kept.  (Never called with the
 ; console up: r_int16 answers itself then, and r_popup clears r_inpop
 ; before it returns here.)
 r_hot:  push    ax
@@ -4630,13 +4634,20 @@ r_popup:
 
 ; May the page registers be written now?  ZF if so: nothing is in service
 ; (the PIC's in-service register, then back to the request one, as the
-; kernel's screen capture does: AH), and no floppy transfer is in flight.
-; On the 1520 a page register written during a floppy's DMA resets the
-; machine (2026-11-04), and under Lodestone's multitasking a task behind may
-; be out in one while the front task's key call comes here.  In flight as MT's
-; mt_eout has it: the controller busy with a command (3F4h bit 4) and not
-; yet at its result (bits 7-6 both set); FFh, no controller, is idle.
-; Nothing switches tasks between this and the caller's OUTs.  DX kept
+; kernel's screen capture does: AH), and the floppy controller is plainly
+; idle.  On the 1520 a page register written during a floppy's DMA resets
+; the machine (2026-11-04), and under Lodestone's multitasking a task behind
+; may be out in one while the front task's key call comes here.  Stricter
+; than mt_eout's test on purpose: with a result waiting to be read or a seek
+; under way a disk's owner is out too, and the console's first INT 21h would
+; wait at MT's gate with the cylinder cache's windows held (2-3 unmapped
+; under the console).  Idle: 3F4h FFh (no controller) or none of bits 4-0
+; (no command under way, no drive seeking).  No bound of its own: a
+; controller stuck mid-command keeps the console off till the BIOS's
+; time-out resets it (~2 s).  Callers: r_hot, r_bg and r_feed, so TYPE's
+; keys also wait while an interrupt is in service (a reader in a handler
+; before its EOI gets none).  Nothing switches tasks between this and the
+; caller's OUTs.  DX kept
 r_isr:  mov     al, 0Bh
         out     20h, al
         in      al, 20h
@@ -4649,10 +4660,9 @@ r_isr:  mov     al, 0Bh
         mov     dx, 3F4h
         in      al, dx
         pop     dx
-        test    al, 10h
-        jz      .x
-        not     al
-        test    al, 0C0h                ; (ZF: its result phase)
+        cmp     al, 0FFh                ; (no controller: ZF)
+        je      .x
+        test    al, 1Fh
 .x:     ret
 
 ; CLAUDE /R allocates the EMS pages through here, far: the kernel gives
