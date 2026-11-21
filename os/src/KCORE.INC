@@ -648,9 +648,11 @@ con_ready:
 
 f_01:   call    con_in                  ; read with echo
         cmp     al, 3
-        je      ctrlc
+        je      ..@cc
         call    con_out
         jmp     ret_al
+..@cc:  jmp     ctrlc                   ; (01h's and 08h's ^C: a 2-byte jcc,
+                                        ;  not taken for any other key)
 f_02:   mov     al, [bp+F_DX]
         call    con_out
         jmp     done
@@ -684,8 +686,9 @@ f_07:   call    con_in                  ; raw input, no echo
         jmp     ret_al
 f_08:   call    con_in                  ; input, no echo
         cmp     al, 3
-        je      ctrlc
+        je      ..@cc
         jmp     ret_al
+        db      90h                     ; (a pad, never run: f_09 even)
 f_09:   mov     es, [bp+F_DS]           ; '$'-terminated string: written to
         mov     di, [bp+F_DX]           ;  handle 1 in one go (a file or
         mov     dx, di                  ;  a device in one write, not one a
