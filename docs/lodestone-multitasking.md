@@ -2220,13 +2220,19 @@ On the author's 1520: the supply needs a few volts more under load (worn filter 
 - `mt_switch`'s branch for a task ended where it couldn't be at once leaves a task waiting at the gate (`TS_WAITD`) alone. It used to send it back to `mt_kdie` every round, and each time 20 bytes of its stack were left behind; a long wait wrapped its stack round its segment.
 
 **Smaller and faster code, nothing else changed:**
-- `mt_rbyte` reads a byte of Resident Claude's header for both `mt_i16` (r_inpop) and `mt_rhot` (r_off).
 - `mw_clipq`, with the Executive in front, tells a session's window by its address (at or above `run_base`) instead of walking every session's record for each window on each clipped primitive.
 - A window started from a window draws the band once, not twice, when the Executive's question is pending.
 - The variables that start as zeros (`mt_fv` to `mt_vb`, 178 bytes) are in MT's BSS, which `mt_boot` clears, instead of in the file.
 - The API's error checks that fail to one exit (MT_WIN, MT_TOPEN, MT_PUB, MT_FRONT, MT_KILL, MT_END, parking, unparking, a region's growth, `mw_start`) jump short to one shared jump there: a check that passes is faster, a failure takes one jump more.
 
-**Figures:** LODEMT.SYS 21,484 bytes (21,746 before: 42 sectors, one fewer, so ROM 1 has 4,608 bytes left, 4,096 before); `mt_tend` 53ECh (54F2h before); `mt_bend` 6132h (6190h before): MT's block 5 paragraphs smaller (614h, 619h before). MEMSZ with the switch on 554.1 KB.
+**Figures:** LODEMT.SYS 21,498 bytes (21,746 before: 42 sectors, one fewer, so ROM 1 has 4,608 bytes left, 4,096 before); `mt_tend` 53FAh (54F2h before); `mt_bend` 6142h (6190h before): MT's block 4 paragraphs smaller (615h, 619h before). MEMSZ with the switch on 554.1 KB.
 
-**Tests:** test_mt's `t_dkill` (3 checks): a task computing, killed by MTKILL K while a copy behind is out on the floppy, again with an interrupt in service when its end is first tried, and on C:. Each checks that the task ends once the owner is back, that its stack pointer is the same at each try, that the copy is exact and that a third task counts on. Without the fix the machine stops at `mt_kdie`'s HLT with interrupts off. On a floppy with the 1520's drive timing, test_mt now puts what follows LODE.SYS and LODEMT.SYS at cluster 146, so a copy's time doesn't change with the system files' sizes.
+**Left:**
+- An interrupt left in service for good (a program's handler that never sends its EOI) while the dying task's end is refused: the task tries again at every interrupt and no other task runs. The screen stops; the clock's and the keyboard's interrupts still run. (Before, the machine halted dead.)
+- The dying program's interrupt hooks stay in place while it waits at the gate.
+- A second kill of a task already waiting there leaves about 40 bytes of its stack unused.
+- Jumps kept in their long form because their exit is a common answer or a common question, or to keep a label's parity: `mt_dcan`'s at a floppy's wait, `mt_safe`'s at a tick, `mt_kwait`'s idle, `mt_urun`'s .COM path, `mt_i16`'s pass-on, `mw_got`'s modal case, `mt_grow`'s 48h FFFFh test and its arena walk's first test, three of `mw_start`'s; and the few out of short reach (two of MT_PUB's, the first of `mt_take`'s).
+- **Not covered:** on the 1520.
+
+**Tests:** test_mt's `t_dkill` (3 checks): a task computing, killed by MTKILL K while a copy behind is out on the floppy, again with IRQ 7 marked in service by the test when its end is first tried, and on C:. Each checks that the task's end was held at the gate with the owner out and made once the owner was back (mt_down FFh at its MT_END), that it entered `mt_kdie` once and once more after each refusal with the same stack pointer each time (another stops the machine at once), that the copy is exact and that a third task counts on. Without the fix the machine stops at `mt_kdie`'s HLT with interrupts off. `t_image` starts once with MT's block filled with 5Ah as `mt_boot` begins: the variables moved to the BSS read as after a clear start. `t_windows` counts the band drawn once when a window starts another. On a floppy with the 1520's drive timing, test_mt puts what follows LODE.SYS and LODEMT.SYS at cluster 162, so a copy's time doesn't change with the system files' sizes, and `t_dwait` times its copy with MT's INT 15h off and on each on a fresh floppy, to the same clusters: 23.26 s and 24.46 s, 5.2% more.
 
