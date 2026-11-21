@@ -125,6 +125,13 @@ def shot(k, name):
 def lines(k): return [l for y, l in k.ocr()]
 def screen(k): return '\n'.join(lines(k))
 def has(k, text): return any(text in l for l in lines(k))
+def lit_row(k):
+    """The Executive's list row drawn highlighted (its top pixel row lit across the list): its first word.
+    (The reader also finds a '__' two rows under a lit row's text: not a row.)"""
+    v = k.pc.rd(0xB800, 0, 0x8000)
+    lit = [l.split()[0] for y, l in k.ocr() if 16 < y < 240 and l.split() and l.split()[0].strip('_')
+           and sum(b == 0xFF for b in v[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]) > 40]
+    return lit[0] if len(lit) == 1 else lit
 
 def free_paras(k):
     """Free paragraphs in the MCB chain, and the UI block's size."""
@@ -213,12 +220,17 @@ def pointer_unit(path=None):
     rows shifted by x & 7, cut at column 79 and row 399), and hide_cursor
     must leave the screen as it was.  Moves at every x & 7, overlapping
     (compose's union, up to 3 bytes wide) and far apart, to x 0 and 639 and
-    to row 399."""
+    to row 399.  Each call enters with DF clear, as every caller in the core
+    does: UIAPI.INC's convention (DF clear into every API call and kept),
+    exec_main's, run_app's and KMW's mw_go's CLD; no interrupt handler
+    draws the pointer.  compose's and
+    move_cursor.done's REP MOVSB count on it, so DF set is no case to try
+    here.  An exception in the code (a run off its end) is a failed move."""
     import random
-    from unicorn import Uc, UC_ARCH_X86, UC_MODE_16
+    from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16
     from unicorn.x86_const import (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI,
                                    UC_X86_REG_DI, UC_X86_REG_BP, UC_X86_REG_SP, UC_X86_REG_CS, UC_X86_REG_DS,
-                                   UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_EFLAGS)
+                                   UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_EFLAGS, UC_X86_REG_IP)
     s = open(path or os.path.join(GOS, 'src', 'UICORE.INC'), 'rb').read().decode('latin-1')
     part = lambda a, b: s[s.index(a):s.index(b, s.index(a))]
     data = (('cur_x', 'dw 0'), ('cur_y', 'dw 0'), ('cur_xb', 'dw 0'), ('cur_save', 'times 26 db 0'), ('new_save', 'times 26 db 0'),
@@ -251,7 +263,11 @@ def pointer_unit(path=None):
         for r, v in ((UC_X86_REG_CS, 0x1000), (UC_X86_REG_DS, 0x1000), (UC_X86_REG_ES, 0x2000),
                      (UC_X86_REG_SS, 0x3000), (UC_X86_REG_SP, 0xFFFE), (UC_X86_REG_EFLAGS, 0x0202)):
             mu.reg_write(r, v)
-        mu.emu_start(0x10000 + at, 0x10000 + at + 3, count=100000)
+        try:
+            mu.emu_start(0x10000 + at, 0x10000 + at + 3, count=100000)
+        except UcError as e:
+            bad.append(('call %d, AX %d, BX %d: %s at %04X' % (at, ax, bx, e, mu.reg_read(UC_X86_REG_IP)),))
+            return False
         return [mu.reg_read(r) for r in regs] == list(vals) and mu.reg_read(UC_X86_REG_SP) == 0xFFFE \
             and mu.reg_read(UC_X86_REG_ES) == 0x2000 and mu.reg_read(UC_X86_REG_DS) == 0x1000
     def want(x, y):
@@ -424,11 +440,22 @@ def t_core():
     open(os.path.join(OUT, 'BAD4.RUN'), 'wb').write(hdr(1, 0, 0, 0) + b'\xc3')     # an image under 2 bytes, no fixups
     open(os.path.join(OUT, 'BAD5.RUN'), 'wb').write(hdr(4, 0xFF00, 0, 0) + b'\xc3\x90\x90\x90')     # BSS past 64 KB
     open(os.path.join(OUT, 'BAD6.RUN'), 'wb').write(hdr(100, 0, 0, 0) + b'\xc3\x90\x90\x90')        # the file cut short
-    img = image('bad2.img', *(os.path.join(OUT, 'BAD%d.RUN' % i) for i in range(2, 7)))
+    # each of the header's and the size's other failures
+    open(os.path.join(OUT, 'BAD7.RUN'), 'wb').write(b'GRUN' + bytes(6))                       # a header cut short (10 bytes)
+    open(os.path.join(OUT, 'BAD8.RUN'), 'wb').write(b'GRXX' + bytes(12))                      # "GR" but not "UN"
+    open(os.path.join(OUT, 'BAD9.RUN'), 'wb').write(b'GRUN' + struct.pack('<6H', k.Y.equ('UI_API') + 1, 4, 0, 0, 0, 0)
+                                                    + b'\xc3\x90\x90\x90')                     # a newer API than this core's
+    open(os.path.join(OUT, 'BAD10.RUN'), 'wb').write(hdr(4, 0, 0x2000, 0x2000) + b'\xc3\x90\x90\x90')   # 4000h fixups: 32 KB
+    open(os.path.join(OUT, 'BAD11.RUN'), 'wb').write(hdr(0x8000, 0x8000, 0, 0) + b'\xc3\x90\x90\x90')   # image + BSS past 64 KB
+    open(os.path.join(OUT, 'BAD12.RUN'), 'wb').write(hdr(4, 0xFFF8 - ubase - 4, 0, 0) + b'\xc3\x90\x90\x90')  # to FFF8h: no carry
+    img = image('bad2.img', *(os.path.join(OUT, 'BAD%d.RUN' % i) for i in range(2, 13)))
     k = ktest.KPC(img); k.start()
     table = k.pc.rd(k.useg, 0, 135)
+    check('the .RUNs load at the same run_base on this disk (BAD12.RUN counts on it)', k.u16('run_base') == ubase, (k.u16('run_base'), ubase))
     for name, why in (('BAD2.RUN', 'Not a program'), ('BAD3.RUN', 'Not a program'), ('BAD4.RUN', 'Not a program'),
-                      ('BAD5.RUN', 'Not enough memory'), ('BAD6.RUN', 'Not a program')):
+                      ('BAD5.RUN', 'Not enough memory'), ('BAD6.RUN', 'Not a program'), ('BAD7.RUN', 'Not a program'),
+                      ('BAD8.RUN', 'Not a program'), ('BAD9.RUN', 'Not a program'), ('BAD10.RUN', 'Not a program'),
+                      ('BAD11.RUN', 'Not enough memory'), ('BAD12.RUN', 'Not enough memory')):
         k.select(name); k.key(ktest.ENTER)
         check('%s (a damaged header): "%s", the core untouched, the UI block its own size again' % (name, why),
               any("Can't run %s: %s" % (name, why) in l for l in k.band()) and not k.crashed and k.pc.rd(k.useg, 0, 135) == table
@@ -1191,9 +1218,30 @@ def t_exec():
         names = [n.split('.')[0] for n in k.exec_list()]
         firsts = [l.split()[0] for l in lines(k)[1:16] if l.split()]
         check('21 entries, F%02d (%d) selected and %s, then F5 on a disk of 7: all 7 rows drawn, the list from its top, '
-              'entry %d selected' % (at, at, 'at the top' if at == 5 else 'not on it', want_sel),
+              'entry %d selected, and drawn so' % (at, at, 'at the top' if at == 5 else 'not on it', want_sel),
               before == (at, at if at == 5 else 8) and len(names) == 7 and all(n in firsts for n in names)
-              and k.u16('top') == 0 and k.u16('sel') == want_sel, (before, firsts, k.u16('top'), k.u16('sel'), names))
+              and k.u16('top') == 0 and k.u16('sel') == want_sel and lit_row(k) == names[want_sel],
+              (before, firsts, k.u16('top'), k.u16('sel'), names, lit_row(k)))
+    # F5 on the same disk keeps the place: the selection and the top row as they were; and so does F5 after
+    # the drive was not ready (an empty list: relist's place from before it)
+    k = ktest.KPC(a); k.start()
+    k.key(K_END)
+    for _ in range(10): k.key(ktest.UP, settle=False)
+    k.settle()
+    before = (k.u16('sel'), k.u16('top'), lines(k)[1].split()[0], lit_row(k))
+    k.key(0x3F00)
+    check('21 entries, End then 10 Ups (F10 selected, F08 the top row), F5 on the same disk: F10 selected and drawn so, '
+          'F08 still the top row', before == (10, 8, 'F08', 'F10') and (k.u16('sel'), k.u16('top')) == (10, 8)
+          and lines(k)[1].split()[0] == 'F08' and lit_row(k) == 'F10', (before, k.u16('sel'), k.u16('top'), lines(k)[1:3], lit_row(k)))
+    k.pc.drives[0].empty = True; k.pc.drives[0].changed = True
+    k.key(0x3F00, settle=False); k.settle(20)
+    gone = (k.u16('nent'), k.band()[:1])
+    k.key(ktest.ENTER)
+    k.pc.drives[0].empty = False; k.pc.drives[0].changed = True
+    k.key(0x3F00, settle=False); k.settle(20)
+    check('... the disk taken out, F5 ("Drive not ready", no entries), the disk back, F5: F10 selected and F08 the top row again',
+          gone == (0, ["Can't read the disk: Drive not ready (no disk?)"]) and (k.u16('sel'), k.u16('top')) == (10, 8)
+          and lines(k)[1].split()[0] == 'F08' and lit_row(k) == 'F10', (gone, k.u16('sel'), k.u16('top'), lines(k)[1:3], lit_row(k)))
 
 DIVRUN = os.path.join(OUT, 'DIVRUN.RUN')
 def t_divrun():
@@ -1427,6 +1475,13 @@ def t_saver_delay():
         k = ktest.KPC(image('svd6.img', 'LODE.INI=' + ini2)); k.start()
         check('%s: %s' % (line.decode(), '%d minutes' % mins if mins else 'never'), k.rd('saver_min', 1) == bytes([mins])
               and k.u16('saver_t') == (mins * 1092 if mins else 0xFFFF), (k.rd('saver_min', 1), hex(k.u16('saver_t'))))
+    # ... and the delay in effect: idle 10 s short of 30 minutes, no saver; at 30 minutes, the saver (idle
+    # counts only below 8000h ticks, 30 minutes and 8 ticks: past it, the clock went back)
+    open(ini2, 'wb').write(b'SAVER=256\r\n')
+    k = ktest.KPC(image('svd7.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
+    early = idle(k, 30 * 1092 - 182)
+    check('SAVER=256: not after 29 minutes 50 s idle, but after 30 minutes (DEFRAG\'s map)', not early and idle(k, 30 * 1092),
+          (early, lines(k)[:2]))
     # past 511 bytes of other lines (System keeps a LODE.INI up to 1 KB and
     # puts its own lines last): font_boot read only the first 511
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'X1=1\r\n' * 160 + b'saver=2\r\nFONT=TERMBOLD.FNT\r\nTIDY=0\r\n')
