@@ -1973,6 +1973,11 @@ maybe_idle:                             ; HLT when nothing is due
         hlt
 .x:     ret
 
+..@sv_rs:                               ; (sv_check's .rs again: here, in
+        mov     byte [sv_st], 0         ;  short reach of its first tests,
+        clc                             ;  each a 2-byte jump not taken on
+        ret                             ;  the way on)
+
 ; ---------------------------------------------------------------------
 ;  the Executive's screen saver (1.14), as at LCMD's prompt (INT 21h F0h
 ;  AL=5: its delay, sv_t, and its far entry): idle that long (no key, no
@@ -1993,19 +1998,19 @@ sv_check:
         cmp     bx, 55
         ja      .act
         cmp     word [sv_t], 0FFFFh
-        je      .rs
+        je      ..@sv_rs
         cmp     byte [connected], 0
-        je      .rs
+        je      ..@sv_rs
         cmp     byte [lstate], LS_IDLE
-        jne     .rs
+        jne     ..@sv_rs
         test    byte [pi_hf], HF_SAVER
-        jz      .rs
+        jz      ..@sv_rs
         cmp     byte [wake_ok], 0
-        je      .rs
+        je      ..@sv_rs
         cmp     word [irq_ptr+2], 0
-        je      .rs
+        je      ..@sv_rs
         cmp     byte [srq_held], 0      ; (another device holds the line: a
-        jne     .rs                     ;  ring would make no edge)
+        jne     ..@sv_rs                ;  ring would make no edge)
 %ifdef TERM_WIN
         cmp     byte [win], 0
         jne     .act
