@@ -93,6 +93,8 @@ ivt_init:
         ret
 
 vec_table:
+        db 00h
+        dw int00
         db 05h
         dw int05
         db 20h
@@ -143,6 +145,25 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
         mov     al, 3                   ;  nobody asked (KDISK.INC rule 4: said
         iret                            ;  in the kernel's byte, not AL, so a
                                         ;  handler that chains here sees 3)
+
+; INT 00h, a divide error: the 286 leaves the DIV's own address on the
+; stack, so a handler that returns runs it again, for ever.  As MS-DOS:
+; "Divide overflow", and the program ends (exit code 255).  Through INT 21h,
+; with interrupts on, so multitasking's gate can hold the call; one it
+; refuses is made again.  Inside the kernel (InDOS) no message: that call
+; would take the stack this one runs on, and 4Ch never comes back to it
+int00:  sti
+        push    cs
+        pop     ds
+        cmp     byte [indos], 0
+        jne     .q
+        mov     dx, s_divov
+        mov     ah, 9
+        int     21h
+.q:     mov     ax, 4CFFh
+        int     21h
+        jmp     .q
+s_divov db      'Divide overflow', 13, 10, '$'
 
 int25:  mov     ax, 0207h               ; absolute disk I/O: not supported
         stc

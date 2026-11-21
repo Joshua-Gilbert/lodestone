@@ -54,6 +54,31 @@ EMS_PAGE = 0x4000
 R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
      'ax bx cx dx si di bp sp cs ds es ss ip flags al ah bl bh cl ch dl dh'.split()}
 
+# A CPU exception the INTR hook takes is never delivered by unicorn's own code, which is where its x86 core
+# forgets it (old_exception back to -1).  So a second divide error in a machine's life came to the hook as a
+# double fault (8, the timer's vector here) and a third halted the CPU as a triple fault, where a 286 gives
+# INT 00h each time.  exc_forget puts the field back.  It is found once, in a scratch CPU: the one word of the
+# saved context that goes from -1 to 0 over a first divide error.
+_exc_at = []
+def _ctx(mu):
+    c = mu.context_save()
+    return c, ctypes.cast(c.context, ctypes.c_void_p).value
+def exc_forget(mu):
+    if not _exc_at:
+        t = Uc(UC_ARCH_X86, UC_MODE_16); t.mem_map(0, 0x1000)
+        t.mem_write(0x100, b'\x31\xdb\xf7\xf3')                 # xor bx,bx / div bx
+        t.hook_add(UC_HOOK_INTR, lambda uc, n, ud: uc.emu_stop())
+        t.emu_start(0x100, 0x102)
+        c, at = _ctx(t); a = ctypes.string_at(at, c.size)
+        t.emu_start(0x102, 0x200, count=2)
+        c, at = _ctx(t); b = ctypes.string_at(at, c.size)
+        found = [i for i in range(0, len(a) - 3, 4) if a[i:i + 4] == b'\xff' * 4 and b[i:i + 4] == bytes(4)]
+        _exc_at.append(found[0] if len(found) == 1 else None)   # (not found: this unicorn is left as it is)
+    if _exc_at[0] is None: return
+    c, at = _ctx(mu)
+    ctypes.memmove(at + _exc_at[0], b'\xff' * 4, 4)
+    mu.context_restore(c)
+
 # real-code BIOS pieces at F000:1000 and up
 INT08 = bytes([0x50, 0x1E, 0x31, 0xC0, 0x8E, 0xD8, 0xFF, 0x06, 0x6C, 0x04, 0x75, 0x04,
                0xFF, 0x06, 0x6E, 0x04, 0xCD, 0x1C, 0xB0, 0x20, 0xE6, 0x20, 0x1F, 0x58, 0xCF])
@@ -407,6 +432,8 @@ class Ata:
 
 
 class PC:
+    exc_seen = False                    # a divide error went to its vector in this run (intr; run() clears it)
+
     def __init__(s, a=None, b=None, chip=None, start=datetime.datetime(2026, 10, 4, 21, 30, 0), mem_kb=640,
                  disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False, roms=None,
                  irq_exact=False, fd_wait=False):
@@ -683,6 +710,8 @@ class PC:
 
     def intr(s, uc, n, ud):
         cs, ip = s.r('cs'), s.r('ip')
+        if n == 0:                                        # a divide error: the run ends here, and run() clears
+            s.exc_seen = True; uc.emu_stop()              #  unicorn's note of it (exc_forget)
         if not (cs == STUB and ip - 2 == n * 8):          # not the BIOS stub itself
             off, seg = struct.unpack('<HH', s.rd(0, n * 4, 4))
             if not (seg == STUB and off == n * 8):
@@ -1456,6 +1485,8 @@ class PC:
             s.mu.emu_start(s.lin(), 0xFFFFFFFF, count=n)
         except UcError as e:
             s.crash = 'CPU %s at %04X:%04X' % (e, s.r('cs'), s.r('ip')); return False
+        if s.exc_seen:
+            s.exc_seen = False; exc_forget(s.mu)
         a, z = s.last_blk
         here = s.lin()
         s.halted = a + z == here and s.rd(0, here - 1, 1)[0] == 0xF4

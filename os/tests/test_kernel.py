@@ -1231,6 +1231,58 @@ def t_exerel():
     o = sh.run('whole')
     check('... the same with its table there: runs', 'RAN' in o and not k.crashed, o)
 
+def t_exehuge():
+    """An .EXE whose header says its image is 1 MB or more: EXEC refuses it.  The size's paragraph count was a
+    16-bit quotient: 801h pages faulted at the DIV (which, with no INT 00h handler, ran again for ever), and 800h
+    wrapped to a tiny block."""
+    code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
+    def exe(pages):
+        last = 32 + len(code) if pages == 1 else 0          # (the one-page file's own size; the others: whole pages)
+        hdr = struct.pack('<2s13H', b'MZ', last, pages, 0, 2, 0x20, 0x20, 1, 0x100, 0, 0, 0, 32 + len(code), 0)
+        return hdr + bytes(32 - len(hdr)) + code
+    files = []
+    for n, pages in (('BIG801.EXE', 0x801), ('BIG800.EXE', 0x800), ('BIGFFFF.EXE', 0xFFFF), ('SMALL.EXE', 1)):
+        open(os.path.join(OUT, n), 'wb').write(exe(pages)); files.append(os.path.join(OUT, n))
+    k = ktest.KPC(image('exehuge.img', os.path.join(GOS, 'src', 'LCMD.COM'), *files)); k.start()
+    sh = Shell(k)
+    def arena():
+        seg, out = k.u16('first_mcb'), []
+        while len(out) < 200:
+            t, own, sz = chr(k.pc.rd(seg, 0, 1)[0]), k.pc.u16(seg, 1), k.pc.u16(seg, 3)
+            out.append((seg, own, sz))
+            if t != 'M': break
+            seg += sz + 1
+        return out
+    a0 = arena()
+    for n in ('big801', 'big800', 'bigffff'):
+        o = sh.run(n)
+        check('%s.EXE, an image of 1 MB or more by its header: refused, the prompt back' % n.upper(),
+              'RAN' not in o and 'Divide' not in o and not k.crashed and 'A:\\>' in k.pc.text_screen(), o)
+        check('... the arena as it was', arena() == a0, (a0, arena()))
+    o = sh.run('small')
+    check('... and a one-page .EXE still runs', 'RAN' in o and not k.crashed, o)
+
+def t_divide():
+    """A divide error (INT 00h): "Divide overflow" and the program ends, exit code 255, as MS-DOS.  The kernel had
+    no handler: the 286 leaves the DIV's address on the stack, so the BIOS's IRET ran it again for ever."""
+    msg = lambda at: bytes([0xB4, 0x09, 0xBA, at & 0xFF, at >> 8, 0xCD, 0x21])
+    code = msg(0x115) + bytes([0x31, 0xDB, 0xF7, 0xF3]) + msg(0x11D) + bytes([0xCD, 0x20])
+    assert len(code) == 0x14
+    open(os.path.join(OUT, 'DIV0.COM'), 'wb').write(code + b'\x90BEFORE.$AFTER$')
+    k = ktest.KPC(image('div0.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(OUT, 'DIV0.COM'))); k.start()
+    k.run_file('DIV0.COM', 20)
+    check('a program that divides by zero, from the Executive: it ends, the Executive back',
+          not k.crashed and k.pc.mode() == 0x40 and any('DIV0.COM ended' in l for l in k.band()), (k.crashed, k.band()))
+    sh = Shell(k)
+    o = sh.run('div0')
+    check('... from the prompt: "Divide overflow", nothing after the DIV runs, the prompt back',
+          'BEFORE.Divide overflow' in o and 'AFTER' not in o and not k.crashed and 'A:\\>' in k.pc.text_screen().rstrip()[-8:], o)
+    o = sh.run('if errorlevel 255 echo E255')
+    check('... its exit code is 255', 'E255' in o.replace('echo E255', ''), o)
+    o = sh.run('div0 > nul')
+    check('... the message is standard output\'s', 'Divide overflow' not in o and not k.crashed, o)
+    check('... and the shell works on', 'Lodestone version' in sh.run('ver'))
+
 def t_trunc():
     """CREATE onto a file there (here a redirection): truncated and stamped,
     but bytes 12-21 of its entry, which other systems use (creation time,
@@ -5506,7 +5558,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_exehuge, t_divide, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
