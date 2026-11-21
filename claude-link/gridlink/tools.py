@@ -109,7 +109,7 @@ class Tools:
                  "Pi are absolute POSIX paths. Actions: list (directory with sizes and dates), info, "
                  "delete, rename (to = new name), mkdir, rmdir, free (space on the drive of path), "
                  "copy_to_grid (path = Pi file, to = GRiD file), copy_from_grid (path = GRiD file, to = Pi file). "
-                 "Copies are binary-safe; the link runs at roughly 5-10 KB/s, so keep them modest."),
+                 "Copies are binary-safe; the link moves about 100 KB/s through the Pico 2 bridge, 3-7 KB/s through an AR488 Nano, so keep them modest."),
              'input_schema': {'type': 'object', 'properties': {
                  'action': {'type': 'string', 'enum': ['list', 'info', 'delete', 'rename', 'mkdir', 'rmdir',
                                                        'free', 'copy_to_grid', 'copy_from_grid']},

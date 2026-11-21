@@ -17,10 +17,10 @@ third use of it: `CLAUDE /W`, Firefox on the Pi as text, below):
 ## Term: Claude Code on the GRiD
 
 ```
-GRiD 1520 ── GPIB ── AR488 Nano ── USB ── Raspberry Pi 5 ── internet ── Claude (your plan)
- CLAUDE /T            (device, addr 7)      gridlink + the real `claude` in a pty
- screen, keys,                              pyte screen -> changed cells -> the GRiD
- GRiD tools                                 GRiD tools -> MCP server -> REQUESTs
+GRiD 1520 ── GPIB ── Pico 2 bridge ── USB ── Raspberry Pi 5 ── internet ── Claude (your plan)
+ CLAUDE /T            (device, addr 7)         gridlink + the real `claude` in a pty
+ screen, keys,                                 pyte screen -> changed cells -> the GRiD
+ GRiD tools                                    GRiD tools -> MCP server -> REQUESTs
 ```
 
 Your subscription may only be used through the real Claude Code program,
@@ -212,9 +212,9 @@ tree.
 ## Chat: gridlink's own agent
 
 ```
-GRiD 1520 ── GPIB ── AR488 Nano (device, addr 7) ── USB ── Raspberry Pi ── internet ── Claude API
- CLAUDE.COM                                                  gridlink
- screen, keyboard, GRiD tools                                agent loop, Pi tools
+GRiD 1520 ── GPIB ── Pico 2 bridge (device, addr 7) ── USB ── Raspberry Pi ── internet ── Claude API
+ CLAUDE.COM                                                     gridlink
+ screen, keyboard, GRiD tools                                   agent loop, Pi tools
 ```
 
 The GRiD stays the GPIB controller (address 21); your instruments share the
@@ -274,6 +274,10 @@ choices:
   AR488, so it is under AR488's license, GPL v3 (`LICENSES/GPL-3.0.txt`).
 - **Stock AR488** also works: the Pi tells the GRiD how long to wait
   before reading each reply. It's slower (127-byte replies).
+
+Either Nano is far slower than the Pico 2: about 3-7 KB/s in the emulator,
+against the Pico's 109 KB/s into the GRiD and 91 out of it on the 1520
+(Speed, below).
 
 `gridlink` configures the rest itself (`++mode 0`, `++addr 7`, `++eos 3`,
 `++eoi 1`, `++eot_enable 0`); `--save-bridge` stores it in the Nano's
@@ -354,8 +358,9 @@ every byte checked.
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
   for the GRiD's 1 s idle POLL. The bridge read USB a byte at a time
-  (106 KB/s; now 510 KB/s). The table CRC cost the 286 about 34 clocks a
-  byte; the Fletcher sum costs 8.5. Since CLAUDE 1.15 (and the console's 1.13,
+  (106 KB/s; now 510 KB/s). By the 286's tables the table CRC cost about 34
+  clocks a byte and the Fletcher sum costs 8.5 (about 1.3 µs a byte measured
+  on the 1520, below). Since CLAUDE 1.15 (and the console's 1.13,
   2026-10-29) the GRiD has no CRC at all, its HELLO too goes with the sum:
   they need gridlink from 2026-10-22 on.
 - **The first call after idle:** CLAUDE POLLs once a second between
@@ -450,7 +455,7 @@ every byte checked.
 
 ## Files
 
-- `gridlink/` - the Pi service (Python 3.9+, `pyserial`, `pyte`, `pillow`; `anthropic` for chat).
+- `gridlink/` - the Pi service (Python 3.11+, for `tomllib` to read the config; `pyserial`, `pyte`, `pillow`; `anthropic` for chat).
   `serline.py`: the serial and modem transports for SERLINK.COM.
   Term: `term.py` (the pty), `termscreen.py` (pyte, the cell diff), `router.py`
   (chat, Term or web), `mcp.py` (the MCP server and its socket). Pictures:

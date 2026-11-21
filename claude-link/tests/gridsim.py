@@ -56,6 +56,7 @@ class GridSim:
         s.g_seq = 0; s.p_ack = 0; s.have_pi = False
         s.txq = collections.deque(); s.pend = None
         s.nak = False; s.resend = False; s.lastframe = b''
+        s.n_resend = 0                  # the Pi's NAKs in a row (CLAUDE 1.19: the 8th fails the link)
         s.connected = False; s.busy = False; s.pi_active = False; s.t_last = 0
         s.screen = bytearray(); s.status = b''; s.title = b''
         s.asks = []; s.answer_policy = answer_policy
@@ -128,7 +129,7 @@ class GridSim:
             if s.clock() - s.t_reset < 1e6: s.clock.advance(1000); return
             s.nano.sdc()
             s.g_seq = 0; s.p_ack = 0; s.have_pi = False; s.txq.clear(); s.pend = None
-            s.nak = False; s.resend = False; s.req = bytearray(); s.rqtype = 0
+            s.nak = False; s.resend = False; s.req = bytearray(); s.rqtype = 0; s.n_resend = 0
             s.txq.append([glp.G_HELLO, s.hello_body(), 0])
             s.state = 'idle'
         elif s.state == 'idle':
@@ -187,8 +188,12 @@ class GridSim:
             if not f:
                 s.nak = True; s.stats['bad_rx'] += 1; return
             s.t_last = s.clock()
-            if f.type == glp.P_NAK:
+            if f.type == glp.P_NAK:                 # (CLAUDE 1.19: a resend restarts the 2 s wait, so a Pi
+                s.n_resend += 1                     #  that NAKs every frame would keep the link up for ever;
+                if s.n_resend >= 8:                 #  the 8th NAK in a row, after the frame and 7 resends,
+                    s.fail(); return                #  fails it)
                 s.resend = True; return
+            s.n_resend = 0                          # (any other answer, a duplicate's too)
             if s.pend is not None and s.txq:      # our frame got through
                 s.txq[0][2] += s.pend
                 if s.txq[0][2] >= len(s.txq[0][1]): s.txq.popleft()

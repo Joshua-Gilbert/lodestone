@@ -5,7 +5,7 @@ the GRiD shows and turns the difference into CELLS frames: runs of cells,
 fills and scrolls, always for the latest screen, never a backlog.
 
 CELLS (Pi -> GRiD 4Bh), one frame, never MORE:
-    flags (1)       bit 0: clear rows 0-23 first; bit 1: cursor hidden
+    flags (1)       bit 0: clear rows 0-23 first; bit 1: cursor hidden; bit 2: a picture's frame
     cursor row (1), cursor column (1)
     then operations until the end of the payload:
       run    row, col, len, [attr], len glyphs
@@ -13,7 +13,8 @@ CELLS (Pi -> GRiD 4Bh), one frame, never MORE:
       scroll FEh, top, bottom, n                      (rows top..bottom up by n,
                                                        blank rows come in below)
     len bit 7: an attribute byte follows (bit 0 inverse, bit 1 underline);
-    without it the cells are plain.  Glyphs are GRiD codes 20h-A0h.
+    without it the cells are plain.  Glyphs are GRiD codes 20h-7Eh and 80h-A0h, and A1h-AEh (the 2x2
+    blocks) for a GRiD whose HELLO says GF_QUAD.  picture.py adds the pixels operation, FDh.
 """
 import re, time, unicodedata
 import pyte

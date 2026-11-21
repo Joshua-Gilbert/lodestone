@@ -204,8 +204,14 @@ view stays the default: it is the fast one.
 - **Only with a GRiD that can:** gridlink tells gridfox (`GRIDLINK_PICTURES`)
   when the GRiD's HELLO says it takes pictures; otherwise V says CLAUDE.COM
   1.2 is needed.
-- **Not yet:** a `<select>`'s choices open in a window of Firefox's own,
-  which a viewport screenshot doesn't show: use the text view for lists.
+- **Dropdowns** (2026-11-04): Firefox opens a `<select>`'s choices in a
+  window of its own, which a viewport screenshot never has. So the picture
+  view draws the list itself, under the dropdown as Firefox would (or over
+  it, where there is more room), and sets the choice in the page as a
+  person's choice does (`input`, `change`).
+- **Frames** (2026-11-04): a click on an `<iframe>` (an embedded video
+  player's, say) goes into it, at the same point in its own page, through
+  up to four frames inside frames.
 
 ## YouTube without its player: Y (2026-10-23)
 YouTube's player shows gridfox's Firefox a bot check, because Firefox is
@@ -534,7 +540,8 @@ between calls. Also fixed:
   stays up beside Claude Code, which matters for a 4 GB Pi.
 - **Not handled yet:**
   - PDFs (Firefox shows them in its own viewer);
-  - frames (shown as `[frame]`);
+  - frames in the text view (shown as `[frame]`; the picture view, V, shows
+    them as Firefox draws them, and a click there goes into them);
   - pop-up windows (opened in the one tab);
   - an action that unloads the page without loading another (some downloads)
     waits up to 20 s.

@@ -37,7 +37,8 @@ MAX_COPY = 1024 * 1024          # bytes in one copy or write (5 minutes at stock
 MAX_READ = 48 * 1024            # bytes of a file or program output into the conversation
 MAX_LINE = 8 * 1024 * 1024      # one request on the socket (1 MB of text, JSON-escaped)
 MAX_PATH = 79                   # characters in a GRiD path
-MAX_CMD = 100                   # a DOS command line: the tail holds 126, ' /C ' + the line (1.17 added ' >A:\\CLAUDE.OUT' too)
+MAX_CMD = 100                   # a DOS command line: the tail holds 125 after its count, ' /C ' + the line (121
+                                #  from CLAUDE 1.18; 1.17 added ' >' and the output file's path too)
 MAX_RUN = 3600                  # seconds the Pi waits for a program (the GRiD itself never stops it)
 MAX_GPIB = 4000                 # bytes sent to an instrument (CLAUDE.COM takes 4,700 per request)
 MAX_TYPE = 2048                 # a key script for the paused program (resident Claude's console takes 2 KB)
@@ -176,7 +177,7 @@ TOOLS = [
          "link can't leave half a file), delete, rename (to = new name), mkdir, rmdir, copy_from_grid "
          "(path = the GRiD file, to = a file in the Pi's ~/grid directory, default its own name there), "
          "copy_to_grid (path = a file in ~/grid on the Pi, to = the GRiD file). Pi files must be inside "
-         "~/grid. Copies and writes are at most 1 MB; the link moves roughly 30-40 KB/s through the Pico bridge. To edit a GRiD "
+         "~/grid. Copies and writes are at most 1 MB; the link moves about 100 KB/s through the Pico bridge. To edit a GRiD "
          "file with your own editing tools: copy_from_grid, edit the copy, copy_to_grid."),
      'inputSchema': {'type': 'object', 'properties': {
          'action': {'type': 'string', 'enum': ['write', 'delete', 'rename', 'mkdir', 'rmdir',
