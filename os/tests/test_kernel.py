@@ -1209,21 +1209,34 @@ def t_gpifc():
     """IFC (SIFC to CIFC) at the start-up and at each INT 60h AH=01h: at least the 100 us IEEE-488.1 asks for, and
     a few ms of simulated time, not a BIOS tick (it was held until 40:6Ch changed: 0-55 ms, a whole tick for a call
     just after one).  (pcemu charges each pass of the loop a block, 4 us, and its port read nothing, so this shows
-    the loop's count at work, not the 1520's real pulse.)"""
+    the loop's count at work, not the 1520's real pulse; so the loop's passes are counted too: 1500 a pulse.)"""
     com = os.path.join(OUT, 'GPIFC.COM')
     open(com, 'wb').write(bytes([0xB4, 0x01, 0xCD, 0x60] * 3 + [0xB8, 0x00, 0x4C, 0xCD, 0x21]))   # 3x AH=01h
     chip = sim7210.NEC7210(sim7210.bus())
     k = ktest.KPC(image('gpifc.img', com), chip=chip)
-    ev = []
-    chip.aux = lambda v, f=chip.aux: (ev.append((v, k.pc.us)) if v in (0x1E, 0x16) else None, f(v))
+    ev, cx = [], [None, None]                       # (the highest and lowest CX at the loop's block in a pulse)
+    def aux(v, f=chip.aux):
+        if v in (0x1E, 0x16): ev.append((v, k.pc.us, tuple(cx)))
+        if v == 0x1E: cx[:] = [None, None]
+        f(v)
+    chip.aux = aux
+    w = k.Y.lin('gp_ifc_ren.w')                     # (the loop's block: one IN AL, 61h and its LOOP)
+    def h(pc):
+        if k.addr == w:
+            c = pc.r('cx'); cx[:] = [c if cx[0] is None else max(cx[0], c), c if cx[1] is None else min(cx[1], c)]
+    k.hooks.append(h)
     k.start()
     k.run_file('GPIFC.COM', 10)
-    pulses, t0 = [], None
-    for v, t in ev:
+    pulses, reads, t0 = [], [], None
+    for v, t, c in ev:
         if v == 0x1E: t0 = t
-        elif t0 is not None: pulses.append(t - t0); t0 = None
+        elif t0 is not None: pulses.append(t - t0); reads.append(c); t0 = None
     check('IFC: four pulses (the start-up, 3x AH=01h), each 100 us to 20 ms of simulated time',
           len(pulses) == 4 and all(100 <= p <= 20000 for p in pulses) and not k.crashed, ['%.0f' % p for p in pulses])
+    # (the first pass is in the block that falls into the loop, CX 1500; the loop's own block starts with CX
+    # 1499 down to 1, whatever interrupt comes in between and starts it again)
+    check('... each held for 1500 port 61h reads, the count KGPIB.INC gives (CX 1499 to 1 at the loop\'s block)',
+          len(reads) == 4 and all(r == (1499, 1) for r in reads), reads)
 
 def t_rtcdate():
     """The date from the RTC at start-up (INT 1Ah AH=04h): a year outside 1980-2099 (f_2B's range), a month
