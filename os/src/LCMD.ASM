@@ -5154,7 +5154,10 @@ es_puts:
 .x:     ret
 
 do_prompt:
-        mov     di, setbuf
+        cmp     byte [si], '='          ; (PROMPT=$P$G, as PATH=X)
+        jne     .v
+        inc     si
+.v:     mov     di, setbuf
         push    si
         mov     si, s_promptv
         call    strcpy
