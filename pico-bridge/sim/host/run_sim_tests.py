@@ -21,7 +21,8 @@ pseudo-terminal, and runs:
      main loop closes while a PING write is in flight
   M  core 1's liveness guard: core 1 keeps moving while the bus is idle and while it waits to talk, and when it
      stops, core 0 stops petting the watchdog
-  N  frames from the bridge shorter than their fields: the daemon ignores and counts them
+  N  frames from the bridge shorter than their fields: the daemon ignores and counts them; and a port that
+     fails while it opens (tcsetattr's termios.error): the daemon goes on
 
 usage: run_sim_tests.py [--results PATH]
 
@@ -1021,6 +1022,26 @@ def short_frames():
         again = sum("did not answer HELLO" in t for _, t in said) - hellos
         check("a port that doesn't answer HELLO is warned of once, and again once it has answered",
               hellos == 1 and again == 1 and not errors, f"{hellos}, then {again}; {errors}")
+        # A port that fails while pyserial sets it up: tcsetattr's termios.error comes out of serial.Serial()
+        # as it is (it ended the daemon).  The daemon must log it and go on, as for a port that won't open.
+        import termios
+        b.close()
+        real, failed = termios.tcsetattr, []
+
+        def tcsetattr(*a):
+            failed.append(1)
+            raise termios.error(5, "Input/output error")
+        termios.tcsetattr = tcsetattr
+        try:
+            opened, raised = b.try_open(), None
+        except Exception as e:
+            opened, raised = None, e
+        finally:
+            termios.tcsetattr = real
+        check("a port whose tcsetattr fails while it opens: skipped, the daemon lives",
+              failed and raised is None and opened is False and b.ser is None,
+              f"tcsetattr called {len(failed)}x, opened={opened} raised={raised!r}")
+        check("... and the next try opens it", b.try_open() and b.ser is not None)
     finally:
         b.close()
         for fd in ptys:

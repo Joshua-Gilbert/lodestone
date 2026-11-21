@@ -16,6 +16,7 @@ import selectors
 import socket
 import struct
 import sys
+import termios
 import threading
 import time
 
@@ -166,7 +167,9 @@ class Bridge(handlers.Context):
         for p in candidate_ports(self.cfg["port"]):
             try:
                 s = serial.Serial(p, 115200, timeout=0, write_timeout=2)
-            except (serial.SerialException, OSError) as e:
+            except (serial.SerialException, OSError, termios.error) as e:
+                # (termios.error: pyserial lets tcsetattr's own error out of open(), as when the port goes while
+                # it is set up; pyserial closes the fd first)
                 log.debug("can't open %s: %s", p, e)
                 continue
             try:
