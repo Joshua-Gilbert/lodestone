@@ -169,6 +169,18 @@ def test_plot_and_clicks():
                 [{'y': [1], 'style': 'bars'}]):
         try: PL.Plot(bad); raise AssertionError(bad)
         except ValueError: pass
+    # spans that overflow or underflow, linear or log: refused as such (not math's own errors)
+    for bad, kw in (([{'y': [1e308, -1e308]}], {}), ([{'y': [0.0, 5e-324]}], {}), ([{'y': [0.0, 5e-323]}], {}),
+                    ([{'x': [1e308, -1e308], 'y': [1, 2]}], {}),
+                    ([{'y': [1e-300, 1e300]}], {'y_log': True}), ([{'y': [1e-320, 1e3]}], {'y_log': True}),
+                    ([{'y': [1e-5, 1e300]}], {'y_log': True})):
+        try: PL.Plot(bad, **kw); raise AssertionError((bad, kw))
+        except ValueError as e: assert 'span too much (or too little)' in str(e), (bad, kw, e)
+    for lo, hi in ((0, 6e-323), (0, 5e-324), (1, math.inf), (0, math.nan)):
+        try: PL.nice_ticks(lo, hi); raise AssertionError((lo, hi))
+        except ValueError as e: assert 'span too much (or too little)' in str(e), (lo, hi, e)
+    PL.Plot([{'y': [1e-310, 3e-310]}])                          # (a tiny span that still divides)
+    PL.Plot([{'y': [1e-200, 1e200]}], y_log=True)               # (wide, but it fits)
     try: PL.Plot([{'y': [1, 2]}], y_range=[2, 1]); raise AssertionError('range')
     except ValueError: pass
     # NaN and gaps don't break it

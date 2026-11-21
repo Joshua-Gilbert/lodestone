@@ -134,6 +134,10 @@ class Axis:
         return 10 ** t if s.log else t
 
 
+def too_wide(lo, hi):
+    return ValueError('the values span too much (or too little) to plot: %s to %s' % (num(lo), num(hi)))
+
+
 def auto_range(vals, log, pad):
     """(lo, hi) around the values; pad: a fraction of the span on each side."""
     v = [x for x in vals if x is not None and (not log or x > 0)]
@@ -143,7 +147,10 @@ def auto_range(vals, log, pad):
         a, b = math.log10(lo), math.log10(hi)
         if a == b: a, b = a - 0.5, b + 0.5
         sp = (b - a) * pad
-        return 10 ** (a - sp), 10 ** (b + sp)
+        try: r = 10 ** (a - sp), 10 ** (b + sp)
+        except OverflowError: r = (0, math.inf)
+        if not (r[0] > 0 and math.isfinite(r[1])): raise too_wide(lo, hi)   # ([1e-300, 1e300])
+        return r
     if lo == hi:
         d = abs(lo) * 0.1 or 1.0
         return lo - d, hi + d
@@ -155,7 +162,10 @@ def nice_ticks(lo, hi, n=6):
     """Round tick values in [lo, hi]: (ticks, step)."""
     span = hi - lo
     raw = span / n
-    mag = 10 ** math.floor(math.log10(raw))
+    # (a span that overflows to inf, or underflows to 0; or so small that
+    #  the step's power of ten underflows: [0, 6e-323])
+    mag = 10 ** math.floor(math.log10(raw)) if math.isfinite(span) and raw > 0 else 0
+    if not mag > 0: raise too_wide(lo, hi)
     for m in (1, 2, 2.5, 5, 10):
         step = m * mag
         if span / step <= n: break
