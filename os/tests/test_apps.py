@@ -352,6 +352,9 @@ def t_core():
           not k.crashed and has(k, 'Fill in form') and k.where().split()[-1].split('+')[0] != 'ui_form.click', (k.where(), k.band()))
     k.key(ktest.LEFT, K_PGDN, 'Z', K_CODE_ENTER)
     check('form: a key the form ignores keeps the field as it was (Left, PgDn, Z: "worlZd")', has(k, 'Find: worlZd'), screen(k))
+    k.key(CODE['F']); k.key(ktest.RIGHT, 'Q', K_HOME, 0x0E08, ktest.LEFT, 'A', K_CODE_ENTER)
+    check('form: Right at the end, Backspace and Left at the start change nothing (Right, Q, Home, Backspace, Left, A: '
+          '"AworlZdQ")', has(k, 'Find: AworlZdQ 1 1'), screen(k))
     k.key(CODE['R'])
     check('UI_RUN given a .RUN: error 11 (it ran the header as code)', has(k, 'UI_RUN error 11'), screen(k))
     k.key(CODE['Q'])
