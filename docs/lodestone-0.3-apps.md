@@ -292,6 +292,7 @@
 - **LODE.INI** keeps the choice as `SAVER=n` (any case). There is no line for the usual 5 minutes, and `SAVER=0` means never. Its other lines, `FONT=` included, are kept; with nothing left the file goes.
   - System writes both settings through one routine (`save_ini`, with `ini_is` matching a key in any case).
   - At start-up the core reads `SAVER=` as well as `FONT=`, in either order.
+  - A `SAVER=` line with no digit right after the `=` (`SAVER=`, `SAVER= 10`, `SAVER=x`) is ignored: the delay stays as it was, 5 minutes or what an earlier line set.
 - **The most is 30 minutes:** the core counts idle ticks under 8000h, which is how it copes with the clock going back at midnight. A larger value in LODE.INI is taken as 30.
 - **The core:**
   - `saver_t` (ticks; FFFFh means never) replaces the constant;
