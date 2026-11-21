@@ -176,12 +176,15 @@ env_init:
         xor     di, di
 .c:     cmp     byte [si], 0
         je      .d
+        mov     bx, di                  ; (where this string starts)
 .s:     lodsb
         stosb
         or      al, al
-        jnz     .s
-        cmp     di, ENVPARA * 16 - 2
-        jb      .c
+        jz      .c
+        cmp     di, ENVPARA * 16 - 1    ; the last byte is the second NUL's
+        jb      .s
+        mov     di, bx                  ; a string that does not fit whole
+        mov     byte [es:di], 0         ;  is dropped, and so are the rest
 .d:     pop     ds
         push    es
         mov     es, [mypsp]             ; give the old one back
