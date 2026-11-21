@@ -1226,12 +1226,19 @@ def t_gpifc():
           len(pulses) == 4 and all(100 <= p <= 20000 for p in pulses) and not k.crashed, ['%.0f' % p for p in pulses])
 
 def t_rtcdate():
-    """The date from the RTC at start-up (INT 1Ah AH=04h): a month outside 1-12 or a day outside 1-31 (a CMOS that
-    lost its battery) leaves 1980-01-01, as a stopped clock does; month 0 had indexed the byte before the month
-    table, 13 and up past it.  A valid date is taken."""
-    for cx, dx, want in ((0x2026, 0x1231, (2026, 12, 31)), (0x2026, 0x0101, (2026, 1, 1)), (0x2026, 0x0015, (1980, 1, 1)),
-                         (0x2026, 0x1315, (1980, 1, 1)), (0x2026, 0x0600, (1980, 1, 1)), (0x2026, 0x0632, (1980, 1, 1)),
-                         (0x2026, 0xFFFF, (1980, 1, 1))):
+    """The date from the RTC at start-up (INT 1Ah AH=04h): a year outside 1980-2099 (f_2B's range), a month
+    outside 1-12, a day past the month's length (February 29 in a leap year only) or a digit that isn't BCD (a
+    CMOS that lost its battery) leaves 1980-01-01, as a stopped clock does; month 0 had indexed the byte before
+    the month table, 13 and up past it, and year 9926, February 30 and 0A1Fh (as 10-25) were taken.  A valid date
+    is taken."""
+    N = (1980, 1, 1)
+    for cx, dx, want in ((0x2026, 0x1231, (2026, 12, 31)), (0x2026, 0x0101, (2026, 1, 1)), (0x2026, 0x0015, N),
+                         (0x2026, 0x1315, N), (0x2026, 0x0600, N), (0x2026, 0x0632, N), (0x2026, 0xFFFF, N),
+                         (0x1980, 0x0615, (1980, 6, 15)), (0x1979, 0x1231, N), (0x2099, 0x1231, (2099, 12, 31)),
+                         (0x2100, 0x0101, N), (0x9926, 0x0615, N), (0x2024, 0x0229, (2024, 2, 29)),
+                         (0x2000, 0x0229, (2000, 2, 29)), (0x2026, 0x0229, N), (0x2026, 0x0230, N), (0x2026, 0x0228, (2026, 2, 28)),
+                         (0x2026, 0x0430, (2026, 4, 30)), (0x2026, 0x0431, N), (0x2026, 0x0A1F, N), (0x2026, 0x060A, N),
+                         (0x19A0, 0x0615, N), (0x1A26, 0x0615, N), (0x20A0, 0x0615, N), (0x200A, 0x0615, N)):
         k = ktest.KPC(image('rtc.img'))
         def int1a(f=k.pc.int1a, pc=k.pc, cx=cx, dx=dx):
             if pc.r('ah') == 4: pc.w('cx', cx); pc.w('dx', dx); pc.cf(0)

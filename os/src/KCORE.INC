@@ -808,48 +808,61 @@ clock_init:
         mov     byte [cur_day], 1
         mov     ah, 4
         int     1Ah
+        jc      .x                      ; (any value refused below leaves
+        mov     al, ch                  ;  1980-01-01, as with CF: a CMOS that
+        call    bcd2bin                 ;  lost its battery may answer anything)
         jc      .x
-        push    dx
-        mov     al, ch
-        call    bcd2bin
         mov     bl, 100
         mul     bl
-        push    ax
+        xchg    ax, bx                  ; BX = the century
         mov     al, cl
         call    bcd2bin
-        xor     ah, ah
-        pop     bx
-        add     ax, bx
-        pop     dx
-        cmp     ax, 1980
+        jc      .x
+        add     bx, ax                  ; BX = the year: 1980-2099, as f_2B
+        cmp     bx, 1980
         jb      .x
-        xchg    ax, bx                  ; BX = the year
+        cmp     bx, 2099
+        ja      .x
         mov     al, dh
-        call    bcd2bin                 ; (AH = 0)
-        mov     cl, al                  ; CL = the month, 1-12
-        dec     ax
+        call    bcd2bin
+        jc      .x
+        mov     dh, al                  ; DH = the month, 1-12 (before mdays,
+        dec     ax                      ;  which indexes a table by it)
         cmp     al, 12 - 1
         ja      .x
         mov     al, dl
         call    bcd2bin
-        mov     ch, al                  ; CH = the day, 1-31
-        dec     ax
-        cmp     al, 31 - 1
-        ja      .x                      ; (else 1980-01-01, as with CF: a
-        mov     [cur_year], bx          ;  CMOS that lost its battery may
-        mov     [cur_mon], cx           ;  answer anything; mdays indexes a
-.x:     ret                             ;  table by the month)
+        jc      .x
+        mov     dl, al                  ; DL = the day: 1 to the month's length
+        or      al, al                  ;  (February 29 in a leap year only)
+        jz      .x
+        mov     cx, bx                  ; (mdays: BL the month, CX the year)
+        push    bx
+        mov     bl, dh
+        call    mdays
+        pop     bx
+        cmp     dl, al
+        ja      .x
+        mov     [cur_year], bx
+        xchg    dh, dl
+        mov     [cur_mon], dx           ; (and cur_day)
+.x:     ret
 
-bcd2bin:                                ; AL BCD -> AL binary
-        push    cx
-        mov     ah, al
-        shr     ah, 4
-        and     al, 0Fh
+bcd2bin:                                ; AL BCD -> AX binary.  CF: a digit
+        push    cx                      ;  past 9 (AX not one)
         mov     cl, al
-        mov     al, ah
+        and     cl, 0Fh
+        shr     al, 4
+        cmp     al, 10
+        jae     .bad
+        cmp     cl, 10
+        jae     .bad
         mov     ah, 10
-        mul     ah
-        add     al, cl
+        mul     ah                      ; (AH 0)
+        add     al, cl                  ; (CF 0: 99 at most)
+        pop     cx
+        ret
+.bad:   stc
         pop     cx
         ret
 section .text
