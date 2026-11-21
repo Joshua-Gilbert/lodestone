@@ -4518,13 +4518,14 @@ r_tell: cmp     word [cs:r_mt + 2], 0
 
 ; A background look, if the console asked for them (r_bgon 1: the user
 ; went back to the program with the link up), none was made for R_BGT
-; ticks, no CLAUDE.COM runs, Claude's keys aren't under way, the call is the front task's and
-; nothing is in service (as for the pop-up).  The console comes as at a
-; pop-up, with r_bgon 2, and says in it whether to go on looking.
-; Registers kept.
+; ticks, no CLAUDE.COM runs, the call is the front task's and nothing is
+; in service (as for the pop-up).  The console comes as at a pop-up, with
+; r_bgon 2, and says in it whether to go on looking.  (Never with Claude's
+; keys under way: the console never leaves r_bgon set with r_ks set.  It
+; sets r_ks only in type_start, never in a background pass, and the
+; session that does so ends with r_bgon 0; r_ks is 0 again before any
+; session can set r_bgon 1.)  Registers kept.
 r_bg:   cmp     byte [cs:r_bgon], 1
-        jne     .x
-        cmp     byte [cs:r_ks], 0
         jne     .x
         call    r_front
         jne     .x
