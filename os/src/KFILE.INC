@@ -2029,15 +2029,18 @@ fcb_ptr:
         add     di, 7
         inc     bx
 .x:     ret
-
+..@fn_nm: jmp   find_next.nomore        ; (find_next's first two drive checks:
+        db      90h                     ;  a 2-byte jcc, not taken when they
+                                        ;  pass; the pad, never run, keeps it
+                                        ;  and .ld even, so the other two stay)
 find_next:
         les     di, [dta]               ; (kept by drv_present and fat_load,
         mov     al, [es:di]             ;  their M:, R: and C: hooks too)
         dec     al
         call    drv_present
-        jc      .nomore
+        jc      ..@fn_nm
         cmp     byte [si+D_MNT], 0
-        je      .nomore
+        je      ..@fn_nm
         cmp     byte [si+D_CHK], 0      ; a look due (another disk seen and
         je      .ld                     ;  kept, an automatic Fail; INT 21h
         call    drv_ready               ;  0Dh): looked at first, as MS-
