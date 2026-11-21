@@ -2211,7 +2211,7 @@ edit_line:
         jmp     .fl
 .fd:    mov     dl, dh
         jmp     .gset
-.kf:    jmp     .key                    ; (F3's: in short reach)
+.kf:    jmp     .key                    ; (F3's and an unknown key's: in reach)
 .brk:   mov     al, dh                  ; Ctrl-C: the line is dropped
         call    ed_at
         mov     si, s_ctrlc

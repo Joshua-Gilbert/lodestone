@@ -6354,7 +6354,12 @@ sdx     dw      0
           and 'A:\\X' not in files and not k.crashed, (n, o, len(files)))
 
 ENVBIG = r"""; ENVBIG.COM: LCMD /C SET>ENV.TXT run with an environment of its own, 2001 bytes: V00= to V39=, each of
-; them 50 bytes with its NUL (a parent no Lodestone program is: COMMAND.COM with a large /E)
+; them 50 bytes with its NUL (a parent no Lodestone program is: COMMAND.COM with a large /E).  -dNV=n: V00 to
+; V(n-1) only; -dWLEN=n: then W=yyy... of n bytes with its NUL; -dZ1: Z1=zzzz after that; -dPAUSE: the command
+; SET>ENV.TXT&&PAUSE&&LCMD /C VER>VER.TXT (LCMD's environment looked at in the PAUSE, a child run from it)
+%ifndef NV
+%define NV 40
+%endif
 org 100h
         mov     bx, 1000h               ; (64 KB kept, the rest for LCMD)
         mov     ah, 4Ah
@@ -6366,28 +6371,9 @@ org 100h
         mov     [pb], ax
         mov     es, ax
         xor     di, di
-        mov     dx, '00'
-        mov     cx, 40
-.s:     mov     al, 'V'
-        stosb
-        mov     ax, dx
-        stosw
-        mov     al, '='
-        stosb
-        push    cx
-        mov     cx, 45
-        mov     al, 'x'
-        rep     stosb
-        pop     cx
-        xor     al, al
-        stosb
-        inc     dh
-        cmp     dh, '9'
-        jbe     .n
-        mov     dh, '0'
-        inc     dl
-.n:     loop    .s
-        stosb
+        mov     si, env
+        mov     cx, envlen
+        rep     movsb
         push    cs
         pop     es
         mov     [pb + 4], cs
@@ -6400,57 +6386,125 @@ org 100h
 .x:     mov     ax, 4C00h
         int     21h
 prog    db 'A:\LCMD.COM', 0
+%ifdef PAUSE
+tail    db tend - tail - 1, ' /C SET>ENV.TXT&&PAUSE&&LCMD /C VER>VER.TXT'
+%else
 tail    db tend - tail - 1, ' /C SET>ENV.TXT'
+%endif
 tend    db 13
 pb      dw 0, tail, 0, 5Ch, 0, 6Ch, 0
+env:
+%assign i 0
+%rep NV
+        db 'V', '0' + i / 10, '0' + i % 10, '='
+        times 45 db 'x'
+        db 0
+%assign i i + 1
+%endrep
+%ifdef WLEN
+        db 'W='
+        times WLEN - 3 db 'y'
+        db 0
+%endif
+%ifdef Z1
+        db 'Z1=zzzz', 0
+%endif
+        db 0
+envlen  equ $ - env
 """
 
 def t_cmdedge():
-    """LCMD at its edges: EXIT in a batch file run by LCMD /C; PROMPT=text (the '=' skipped, as PATH=X); a CALL
-    whose redirection finds the handle table full; an inherited environment over its 1 KB; the line editor's keys
-    that do nothing and Tab with no match; FOR's, SET's and COPY's syntax errors."""
+    """LCMD at its edges: EXIT in a batch file run by LCMD /C (LCMD ends, with the last ERRORLEVEL); PROMPT=text
+    (one '=' skipped, as PATH=X); a redirection that finds the handle table full, nested in CALLs and at the
+    outermost level; an inherited environment over its 1 KB, at the byte where a string stops fitting and when the
+    first string does not fit; the line editor's keys that do nothing and Tab's beeps; each of FOR's syntax errors
+    and SET's; no screen saver at a prompt in a graphics mode.  (COPY's name over 79 characters is t_copycat's.)"""
     def bat(name, *lines):
         p = os.path.join(OUT, name)
         open(p, 'wb').write(('\r\n'.join(lines) + '\r\n').encode())
         return name + '=' + p
     src = os.path.join(OUT, 'ENVBIG.ASM'); open(src, 'w').write(ENVBIG)
-    com = os.path.join(OUT, 'ENVBIG.COM')
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
-    open(os.path.join(OUT, 'EDGE_A.TXT'), 'wb').write(b'a\r\n')
-    img = image('cmdedge.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'ENVBIG.COM=' + com, 'A.TXT=' + os.path.join(OUT, 'EDGE_A.TXT'),
+    def envcom(name, *defs):
+        com = os.path.join(OUT, name + '.COM')
+        subprocess.run(['nasm', '-f', 'bin'] + ['-d' + d for d in defs] + ['-o', com, src], check=True)
+        return name + '.COM=' + com
+    gfx = os.path.join(OUT, 'GFX6.COM')
+    open(gfx, 'wb').write(bytes([0xB8, 0x06, 0x00, 0xCD, 0x10, 0xC3]))     # (mode 6, CGA graphics)
+    edge_a = os.path.join(OUT, 'EDGE_A.TXT')
+    open(edge_a, 'wb').write(b'a\r\n')
+    img = image('cmdedge.img', os.path.join(GOS, 'src', 'LCMD.COM'), envcom('ENVBIG'), envcom('ENV23', 'NV=20', 'WLEN=23'),
+                envcom('ENV24', 'NV=20', 'WLEN=24', 'Z1'), envcom('ENVFST', 'NV=0', 'WLEN=1024', 'Z1', 'PAUSE'), 'GFX6.COM=' + gfx,
+                'A.TXT=' + edge_a, 'E\\', 'F\\', 'F\\ONE.TXT=' + edge_a,
                 bat('XB.BAT', '@echo off', 'echo before', 'type nosuch.x', 'exit', 'echo AFTER EXIT'),
-                bat('D.BAT', '@echo off', 'if "%1"=="xxxxxxxx" goto end', 'call d %1x < a.txt >> o.txt', ':end'))
+                bat('XA.BAT', '@echo off', 'call xb', 'echo AFTER CALL'),
+                bat('XC.BAT', '@echo off', 'ver', 'exit', 'type nosuch.x'),
+                bat('D.BAT', '@echo off', 'if "%1"=="xxxxxxxx" goto end', 'call d %1x < a.txt >> o%1.txt', ':end', 'echo %1.'))
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
     F3 = 0x3D00
+    beeps = lambda: ''.join(k.pc.tty).count('\x07')
     def run(*keys):
         k.key('cls'); k.key(ktest.ENTER)
         for x in keys: k.key(x)
         k.key(ktest.ENTER)
         return '\n'.join(k.pc.text_screen().rstrip().split('\n')[1:])
-    for x in (ktest.UP, F3, ktest.BKSP, 'echo ok', ktest.RIGHT, ktest.DOWN, ktest.F1, 0x5300, ktest.ENTER):
-        k.key(x)                                       # (no history yet: Up and F3 have nothing to give)
+    # (first in the group: it needs an empty history, Up and F3 with nothing to give; and its F3 part relies on
+    # run() typing CLS first, the last line in the history then shorter than the one typed)
+    n = beeps()
+    for x in (ktest.UP, F3, ktest.BKSP, 'echo o', ktest.RIGHT, 'k', ktest.DOWN, ktest.F1, 0x5300, ktest.ENTER):
+        k.key(x)
     o = k.pc.text_screen()
     o2 = run('echo okay and more', F3)
-    check('the keys that do nothing (Up, F3 with no history; Backspace at the start; Right, Down, F1, Del at the end; '
-          'F3 when the last line is shorter): the line as typed', 'ok' in o.split('\n') and 'okay and more' in o2.split('\n'), (o, o2))
-    n = ''.join(k.pc.tty).count('\x07')
+    for x in ('cls', ktest.ENTER, 'echo abc', ktest.ENTER, 'echo', ktest.F1, ktest.ENTER):
+        k.key(x)                                       # (F1 with a longer line before: not F3)
+    o3 = k.pc.text_screen()
+    check('the keys that do nothing (Up, F3 with no history; Backspace at the start; Right at the end, a character '
+          'after it; Down, F1, Del at the end; F3 when the last line is shorter; F1 after a longer line): the line as '
+          'typed, no beep', 'ok' in o.split('\n') and 'okay and more' in o2.split('\n') and o3.split('\n').count('abc') == 1
+          and beeps() == n, (o, o2, o3, beeps() - n))
+    n = beeps()
     o = run('type zzq', ktest.TAB)
-    check('Tab with no name to give: a beep, the line as typed', ''.join(k.pc.tty).count('\x07') == n + 1
-          and 'File not found' in o, o)
-    o = '\n'.join(sh.run(c) for c in ('for x in (a) do echo', 'for %x in a do echo', 'for %x in (a) echo', 'for %x in (a) do'))
-    check('FOR without its %, (, DO or command: "Syntax error" each', o.count('Syntax error') == 4, o)
+    check('Tab with no name to give: a beep, the line as typed', beeps() == n + 1 and 'File not found' in o, o)
+    n = beeps()
+    o = run('type e\\', ktest.TAB)
+    check('Tab in a directory with only . and ..: one beep (after the second pass, not a third)', beeps() == n + 1, (beeps() - n, o))
+    n = beeps()
+    o = run('type f\\', ktest.TAB, ktest.TAB)
+    check('Tab again past the only name: the first again (TYPE F\\ONE.TXT), no beep', beeps() == n and o.split('\n')[0] == 'a',
+          (beeps() - n, o))
+    n = beeps()
+    o = run('rem ' + 'x' * 118 + ' a', ktest.TAB)
+    o2 = sh.run('ver')
+    check('Tab whose name does not fit the line (124 typed, A.TXT for "a"): a beep, the line as typed, the shell runs',
+          beeps() == n + 1 and 'A.TXT' not in o and 'Lodestone version' in o2, (beeps() - n, o, o2))
+    for what, line in (('inside another', 'for %x in (a) do for %y in (b) do echo z'), ('without its %', 'for xy in (a) do echo z'),
+                       ('% then a blank', 'for % in (a) do echo z'), ('without IN', 'for %x on (a) do echo z'),
+                       ('without (', 'for %x in a) do echo z'), ('without )', 'for %x in (a do echo z'),
+                       ('without DO', 'for %x in (a) to echo z'), ('without its command', 'for %x in (a) do')):
+        o = sh.run(line)
+        check('FOR %s ("%s"): one "Syntax error", nothing run' % (what, line), o.count('Syntax error') == 1 and 'z' not in o.split('\n'), o)
+    sh.run('echo abcdefgh=zz')                         # (its "=" left in the line past SET FOO's NUL)
     o = sh.run('set foo')
-    check('SET NAME without "=": "Syntax error"', 'Syntax error' in o, o)
-    o = sh.run('copy a.txt+' + 'y' * 80)
-    check('COPY with a name over 79 characters: "Invalid path or file name", nothing copied',
-          'Invalid path or file name' in o and 'copied' not in o, o)
+    o2 = sh.run('set')
+    check('SET NAME without "=" (after a longer line with one): "Syntax error", nothing set', 'Syntax error' in o
+          and 'FOO' not in o2, (o, o2))
+    o = sh.run('set ' + 'n' * 80 + '=1')
+    o2 = sh.run('set')
+    check('SET with a name of 80 characters: "Syntax error", nothing set', 'Syntax error' in o and 'NNNN' not in o2, (o, o2))
     o = sh.run('lcmd /c xb.bat || echo CODE1')
     check('LCMD /C of a batch file with EXIT: the lines after it not run, its ERRORLEVEL (1) the exit code',
           'before' in o and 'AFTER EXIT' not in o and 'CODE1' in o, o)
+    o = sh.run('lcmd /c xa.bat || echo CODE1')
+    check('... EXIT in a batch file CALLed from that one: LCMD ends, the line after the CALL not run either',
+          'before' in o and 'AFTER' not in o and 'CODE1' in o, o)
+    o = sh.run('lcmd /c xc.bat && echo CODE0')
+    check('... EXIT after a command that worked: the exit code 0', 'Lodestone version' in o and 'CODE0' in o and 'File not found' not in o, o)
     sh.run('prompt=[$p]')
     o = sh.run('ver')
     check('PROMPT=[$P]: the prompt is "[A:\\]" (the "=" skipped, as PATH=X does)', o.split('\n')[-1].startswith('[A:\\]'), o)
+    sh.run('prompt==[$p]')
+    o = sh.run('ver')
+    check('PROMPT==[$P]: the prompt is "=[A:\\]" (one "=" skipped, no more)', o.split('\n')[-1].startswith('=[A:\\]'), o)
     sh.run('prompt $p$g')
     psp = k.pc.u16(0x60, k.Y['cur_psp'])
     jft = lambda: k.pc.rd(k.pc.u16(psp, 0x36), k.pc.u16(psp, 0x34), 20)
@@ -6460,16 +6514,66 @@ def t_cmdedge():
     check('CALLs nested with < and >> till the handle table is full (a DUP fails): handle 4 (PRN) still open after, '
           'handles 0-3 as they were, the shell runs', j1[:5] == j0[:5] and 'Lodestone version' in sh.run('ver'), (j0.hex(), j1.hex(), o))
     check('... and the file opened for the redirect that failed is closed: the whole table as before', j1 == j0, (j0.hex(), j1.hex()))
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    of = {n: v for n, v in f.items() if n.startswith('A:\\O')}
+    want = {'A:\\O%s.TXT' % ('X' * i): b'%s.\r\n' % (b'x' * (i + 1)) for i in range(6)}
+    want.update({'A:\\OXXXXXX.TXT': b'xxxxxxxx.\r\nxxxxxxx.\r\n', 'A:\\OXXXXXXX.TXT': b''})
+    check('... each level\'s ECHO in the file its CALL\'s >> named, but the 8th\'s (its DUP failed): in the 7th\'s, '
+          'its own file made and left empty', of == want, sorted(of.items()))
+    sh.run('del o*.txt')
+    js, jo = k.pc.u16(psp, 0x36), k.pc.u16(psp, 0x34)
+    k.pc.wr(js, jo + 5, bytes([j0[0]]) * 14)           # handles 5-18 taken (as CON): one left, the file takes it
+    o = sh.run('echo OUTER > o.txt')                   #  and the DUP of handle 1 fails
+    j2 = k.pc.rd(js, jo, 20)
+    k.pc.wr(js, jo + 5, j0[5:19])
+    t = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\O.TXT')
+    check('a DUP failing at the outermost level (one handle free): the ECHO on the screen, O.TXT made and empty, '
+          'handles 0-18 as they were, the file closed again',
+          'OUTER' in o.split('\n') and t == b'' and j2 == j0[:5] + bytes([j0[0]]) * 14 + j0[19:], (j0.hex(), j2.hex(), o, t))
+    k.pc.wr(js, jo, j0)
+    o = sh.run('ver')
+    check('... the shell runs', 'Lodestone version' in o, o)
     sh.run('del o.txt')
     m0 = mcbs(k)
-    sh.run('envbig')
-    e = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\ENV.TXT', b'').decode('latin-1').split()
-    m1 = mcbs(k)
+    mine = [(b[0] + 1, b[3]) for b in m0 if b[2] == psp]
+    check('the shell\'s blocks: its own and its 1 KB environment, no more (the one it was given, given back)',
+          sorted(mine) == [(psp, mine[0][1]), (k.pc.u16(psp, 0x2C), 64)], (hex(psp), mine))
     own = lambda m: [b[:4] for b in m if b[2]] + [m[-1][:4]]
-    check('an inherited environment of 2001 bytes: LCMD\'s 1 KB copy takes V00 to V19 whole (V20 would cross its end), '
-          'no more; the arena whole after (its owned blocks and its last as they were)',
-          e == ['V%02d=' % i + 'x' * 45 for i in range(20)] and all(b[1] in 'MZ' for b in m1) and own(m1) == own(m0)
-          and 'Lodestone version' in sh.run('ver'), (e[:1], e[-2:], len(e), m0, m1))
+    env = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\ENV.TXT', b'').decode('latin-1').split()
+    vs = ['V%02d=' % i + 'x' * 45 for i in range(20)]
+    for cmd, want, what in (('envbig', vs, 'of 2001 bytes: LCMD\'s 1 KB copy takes V00 to V19 whole (V20 would cross its end), no more'),
+                            ('env23', vs + ['W=' + 'y' * 20], 'of V00 to V19 (1,000 bytes), then W= whose NUL is on byte 1022: kept '
+                             '(byte 1023 the second NUL), Z1= after it not'),
+                            ('env24', vs, 'of V00 to V19, then W= whose NUL would be on byte 1023: dropped, no room for the second NUL')):
+        sh.run('del env.txt')
+        sh.run(cmd)
+        e = env()
+        m1 = mcbs(k)
+        check('an inherited environment %s; the arena whole after (its owned blocks and its last as they were)' % what,
+              e == want and all(b[1] in 'MZ' for b in m1) and own(m1) == own(m0) and 'Lodestone version' in sh.run('ver'),
+              (e[:1], e[-2:], len(e), m0, m1))
+    sh.run('del env.txt')
+    sh.run('envfst')                                   # (LCMD /C SET>ENV.TXT&&PAUSE&&LCMD /C VER>VER.TXT)
+    p2 = k.pc.u16(0x60, k.Y['cur_psp'])
+    blk = k.pc.rd(k.pc.u16(p2, 0x2C), 0, 2)
+    k.key(ktest.ENTER)
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    m1 = mcbs(k)
+    check('an inherited environment whose first string (1,023 characters) does not fit: LCMD\'s starts with two NULs, '
+          'SET shows nothing, a child started from it runs; the arena whole after',
+          p2 != psp and blk == b'\0\0' and f.get('A:\\ENV.TXT') == b'' and b'Lodestone version' in f.get('A:\\VER.TXT', b'')
+          and own(m1) == own(m0), (hex(p2), blk, f.get('A:\\ENV.TXT'), f.get('A:\\VER.TXT'), m0, m1))
+    k = ktest.KPC(img); k.start()                      # the prompt in a graphics mode: no saver
+    k.wr('saver_t', struct.pack('<H', 36))             # (2 s; read as LCMD starts)
+    Shell(k)
+    k.key('gfx6'); k.key(ktest.ENTER)
+    lent = k.rd('lent', 1)
+    k.pc.run_for(4)
+    m6 = k.pc.mode()
+    n = len(k.pc.tty)
+    k.key('ver'); k.key(ktest.ENTER)
+    check('the prompt in a graphics mode (6) idle for twice the saver\'s time: no saver, the shell runs',
+          m6 == 6 and k.rd('lent', 1) == lent and 'Lodestone version' in ''.join(k.pc.tty[n:]), (hex(m6), lent, k.rd('lent', 1), ''.join(k.pc.tty[n:])))
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
          t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_divirq, t_divcap, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_cmdedge, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
