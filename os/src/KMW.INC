@@ -405,20 +405,20 @@ mw_start:
         je      .ex                     ;  title, the redraw and the rest as
         mov     di, mw_ses              ;  the Executive left them, not
         call    mw_load_ctx.di          ;  pointers into the starter's slot
-        pusha                           ; (and that band on the screen)
-        UCALL   band_redraw
-        popa
 .ex:    mov     cx, NALLOC + 8 + 1      ; alloc_tab, run_hdr, run_hnd: none
         mov     di, alloc_tab
         xor     ax, ax
         rep     stosw
         cmp     [held1], ax             ; the Executive's question waiting (
-        je      .nq                     ;  it may be in front at one): not the
+        je      .nh                     ;  it may be in front at one): not the
         mov     [held1], ax             ;  new one's, nor its band
         mov     [held2], ax
         mov     [band1], ax
         mov     [band2], ax
-        pusha
+        jmp     short .bd
+.nh:    cmp     byte [cs:mw_cur], 0     ; (or, from a window, the Executive's
+        je      .nq                     ;  band on the screen: once, either way)
+.bd:    pusha
         UCALL   band_redraw
         popa
 .nq:    pop     ax
