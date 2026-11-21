@@ -329,15 +329,25 @@ class GridSim:
                 if gop == glp.GP_SPOLL:
                     if old_nano: return s.reply(rid, 1)
                     if getattr(s, 'plot_mute', False): return            # a test: the GRiD never answers
-                    held = max(0, held - getattr(s, 'plot_drain', 60))  # the pen works between polls
+                    if getattr(s, 'plot_empty', False): return s.reply(rid, 0, b'')   # a test: an empty poll
+                    k = getattr(s, 'plot_poll_fail', 0)                   # a test: every k-th poll fails
+                    if k:
+                        s.plot_npoll = getattr(s, 'plot_npoll', 0) + 1
+                        if s.plot_npoll % k == 0: return s.reply(rid, 1)
+                    # the pen works between polls; frozen (a test: plot_frozen_until, a time.time()), the
+                    # Nano is busy with its buffer unchanged, as while it waits for the 4662's status reply
+                    frozen = time.time() < getattr(s, 'plot_frozen_until', 0)
+                    held = max(0, held - (0 if frozen else getattr(s, 'plot_drain', 60)))
                     s.plot_held = held
                     room = min(63, max(0, 240 - held) // 4)
                     rqs = 0x40 if getattr(s, 'plot_rqs', False) else 0     # a test: something asks for service
-                    return s.reply(rid, 0, bytes([(0x80 if held == 0 else 0) | rqs | room]))
+                    # (draining: held > 0, less each poll; stuck: plot_open, a label left open, never idle)
+                    idle = held == 0 and not getattr(s, 'plot_open', False)
+                    return s.reply(rid, 0, bytes([(0x80 if idle else 0) | rqs | room]))
                 if gop == glp.GP_CLEAR:     # SDC: it drops what it holds (recorded: the parts written before it)
                     if getattr(s, 'plot_clear_fail', False): return s.reply(rid, 1)   # a test
                     s.plot_clears = getattr(s, 'plot_clears', []) + [len(getattr(s, 'plot_parts', []))]
-                    s.plot_held = 0
+                    s.plot_held = 0; s.plot_open = False
                     return s.reply(rid, 0)
                 if gop != glp.GP_WRITE: return s.reply(rid, 1)
                 fail = getattr(s, 'plot_fail_after', None)            # a test: the Nano stops taking bytes

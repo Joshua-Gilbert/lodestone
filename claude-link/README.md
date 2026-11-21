@@ -56,7 +56,7 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
 | `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
 | `gpib_send` | every time | query, write, clear, trigger, local/remote; a query's reply can go to a new Pi file (`save_to`) |
-| `grid_plotter` | every time | HP-GL (text, or a Pi file) to the Tek 4662 pen plotter through its Nano at `[plotter] address` (1), in the background: only what the Nano has room for, the GRiD free in between; `status`, `cancel` |
+| `grid_plotter` | every time | HP-GL (text, or a Pi file) to the Tek 4662 pen plotter through its Nano at `[plotter] address` (1), in the background: first waits for a drawing the Nano still holds, then only what it has room for, the GRiD free in between; `status`, `cancel` (below) |
 | `grid_plot` | until allowed | a line or scatter plot on the GRiD's screen, from data or a Pi file (a trace saved with `save_to`); drawn in one bit with the GRiD's own font |
 | `grid_image` | until allowed | a picture file from `~/grid` (a matplotlib PNG), dithered to the GRiD's screen |
 | `grid_pick` | until allowed | asks the user to click points on the plot or picture, and returns them (data coordinates, the nearest point) |
@@ -129,6 +129,23 @@ numbers, ended by `;` or SUB (`plotter-nano/README.md`).
   while the pen draws. `action: status` shows how far it is, `cancel` stops
   sending. A Nano that doesn't answer a serial poll (firmware before v4) is an
   error before anything is sent.
+- **The start:** a Nano idle at the first poll is not cleared. One still busy
+  with what an earlier plot (or PLOT.COM, left to finish) gave it is waited
+  for, polled once a second: with no limit while its status changes, up to
+  200 s while it stays the same; then the plot stops, nothing sent and the
+  Nano not cleared (what it holds is the earlier drawing's). A status of 3Ch
+  (its buffer empty, yet not idle: a label left open) unchanged for 60 s is
+  taken as stuck: the Nano is cleared and the plot goes on. 00h unchanged
+  all along stops it with a question: is `[plotter] address` the Nano's?
+  A poll that asks for service (RQS) is something else, not the Nano: the
+  plot is refused and nothing is sent. A cancel while it waits sends
+  nothing.
+- **When it stops:** a cancel while sending clears the Nano, then lifts the
+  pen ("PU;", with ETX first inside a label; nothing inside a coordinate
+  list). A plot that fails part way (a
+  write fails, or no room for 200 s) clears the Nano too, best effort, so a
+  Nano that knows SDC starts the next plot clean; a GRiD that stopped
+  answering gets nothing more.
 - The HP-GL is checked first: printable ASCII, line ends, ETX, BS, SO and SI
   (in labels), and ESC and SUB (the 4662's own commands); nothing else.
 - The Nano must run addressed (`LISTEN_ONLY false`, `GPIB_ADDRESS 1`): in
