@@ -55,6 +55,49 @@ def test_answers_in_order():
     assert rows(scr)[0] == 'UC' and scr.buffer[0][0].underscore, rows(scr)[0]
 
 
+def test_csi_arity():
+    """TS.CSI_ARITY is what pyte's handlers take, as measured on TermScreen:
+    a newer pyte that changes one fails here, not in a user's Term."""
+    for final, name in pyte.Stream.csi.items():
+        f = ord(final); most = {}
+        for priv in (False, True):
+            took = 0
+            for n in range(1, 8):
+                scr = TermScreen(); scr.write_process_input = lambda t: None
+                try: getattr(scr, name)(*([1] * n), **({'private': True} if priv else {})); took = n
+                except TypeError: pass
+            most[priv] = took
+        if most[False] == 7:                                    # any number
+            assert f not in TS.CSI_ARITY, (final, name)
+            continue
+        assert f in TS.CSI_ARITY, (final, name, most)
+        n, priv = TS.CSI_ARITY[f]
+        assert n == (1 if final == 'K' else most[False]), (final, name, most)   # (K's 2nd is its '?')
+        assert priv == (most[True] >= n), (final, name, most)
+
+
+def test_csi_cut_to_fit():
+    """A CSI with more parameters than pyte's handler takes (or a '?' it
+    doesn't) used to raise in pyte's feed and kill Term's reader (X94)."""
+    pf = PreFilter()
+    for got, want in ((b'\x1b[1;2A', b'\x1b[1A'), (b'\x1b[1;2;3H', b'\x1b[1;2H'), (b'\x1b[1;2c', b'\x1b[1c'),
+                      (b'\x1b[?6n', b'\x1b[6n'), (b'\x1b[?1;2K', b'\x1b[?1K'), (b'\x1b[0;1K', b'\x1b[0K'),
+                      (b'\x1b[?3A', b'\x1b[3A'), (b'\x1b[2;3;4r', b'\x1b[2;3r'),
+                      (b'\x1b[5A', b'\x1b[5A'), (b'\x1b[2;3H', b'\x1b[2;3H'), (b'\x1b[H', b'\x1b[H'),
+                      (b'\x1b[?25h', b'\x1b[?25h'), (b'\x1b[1;2;3;4m', b'\x1b[1;2;3;4m'),
+                      (b'\x1b[2;3J', b'\x1b[2;3J'), (b'\x1b[?1K', b'\x1b[?1K'),
+                      (b"\x1b[1;2'", b"\x1b[1'"), (b"\x1b[7'", b"\x1b[7'")):   # (' is HPA's final to pyte)
+        out, _ = pf.feed(got)
+        assert out == want, (got, out, want)
+    scr = TermScreen(); got = []
+    scr.write_process_input = lambda d: got.append(d)
+    feed(scr, b'a\x1b[1;2Ab\x1b[3;4;5Hc\x1b[1;2cd\x1b[?6ne\x1b[?0;2Kf')
+    assert rows(scr)[0] == 'ab' and rows(scr)[2] == '   cdef', rows(scr)[:3]
+    assert got == ['\x1b[3;6R'], got                            # ESC[?6n: a cursor report
+    feed(scr, b"\x1b[5;1Hxy\x1b[6;2'z")                          # (ESC[6;2' raised in pyte)
+    assert rows(scr)[4] == 'xy   z', rows(scr)[4]
+
+
 def test_alt_screen_and_sync():
     scr = TermScreen()
     feed(scr, b'main text\x1b[?1049h\x1b[Halt screen')
@@ -328,6 +371,86 @@ def test_lone_esc_written_alone():
         assert writes == [b'\x1b', b'\x1b', b'a'], writes
     finally:
         h.close()
+
+
+def child(code):
+    """A program for the pty (TermHarness's command=): code in a file of its own."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix='gridlink-child-'); p = os.path.join(d, 'child.py')
+    with open(p, 'w') as f: f.write('import os, select, sys, time, tty\ntty.setraw(0)\n' + code)
+    return '%s %s' % (sys.executable, p)
+
+
+ODD_CSI = r'''
+os.write(1, b'before\r\n\x1b[1;2Aodd\r\n\x1b[1;2;3H\x1b[1;2c\x1b[?6n')
+got = b''; end = time.time() + 5
+while not got.endswith(b'R') and time.time() < end:
+    if select.select([0], [], [], 0.5)[0]: got += os.read(0, 64)
+os.write(1, b'\x1b[5;1Hanswer %s\r\n' % got[1:])
+time.sleep(0.3)
+os.write(1, b'still drawing\r\n')
+time.sleep(30)
+'''
+
+
+def test_term_odd_csi():
+    """A program that writes CSIs with more parameters than pyte takes
+    (ESC[1;2A, ESC[1;2;3H, ESC[1;2c, ESC[?6n): Term goes on (X94)."""
+    h = TermHarness(command=child(ODD_CSI))
+    try:
+        assert h.wait_text('still drawing'), (h.log, h.grid.screen_text())
+        scr = h.grid.screen_text()
+        assert any('answer [1;2R' in l for l in scr), scr       # ESC[?6n answered as ESC[6n, at row 1 col 2
+        assert h.term.reader.is_alive() and h.term.child is not None
+        assert not [l for l in h.log if 'pyte' in str(l) or 'reading from' in str(l)], h.log
+        assert h.settle()
+        # and pyte raising on something no filter knows loses that data, not the reader
+        st = h.term.stream
+        class Bad:
+            def feed(s, b): raise TypeError('test')
+        h.term.stream = Bad()
+        h.term.feed(b'x' * 50 + b'END'); h.term.feed(b'y')
+        h.term.stream = st
+        h.term.feed(b'\x1b[7;1Hagain\r\n')
+        assert h.wait_text('again'), h.grid.screen_text()
+        h.term.stream = Bad(); h.term.feed(b'z')               # (a redraw with it again: not logged again)
+        h.term.stream = st
+        said = [str(l) for l in h.log if 'term: pyte' in str(l)]
+        assert len(said) == 1 and '53 bytes' in said[0] and "xxEND'" in said[0], said
+        assert h.term.pyte_bad == 2, h.term.pyte_bad            # (counted, for the next line said)
+    finally:
+        h.close()
+
+
+WAITS = r'''
+import signal
+DEAF = %r
+if DEAF: signal.signal(signal.SIGTERM, signal.SIG_IGN)
+os.write(1, b'ready\r\n')
+time.sleep(60)
+'''
+
+
+def test_reader_error_stops_the_program():
+    """An error in Term's reader itself: the program is stopped (SIGTERM,
+    then a kill after 3 s for one that ignores it), not left running with
+    nothing reading it (X94)."""
+    for deaf in (False, True):
+        h = TermHarness(command=child(WAITS % deaf))
+        try:
+            assert h.wait_text('ready'), (h.log, h.grid.screen_text())
+            kid = h.term.child
+            def boom(*a, **k): raise RuntimeError('test')
+            t0 = time.time()
+            h.term._send_title = boom                         # (called in the reader's loop)
+            h.term.reader.join(10)
+            del h.term._send_title
+            assert not h.term.reader.is_alive() and kid.poll() is not None, (deaf, h.log)
+            assert (time.time() - t0 >= 2.5) == deaf, (deaf, time.time() - t0)
+            assert any('reading from' in str(l) and 'stopping it' in str(l) for l in h.log), h.log
+            assert h.term.child is None and h.term.fd is None, (h.term.child, h.term.fd)
+        finally:
+            h.close()
 
 
 def test_switch_quiesces_chat():

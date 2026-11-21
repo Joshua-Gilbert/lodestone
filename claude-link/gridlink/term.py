@@ -25,6 +25,7 @@ TERM_HOLD = 0.06     # the Pi's hold on a POLL in Term (250 ms in chat)
 TITLE_EVERY = 1.0
 ESC_GAP = 0.03       # after a lone Esc, before the next key
 STOP_WEB = 15.0      # gridfox's own wait for Firefox to quit is 10 s
+PYTE_SAY = 60.0      # s between log lines for data pyte can't take
 
 
 def _ctty():
@@ -70,6 +71,7 @@ class TermSession:
         s.bg = False                    #  and its console goes on in the background (HF_BG)
         s.bg_sdc = 0                    #  (the bridge's count of SDCs then: the console's stop)
         s.stats = dict(keys=0, pty_in=0, pty_out=0)
+        s.pyte_bad = 0; s.pyte_said = float('-inf')   # (pyte raised: how often since it was said, and when)
         s.tools = None; s.sock = mcp.socket_path(cfg)
         # A picture over the text (picture.py): while one is up it is the
         # link's frame source, and pyte goes on keeping the text underneath.
@@ -482,17 +484,25 @@ class TermSession:
                 except Exception: pass
 
     def _read(s, fd, child):
-        while True:
-            try:
-                r, _, _ = select.select([fd], [], [], 0.5)
-            except (OSError, ValueError):
-                break
-            if r:
-                try: data = os.read(fd, 65536)
-                except OSError: data = b''
-                if not data: break
-                s.feed(data)
-            s._send_title()
+        try:
+            while True:
+                try:
+                    r, _, _ = select.select([fd], [], [], 0.5)
+                except (OSError, ValueError):
+                    break
+                if r:
+                    try: data = os.read(fd, 65536)
+                    except OSError: data = b''
+                    if not data: break
+                    s.feed(data)
+                s._send_title()
+        except Exception as e:                    # (never a reader gone with the program left running)
+            s.log('term: reading from %s: %r; stopping it' % (s.name, e))
+            try:                                  # (as stop(): SIGTERM, then a kill)
+                child.terminate(); child.wait(STOP_WEB if s.web else 3)
+            except Exception:
+                try: child.kill()
+                except OSError: pass
         code = child.wait()
         mine = s.child is child                   # (not one started again since)
         if mine:
@@ -511,13 +521,26 @@ class TermSession:
         with s.lock:
             pics = []
             for kind, b in s.pre.parts(data):     # pyte answers DA as it goes: keep the order
-                if kind == 'data': s.stream.feed(b)
+                if kind == 'data': s._pyte(b)
                 elif kind == 'pic': pics.append(b)
                 else: s._write(b)
             s.last_byte = time.monotonic(); s._mark()
             s.title = s.screen.title
         for b in pics: s._osc_picture(b)
         if s.link is not None: s.link.wake()
+
+    def _pyte(s, b):
+        """b into pyte.  Something it can't take (PreFilter fits the CSIs we
+        know) loses the rest of b, not the reader: logged at most once in
+        PYTE_SAY s (a program that redraws with it would log every redraw)."""
+        try:
+            s.stream.feed(b)
+        except Exception as e:
+            s.pyte_bad += 1; now = time.monotonic()
+            if now - s.pyte_said >= PYTE_SAY:
+                more = ' (and %d more since)' % (s.pyte_bad - 1) if s.pyte_bad > 1 else ''
+                s.log('term: pyte: %r in %d bytes ending %r%s' % (e, len(b), bytes(b[-40:]), more))
+                s.pyte_said = now; s.pyte_bad = 0
 
     def _answer_query(s, text):
         s._write(text.encode('latin1') if isinstance(text, str) else text)
