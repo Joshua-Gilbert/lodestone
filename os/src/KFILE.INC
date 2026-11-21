@@ -1690,7 +1690,7 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
         cmp     al, 8
         je      .rem
         cmp     al, 9
-        je      .remote
+        je      .rh
         cmp     al, 0Eh
         je      .map
         cmp     al, 0Fh
@@ -1709,9 +1709,13 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
         cmp     al, 7
         je      .ost
         cmp     al, 0Ah
-        je      .remote
+        je      .rh
         mov     ax, 1
 .e:     jmp     fail
+.rh:    jmp     .remote                 ; (09h and 0Ah, which nothing here asks:
+        db      90h                     ;  a 2-byte jcc, not taken for the rest;
+                                        ;  the pad, never run: what follows at
+                                        ;  its parity)
 .get:   test    byte [si+S_FLAGS], SF_DEV
         jz      .gf
         mov     al, [si+S_DEV]
