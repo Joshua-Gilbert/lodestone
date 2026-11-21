@@ -363,14 +363,20 @@ font_boot:
         jne     .next
         add     si, 6
         xor     bx, bx
+        mov     al, [si]                ; (no digit: no line, the default kept)
+        sub     al, '0'
+        cmp     al, 9
+        ja      .next
 .d:     lodsb                           ; the number
         sub     al, '0'
         cmp     al, 9
         ja      .dn
         imul    bx, bx, 10
+        cmp     bx, 100                 ; (before the add: BL wraps)
+        jae     .cap
         add     bl, al
-        cmp     bx, 100
-        jb      .d
+        jmp     .d
+.cap:   mov     bl, 30                  ; (three digits or more: 30)
 .dn:    dec     si
         call    saver_set
         jmp     .next

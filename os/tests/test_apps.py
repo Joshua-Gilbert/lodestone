@@ -1420,6 +1420,13 @@ def t_saver_delay():
     ini2 = os.path.join(OUT, 'LODE2.INI'); open(ini2, 'wb').write(b'SAVER=99\r\n')
     k = ktest.KPC(image('svd4.img', 'LODE.INI=' + ini2)); k.start()
     check('SAVER=99: 30 minutes at most', k.rd('saver_min', 1) == b'\x1e' and k.u16('saver_t') == 32760, k.rd('saver_min', 1))
+    # no digit: no line (5 minutes kept); three digits: 30, none wrapped to 0 (never) or to a minute or two
+    for line, mins in ((b'SAVER=', 5), (b'SAVER= 10', 5), (b'SAVER=x', 5), (b'SAVER=256', 30), (b'SAVER=257', 30),
+                       (b'SAVER=512', 30), (b'SAVER=769', 30), (b'SAVER=100', 30), (b'SAVER=7', 7), (b'SAVER=0', 0)):
+        open(ini2, 'wb').write(line + b'\r\n')
+        k = ktest.KPC(image('svd6.img', 'LODE.INI=' + ini2)); k.start()
+        check('%s: %s' % (line.decode(), '%d minutes' % mins if mins else 'never'), k.rd('saver_min', 1) == bytes([mins])
+              and k.u16('saver_t') == (mins * 1092 if mins else 0xFFFF), (k.rd('saver_min', 1), hex(k.u16('saver_t'))))
     # past 511 bytes of other lines (System keeps a LODE.INI up to 1 KB and
     # puts its own lines last): font_boot read only the first 511
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'X1=1\r\n' * 160 + b'saver=2\r\nFONT=TERMBOLD.FNT\r\nTIDY=0\r\n')
