@@ -1729,7 +1729,7 @@ mw_tm       db      0                   ; MK_TEXT's mask
 mw_tx       dw      0                   ; MK_TEXT's text (from column mw_r)
 mw_p0       dw      0                   ; MK_XOR's pixels across
 mw_p1       dw      0
-mw_wo       db      0                   ; (mw_clipq: whose window)
+            db      0                   ; (what follows keeps its parity)
 mw_ot       dw      0                   ; the primitive's own code (mw_c_*.o)
 mw_vx       dw      0                   ; MK_VL's pixel x
 mw_yb       dw      0                   ; (mw_cdraw: the band's end)
@@ -2073,16 +2073,16 @@ mw_clipq:
         mov     si, bx
         shl     si, 2
         mov     si, [wstack+si]
-        call    mw_own
-        mov     [cs:mw_wo], al
         mov     ax, [si+W_COL]          ; AX..CX, DX..BP: its columns, rows
         mov     cx, ax
         add     cx, [si+W_W]
         mov     dx, [si+W_Y]
         mov     bp, dx
         add     bp, [si+W_H]
-        cmp     byte [cs:mw_wo], 0
-        jne     .s
+        cmp     si, [run_base]          ; whose?  (Here the Executive runs: its
+        jae     .s                      ;  windows are the UI's own, below the
+                                        ;  .RUNs' load area, help_w its one;
+                                        ;  each session's is in its slot)
         cmp     ax, [cs:mw_r]           ; the Executive's: holding mw_r?
         ja      .l
         cmp     cx, [cs:mw_r+2]
