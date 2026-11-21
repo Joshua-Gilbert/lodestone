@@ -23,6 +23,9 @@ pseudo-terminal, and runs:
      stops, core 0 stops petting the watchdog
   N  frames from the bridge shorter than their fields: the daemon ignores and counts them; and a port that
      fails while it opens (tcsetattr's termios.error): the daemon goes on
+  O  the Pico's clocks wrap during a USB stall and a core 1 freeze (a second simulation)
+
+At the end, bus_sim's own counters: no events lost, no bus contention, no late ATN engagement.
 
 usage: run_sim_tests.py [--results PATH]
 
@@ -67,11 +70,14 @@ def check(name, ok, detail=""):
 
 
 class Sim:
-    def __init__(self):
-        subprocess.run(["gcc", "-O2", "-Wall", "-DGPIB_SIM", f"-I{FW}", "-o", SIM, os.path.join(HERE, "bus_sim.c"),
-                        os.path.join(FW, "gpib_engine.c"), os.path.join(FW, "host_link.c"), "-lpthread"],
-                       check=True)
-        self.p = subprocess.Popen([SIM], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+    def __init__(self, clock0=None):
+        """clock0: where the Pico's clocks start, in microseconds (bus_sim's $GPIB_SIM_CLOCK0; default 0)."""
+        if not os.path.exists(SIM):
+            subprocess.run(["gcc", "-O2", "-Wall", "-DGPIB_SIM", f"-I{FW}", "-o", SIM, os.path.join(HERE, "bus_sim.c"),
+                            os.path.join(FW, "gpib_engine.c"), os.path.join(FW, "host_link.c"), "-lpthread"],
+                           check=True)
+        env = dict(os.environ, GPIB_SIM_CLOCK0=str(clock0 or 0))
+        self.p = subprocess.Popen([SIM], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, env=env)
         self.pty = self.p.stdout.readline().split()[1]
 
     def cmd(self, line):
@@ -92,6 +98,15 @@ class Sim:
     def stats(self):
         return dict(kv.split("=") for kv in self.cmd("stats"))
 
+    def quit(self):
+        try:
+            self.p.stdin.write("quit\n")
+            self.p.stdin.flush()
+            self.p.wait(5)
+        except (OSError, subprocess.TimeoutExpired):   # (a core 1 still frozen can't join)
+            self.p.kill()
+            self.p.wait(5)
+
 
 class Daemon:
     def __init__(self, pty, handler="thrutest", address=10):
@@ -110,11 +125,19 @@ class Daemon:
             except OSError:
                 pass
             time.sleep(0.2)
+        self.stop()                              # (left running, it would reopen this pty's name for ever)
         raise RuntimeError("daemon did not bring the bridge online")
 
     def stop(self):
         self.p.terminate()
         self.p.wait(5)
+
+
+def firmware_const(name, macro):
+    """A #define's number from the firmware's source (RX_RING, OUTBUF), so a check's bound follows the code."""
+    import re
+    with open(os.path.join(FW, name)) as f:
+        return int(re.search(r"^#define %s\s+(\d+)" % macro, f.read(), re.M).group(1))
 
 
 def ctl(req):
@@ -373,14 +396,31 @@ def no_eoi_and_flow(sim, d):
     check("30000 bytes with the Pi stalled 2.5 s: all accepted, echoed intact", sent == len(data) and got == data,
           f"sent={sent} got={len(got)}")
     say(f"     (NRFD holds meanwhile: {holds} -- the pty's kernel buffer may absorb it all)")
+    # A PONG after the Pi's stall before the Pico's: the two back to back, with the PONG before the first, came
+    # near the daemon's 6 s PONG time-out, and past it on a busy host it reconnected under the 30000 bytes.
+    up0, t0 = ctl({"cmd": "status"})["pico"].get("pico_uptime_ms"), time.time()
+    while ctl({"cmd": "status"})["pico"].get("pico_uptime_ms") == up0 and time.time() - t0 < 5:
+        time.sleep(0.05)
+    check("a fresh PONG between the two stalls", ctl({"cmd": "status"})["pico"].get("pico_uptime_ms") != up0,
+          f"none in {time.time() - t0:.1f} s")
     holds0 = int(sim.stats()["holds"])
     sim.cmd("usbstall 2500")                     # the Pico's USB IN path stops for 2.5 s (host not taking data)
     r, sent = sim.write(10, data)
     r2, got, end = sim.read(10, 40000)
-    holds = int(sim.stats()["holds"]) - holds0
+    st = sim.stats()
+    holds, stalled = int(st["holds"]) - holds0, int(st["stall_rx"])
     check("30000 bytes with the Pico's USB output stalled 2.5 s: echoed intact", sent == len(data) and got == data,
           f"sent={sent} got={len(got)}")
-    check("...and NRFD was held meanwhile (frames wait, nothing dropped)", holds > 0, f"holds={holds}")
+    # NRFD is held once the rx ring is full, and while the USB output stalls that is once more bytes have come
+    # than the ring and the output buffer hold.  On a loaded host the controller may send fewer than that in
+    # 2.5 s: then no hold is due, and this is not checked.
+    room = firmware_const("gpib_engine.h", "RX_RING") + firmware_const("host_link.c", "OUTBUF")
+    if holds or stalled >= room:
+        check("...and NRFD was held meanwhile (frames wait, nothing dropped)", holds > 0,
+              f"holds={holds}, {stalled} bytes in the stall")
+    else:
+        say(f"     (not checked: only {stalled} bytes reached the bridge during the USB stall, and {room} fit"
+            " without NRFD)")
     sim.cmd("tmo 2000")
 
 
@@ -931,6 +971,48 @@ def port_gone_under_read():
           f"threads {[t.name for t in pinger]}, {ports[-1].pings} PINGs")
 
 
+def clock_wrap():
+    """The Pico's u32 microsecond timer wraps every 71.6 minutes, and millis() every 49.7 days.  A second
+    simulation starts both 15 s before their wrap (they wrap at the same instant); once its daemon is up, a USB
+    stall and a core 1 freeze begin 1 s before the wrap and straddle it.  Before bus_sim's clocks came from one
+    64-bit count, its milliseconds wrapped with the microseconds, and a stall that straddled that lasted 71
+    minutes: one run of this suite lost the bridge from H on."""
+    say("O  the Pico's clocks wrap during a USB stall and a core 1 freeze (a second simulation)")
+    wrap = (1 << 32) * 1000                      # (in the Pico's microseconds)
+    sim = Sim(clock0=wrap - 15_000_000)
+    d = None
+
+    def left():                                  # seconds to the wrap, by bus_sim's own clock
+        return (wrap - int(sim.cmd("clock")[0])) / 1e6
+    try:
+        d = Daemon(sim.pty)
+        sim.cmd("tmo 300")
+        sim.write(10, b"*IDN?\n")
+        r, got, end = sim.read(10)
+        check("just before the wrap: answers", got == BENCH_ID, repr(got))
+        time.sleep(max(0.0, left() - 1.0))       # (a slow start leaves less)
+        sim.cmd("usbstall 2500")
+        sim.cmd("freeze1 2500")
+        t = left()
+        check("the USB stall and the core 1 freeze began before the wrap, and last past it", 0 < t < 2.4,
+              f"{t:.3f} s before it")
+        time.sleep(3.0)                          # (both over)
+        sim.write(10, b"*IDN?\n")
+        r, got, end = sim.read(10)
+        check("after the wrap, the stall and the freeze over: answers", got == BENCH_ID, repr(got))
+        time.sleep(1.5)
+        st = ctl({"cmd": "status"})
+        check("... the daemon still connected, the Pico's PONGs coming (its uptime past the wrap)",
+              st.get("connected") and st.get("pico", {}).get("pico_uptime_ms", 1 << 31) < 10_000, str(st.get("pico")))
+        check("... and core 1 seen moving (the watchdog petted)", sim.cmd("engine")[0] == "1")
+        st = sim.stats()
+        check("no bus contention or late ATN engagement there", st["fights"] == "0" and st["late"] == "0", str(st))
+    finally:
+        if d:
+            d.stop()
+        sim.quit()
+
+
 def short_frames():
     """Frames from the bridge shorter than their type's fields (bytes lost inside a frame: a tty overrun) reach
     the daemon's parser.  Each must be ignored and counted; before, struct.error ended the daemon."""
@@ -1059,23 +1141,34 @@ def main(argv=None):
     sim = Sim()
     say(f"bus_sim on {sim.pty}")
     d = Daemon(sim.pty)
+
+    def prompt(group, *a):
+        # The Pi answers these at once: the controller's 2 s byte time-out would hide a firmware stall shorter
+        # than that, so 300 ms here.  (Not for the big messages, the stalls, or J's EARLY answer, held 0.3 s.)
+        sim.cmd("tmo 300")
+        try:
+            return group(*a)
+        finally:
+            sim.cmd("tmo 2000")
+
     try:
-        thrutest(sim)
+        prompt(thrutest, sim)
         reread(sim, d)
-        other_device(sim)
-        srq(sim)
+        prompt(other_device, sim)
+        prompt(srq, sim)
         big(sim)
         no_eoi_and_flow(sim, d)
         stall_recovery(sim, d)
         engine_guard(sim)
         d = offline(sim, d)
         d.stop()
-        scpi(sim)
-        address_change(sim)
+        prompt(scpi, sim)
+        prompt(address_change, sim)
         if os.path.isdir(LODESTONE_LINK):
             gridlink_auto_srq(sim)
         short_frames()
         port_gone_under_read()
+        clock_wrap()
     finally:
         try:
             d.stop()
@@ -1084,9 +1177,11 @@ def main(argv=None):
         st = sim.stats()
         say(f"final Pico counters: {st}")
         check("no events lost in the Pico", st["lost"] == "0")
-        sim.p.stdin.write("quit\n")
-        sim.p.stdin.flush()
-        sim.p.wait(5)
+        check("no bus contention: the bridge never drove a line against the bus (fights)", st["fights"] == "0",
+              st["fights"])
+        check("no late ATN engagement: online, the bridge always took part in a command byte (late)",
+              st["late"] == "0", st["late"])
+        sim.quit()
     n_ok = sum(ok for _, ok in results)
     say(f"\n{n_ok} of {len(results)} checks passed")
     for path in [os.path.join(WORK, "sim_results.txt")] + ([args.results] if args.results else []):
