@@ -184,9 +184,11 @@ env_init:
         cmp     di, ENVPARA * 16 - 1    ; the last byte is the second NUL's
         jb      .s
         mov     di, bx                  ; a string that does not fit whole
-        xor     al, al                  ;  is dropped, and so are the rest (two
-        stosb                           ;  NULs: the first string's leaves none
-        stosb                           ;  before it, and EXEC's copy wants both)
+        xor     al, al                  ;  is dropped, and so are the rest.  The
+        stosb                           ;  first string's leaves no NUL before
+        or      bx, bx                  ;  it, and EXEC's copy wants two: a
+        jnz     .d                      ;  second there alone (one starting on
+        stosb                           ;  the last byte has no room for it)
 .d:     pop     ds
         push    es
         mov     es, [mypsp]             ; give the old one back

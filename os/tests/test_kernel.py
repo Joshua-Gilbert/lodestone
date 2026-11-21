@@ -6432,7 +6432,7 @@ def t_cmdedge():
     open(gfx, 'wb').write(bytes([0xB8, 0x06, 0x00, 0xCD, 0x10, 0xC3]))     # (mode 6, CGA graphics)
     edge_a = os.path.join(OUT, 'EDGE_A.TXT')
     open(edge_a, 'wb').write(b'a\r\n')
-    img = image('cmdedge.img', os.path.join(GOS, 'src', 'LCMD.COM'), envcom('ENVBIG'), envcom('ENV23', 'NV=20', 'WLEN=23'),
+    img = image('cmdedge.img', os.path.join(GOS, 'src', 'LCMD.COM'), envcom('ENVBIG'), envcom('ENV23', 'NV=20', 'WLEN=23', 'Z1'),
                 envcom('ENV24', 'NV=20', 'WLEN=24', 'Z1'), envcom('ENVFST', 'NV=0', 'WLEN=1024', 'Z1', 'PAUSE'), 'GFX6.COM=' + gfx,
                 'A.TXT=' + edge_a, 'E\\', 'F\\', 'F\\ONE.TXT=' + edge_a,
                 bat('XB.BAT', '@echo off', 'echo before', 'type nosuch.x', 'exit', 'echo AFTER EXIT'),
