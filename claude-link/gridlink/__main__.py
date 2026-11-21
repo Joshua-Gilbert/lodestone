@@ -10,10 +10,10 @@ The GRiD picks chat (CLAUDE, gridlink's own agent on an API key) or Term
 import argparse, collections, logging, os, signal, sys, threading, time
 from . import glp
 from .config import Config, MODELS
-from .link import AR488Serial, Link, serve
+from .link import AR488Serial, serve
 from .pico import PicoBridge
 from .serline import SerialLink, ModemLink
-from .router import Router
+from .router import build_link
 
 GLYPHS = glp.GLYPH_TEXT
 
@@ -153,10 +153,6 @@ def main(argv=None):
     t.configure()
     if a.save_bridge:
         t.save(); log('bridge settings saved in its EEPROM')
-    R = Router(cfg, log=log)
-    link = Link(t, R.on_message, log=log)
-    R.attach(link)
-
     def make_agent(port):
         if not key: return None
         from .agent import Session
@@ -164,7 +160,7 @@ def main(argv=None):
         S.attach(port)
         threading.Thread(target=S.run, daemon=True, name='agent').start()
         return S
-    R.make_agent = make_agent
+    R, link = build_link(cfg, t, make_agent, log)
     if key:             # import it now: in the link thread it could outlast the GRiD's wait
         threading.Thread(target=lambda: __import__('anthropic'), daemon=True).start()
     stop = threading.Event()

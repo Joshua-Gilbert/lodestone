@@ -27,7 +27,7 @@ from fake_anthropic import FakeAnthropic
 from gridlink.link import Link
 from gridlink.agent import Session
 from gridlink.config import Config
-from gridlink.router import Router
+from gridlink.router import build_link
 from gridlink import glp
 
 
@@ -1108,19 +1108,40 @@ class EmuHarness:
             if web: cfg.web_command = web; cfg.web_dir = os.path.join(s.tmp, 'web')
             cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
             cfg.api_key = None; cfg.env_key = lambda: False; cfg.app = 'auto'
-            s.router = Router(cfg, log=s.log.append)
-            s.link = Link(s.transport, s.router.on_message, log=s.log.append, hold=0.0)
-            s.router.attach(s.link)
             s.session = None
         else:
-            s.router = None
+            # chat: the router too, as main() wires it, with the agent made now (the tests reach for
+            # s.session) and attached at the GRiD's HELLO
+            cfg.app = 'chat'
             s.session = Session(cfg, s.client, log=s.log.append)
-            s.link = Link(s.transport, s.session.on_message, log=s.log.append, hold=0.0)
-            s.session.attach(s.link)
             threading.Thread(target=s.session.run, daemon=True).start()
-        s.link.frame_cap = frame_cap
+        s.frame_cap = frame_cap
+        s._gridlink(s.session)
+
+    def _gridlink(s, session):
+        """gridlink's Router and Link on s.transport, as main() builds them (build_link); for chat, `session`
+        is the agent the Router gets at the HELLO."""
+        def make_agent(port):
+            if session is None: return None
+            session.attach(port)
+            return session
+        s.router, s.link = build_link(s.cfg, s.transport, make_agent, s.log.append, hold=0.0)
+        s.link.frame_cap = s.frame_cap
         s.link.clock = lambda: s.m.us / 1e6        # (ring_check's times: the GRiD's, simulated)
         if hasattr(s.transport, 'proto'): s.transport.proto.clock = s.link.clock
+
+    def restart_gridlink(s, session=None):
+        """gridlink restarted on the Pi (a crash, a deploy, systemctl restart) while CLAUDE runs: a fresh
+        Router and Link on the same bridge, which knows nothing of the session the GRiD is in.  For chat a fresh
+        agent too (`session`, or a new one on the same script).  The old Term session is stopped."""
+        if s.router is not None:
+            if s.router.term is not None: s.router.term.stop()
+            if s.router.web is not None: s.router.web.stop()
+        if session is None and s.session is not None:
+            session = Session(s.cfg, s.client, log=s.log.append)
+            threading.Thread(target=session.run, daemon=True).start()
+        s.session = session
+        s._gridlink(session)
 
     def paint_claude_stack(s):
         """CLAUDE.COM's stack below SP painted A5h, so claude_stack_used() can tell how deep it goes from here on

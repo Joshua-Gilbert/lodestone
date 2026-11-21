@@ -104,6 +104,7 @@ class Link:
 
     def __init__(s, transport, on_message, log=print, hold=HOLD):
         s.t, s.on_message, s.log, s.hold = transport, on_message, log, hold
+        s.base_hold = hold                    # (chat's: Term sets its own, the Router puts this back)
         s.source = None; s.keys_hold = s.KEYS_HOLD; s.last_q = False
         s.parser = glp.StreamParser(max_len=4096)
         s.lock = threading.Condition()
@@ -332,6 +333,16 @@ class Link:
                 # answer).  NAK again in the kind its NAK came in, so it sends that frame again; a NOP
                 # would pass for the HELLO's answer, and it would wait for one till it timed out.
                 s._answer_nak()
+            return
+        if t != glp.G_HELLO and not s.connected:
+            # A frame before any HELLO: gridlink started (a crash, a deploy, a restart) under a CLAUDE that is
+            # mid-session.  Not answered: CLAUDE takes a NOP as "nothing new", so answering would leave it
+            # waiting for as long as it ran.  Unanswered, its link wait fails after about 2 s, and it starts
+            # over with SDC and HELLO (PROTOCOL.md rule 3).  The message it was sending is lost.
+            s.stats['rx_early'] += 1
+            if s.stats['rx_early'] == 1:
+                s.log('link: a frame from the GRiD before its HELLO (gridlink started under a running CLAUDE): '
+                      'not answered, so the GRiD starts the link over')
             return
         if t == glp.G_HELLO:
             quiet = getattr(s.t, 'set_quiet', None)
