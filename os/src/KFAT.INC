@@ -221,11 +221,11 @@ resolve_si:
         call    drv_look
         mov     bx, si
         pop     si
-        jc      .dr                     ; (invalid, or not ready: 3, MS-DOS's)
+        jc      .dh                     ; (invalid, or not ready: 3, MS-DOS's)
         mov     al, [act]
         mov     [r_drv], al
         call    fat_load                ; (keeps BX: the drive's entry)
-        jc      .dr                     ; (another floppy's FAT stuck: 3 too,
+        jc      .dh                     ; (another floppy's FAT stuck: 3 too,
 .cw:    cmp     word [bx+D_CWD], -1     ;  KDISK.INC rule 4)
         jne     .k                      ; (FFFFh: the current directory
         call    cwd_find                ;  unknown: found now, by its name,
@@ -268,6 +268,8 @@ resolve_si:
         je      .rest
         stc                             ; a disk error
         ret
+.dh:    jmp     .dr                     ; (the drive's failures: a 2-byte jcc,
+                                        ;  not taken when it is there)
 .rest:  call    parse_comp              ; a directory not there: the rest
         jc      .bad                    ;  read on, as MS-DOS: a bad
         cmp     byte [si], '\'         ;  middle part 3, a bad or wild last
