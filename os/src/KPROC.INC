@@ -245,7 +245,8 @@ f_4B:   cmp     byte [bp+F_AX], 0
         shl     cx, 4
         sub     ax, cx
         sbb     dx, 0
-        jb      .bad
+        cmp     dx, 0Fh                 ; (unsigned: a negative size is FFFFh;
+        jae     .bad                    ;  1 MB and up would overflow the DIV)
         mov     [ex_left], ax
         mov     [ex_left+2], dx
         add     ax, 15
@@ -521,8 +522,7 @@ f_4B:   cmp     byte [bp+F_AX], 0
         call    mem_free
         push    cs
         pop     es
-        mov     ax, 8
-        jmp     .e1
+        jmp     short .big
 .e2s:   mov     ax, 11                  ; bad format
 .e2:    push    ax                      ; load failed: give everything back
         push    es
