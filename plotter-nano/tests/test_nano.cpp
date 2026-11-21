@@ -4,6 +4,9 @@
 //   cd plotter-nano && g++ -std=gnu++17 -Wall -I tests/stubs -I gpib_hpgl_tek4662
 //       tests/test_nano.cpp -o /tmp/test_nano && /tmp/test_nano
 //
+// With -DLISTEN_ONLY=true it builds the LISTEN_ONLY sketch and runs only
+// that variant's checks.
+//
 // What goes to the 4662 is read back from the bytes the sketch queues for it
 // (decoded as the 4662 would: GS, then a move and draws; US, then text), with
 // the GPIB lines idle, so the bus is served as on a quiet bus.
@@ -21,7 +24,8 @@ class __FlashStringHelper;
 #define HEX 16
 #define constrain(a, lo, hi) ((a) < (lo) ? (lo) : ((a) > (hi) ? (hi) : (a)))
 static unsigned long fakeMs = 0;
-unsigned long millis() { return fakeMs += 1; }
+static void (*atMillis)() = 0;          // a test's bus, moved on at each millis() (the pacing waits call it)
+unsigned long millis() { if (atMillis) atMillis(); return fakeMs += 1; }
 struct FakeSerial {
     void begin(long) {}
     int available() { return 0; }
@@ -78,7 +82,7 @@ static void tekByte(uint8_t b, Evs& out) {
     if (b == 0x1B) { endText(out); tk.before = tk.mode; tk.esc.clear(); tk.mode = 4; return; }
     if (b == TEK_GS) { endText(out); tk.mode = 1; tk.lastLo = tk.loySeen = false; return; }
     if (b == TEK_US) { tk.mode = 3; return; }
-    if (tk.mode == 3) { tk.text += (char)b; return; }
+    if (tk.mode == 3) { if (b != 0x1A) tk.text += (char)b; return; }   // (SUB is ignored in alpha, p. 4-22)
     if (tk.mode == 0) { out.push_back("?"); return; }
     if (b >= 0x20 && b < 0x40) { if (tk.loySeen) tk.hix = b; else tk.hiy = b; tk.lastLo = false; }
     else if (b >= 0x60) { if (tk.lastLo) tk.eb = tk.loy; tk.loy = b; tk.lastLo = tk.loySeen = true; }
@@ -102,14 +106,17 @@ static void busIdle() {                 // every line released (high), nothing d
 
 static void resetSketch() {
     busIdle();
+    atMillis = 0;
     tekTail = tekHead;
-    inCoords = false; cmdLen = 0; numLen = 0; haveX = false; inLabel = false;
-    penDown = false; penIsDown = false; needsMove = true; coordKnown = false; afterLabel = false;
-    penX = penY = 0; retraceAdu = 0;
+    ringTail = ringHead; events = 0;
     statusMode = true; queryPending = false;   // room enough, and no waiting
     limitCount = queuedCount + 1000000UL;
-    tk.mode = 0; tk.text.clear(); tk.ons = 0; tk.cmds.clear(); inAlpha = false;
-    alphaDefaults(); tekTail = tekHead; tk.cmds.clear(); natState = 0;
+    penFreeAt = 0;                      // (timed pacing: no wait carried over)
+    parserReset();                      // (the sketch's own: what a device clear resets)
+    penDown = false; penIsDown = false;
+    penX = penY = 0; retraceAdu = 0;
+    tk.mode = 0; tk.text.clear(); tk.ons = 0; tk.cmds.clear();
+    alphaDefaults(); tekTail = tekHead; tk.cmds.clear();
     pageMode = 2; copySwitch = -1; copyMode = true; tekMaxY = 3123;
 }
 
@@ -315,7 +322,289 @@ static void testNative() {
     expectCmds("an ESC in a label is not a command", "LBa\x1b" "AEb\x03", "");
 }
 
+// --- device clears: bytes through the ring and loop(), as from the bus ---
+static Evs busOut;
+static std::string busRaw;              // the bytes themselves
+static void pumpTek() {
+    while (tekTail != tekHead) { busRaw += (char)tekQ[tekTail]; tekByte(tekQ[tekTail], busOut); tekTail++; }
+}
+static void ringPut(const char* s) { for (; *s; s++) { ring[ringHead] = (uint8_t)*s; ringHead++; } }
+static void loopQuiet() {               // loop() until the ring and the events are empty
+    for (int i = 0; i < 2000 && (!ringEmpty() || events); i++) { loop(); pumpTek(); }
+    pumpTek(); endText(busOut);
+}
+static void setDio(uint8_t v) {         // the data lines, active low
+    PIND = (uint8_t)((PIND & ~D_DIO) | ((~v & 0x0F) << 2));
+    PINC = (uint8_t)((PINC & ~C_DIO) | ((~v >> 4) & 0x0F));
+}
+static void busCmd(uint8_t v) {         // one command byte (ATN), handshaken through gpibService
+    PINB &= ~B_ATN; setDio(v); PIND &= ~D_DAV; gpibService();
+    PIND |= D_DAV; gpibService();
+    PINB |= B_ATN; setDio(0); gpibService();
+}
+static void clearReset() { resetSketch(); busOut.clear(); busRaw.clear(); }
+
+// The bytes a clear sends the 4662 for a 4662 command cut part-way
+static std::string cutAtClear(const char* cut) {
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut(cut); loopQuiet();
+    busRaw.clear();
+    busCmd(GPIB_SDC); loopQuiet();
+    return busRaw;
+}
+static void checkCut(const char* name, const char* cut, const std::string& want) {
+    std::string got = cutAtClear(cut);
+    bool ok = got == want && natState == 0;
+    check(name, ok);
+    if (!ok) {
+        printf("     want");
+        for (unsigned char ch : want) printf(" %02X", ch);
+        printf("\n     got ");
+        for (unsigned char ch : got) printf(" %02X", ch);
+        printf("\n");
+    }
+}
+
+// A request answered only once it is one sent after replyAfter
+static unsigned long replyAfter = 0;
+static void answerNew() {
+    if (queryPending && querySentAt > replyAfter) {
+        atMillis = 0;                   // (takeReply calls millis())
+        txAtReply = queuedCount; takeReply(1, 2000);
+    }
+}
+
+// A clear during a pacing wait: gpibService runs inside feedChar, which goes
+// on with the byte it has; the parser is reset only in loop().
+static int clearStep = 0; static bool clearSeenMidCommand = false;
+static const char* afterClear = "";
+static void clearInWait() {
+    switch (++clearStep) {
+    case 40: PINB &= ~B_ATN; setDio(GPIB_SDC); PIND &= ~D_DAV; break;     // (the next gpibService takes it)
+    case 41: PIND |= D_DAV; break;
+    case 42:
+        clearSeenMidCommand = (events & EV_CLEAR) && (inCoords || inLabel); // marked, not yet reset
+        PINB |= B_ATN; setDio(0);
+        ringPut(afterClear);            // the controller's bytes after its clear
+        atMillis = 0;
+        break;
+    }
+}
+
+static void testClear() {
+    std::string home = pt('U', 0, 0);
+
+    // a label left open (its ETX never came), then a fresh plot
+    clearReset();
+    ringPut("IN;PU100,100;LBcut off"); loopQuiet();
+    check("clear: a label left open: not idle", !(statusByte() & 0x80) && inLabel);
+    busCmd(GPIB_MLA); busCmd(GPIB_SDC); loopQuiet();
+    check("clear: SDC: idle, out of the label", (statusByte() & 0x80) && !inLabel && cmdLen == 0);
+    busOut.clear();
+    ringPut("IN;PU200,200;PD300,300;"); loopQuiet();
+    {
+        Evs want = {home, U(200, 200), D(300, 300)};
+        bool ok = busOut == want;
+        check("clear: ... the next plot draws", ok);
+        if (!ok) printf("     want%s\n     got %s\n", show(want).c_str(), show(busOut).c_str());
+    }
+
+    // the bytes before a clear are dropped, those after it kept
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut("PD500,500,600,600;");
+    busCmd(GPIB_SDC);
+    check("clear: the bytes before it dropped at once (no NRFD hold, poll room)",
+          ringEmpty() && (statusByte() & 0x3F) == RING_HOLD / 4 && (events & EV_CLEAR));
+    ringPut("PU300,300;"); loopQuiet();
+    {
+        Evs want = {U(300, 300)};
+        bool ok = busOut == want;
+        check("clear: before it dropped, after it kept", ok);
+        if (!ok) printf("     want%s\n     got %s\n", show(want).c_str(), show(busOut).c_str());
+    }
+
+    // which clears count
+    clearReset();
+    busCmd(GPIB_SDC);
+    check("clear: SDC not addressed: ignored", !(events & EV_CLEAR));
+    clearReset();
+    busCmd(GPIB_DCL);
+    check("clear: DCL, addressed or not", events & EV_CLEAR);
+
+    // IFC is not a clear: the bytes and the label in hand stay (KGPIB pulses
+    // IFC after any failed bus operation)
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut("PU100,100;LBab"); loopQuiet();
+    ringPut("cd");
+    PINB &= ~B_IFC; gpibService(); gpibService(); PINB |= B_IFC;
+    check("clear: IFC is not one: ring and label kept",
+          !(events & EV_CLEAR) && ringCount() == 2 && inLabel && cmdLen == 4 && !isListener);   // ("LBab")
+    ringPut("\x03" "PU200,200;"); loopQuiet();
+    {
+        Evs want = {U(100, 100), L("abcd"), U(200, 200)};
+        bool ok = busOut == want;
+        check("clear: ... after IFC the label goes on", ok);
+        if (!ok) printf("     want%s\n     got %s\n", show(want).c_str(), show(busOut).c_str());
+    }
+
+    // a PD whose PU never came: the next plot's first point is a move
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut("PD100,100"); loopQuiet();
+    busCmd(GPIB_SDC); loopQuiet();
+    check("clear: the pen up after", !penDown && !inCoords);
+    busOut.clear();
+    ringPut("PA200,200;"); loopQuiet();
+    check("clear: ... the next point a move", busOut == Evs({U(200, 200)}));
+
+    // a 4662 command cut in its numbers is ended (SUB) by the clear itself,
+    // and the next one stands
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut("\x1b" "AJ3"); loopQuiet();
+    busCmd(GPIB_SDC); loopQuiet();
+    check("clear: a 4662 command cut in its numbers: SUB at the clear", cmds() == "AJ3" && natState == 0 && tk.mode != 4);
+    ringPut("\x1b" "AT5;"); loopQuiet();
+    check("clear: ... then the next", cmds() == "AJ3 AT5" && natState == 0);
+    // what the clear sends for each place a 4662 command can be cut (070-4164-00)
+    const std::string SUB = "\x1a", RESET = "\x1b" "AN";
+    checkCut("clear: cut after its ESC: GS (ESC GS is GS, Table 3-4)", "\x1b", "\x1d");
+    ringPut("PU100,100;"); loopQuiet();
+    check("clear: ... then HP-GL draws", busOut == Evs({U(100, 100)}));
+    checkCut("clear: cut before its code: SUB", "\x1b" "A", SUB);
+    checkCut("clear: cut before Option 31's second letter: SUB", "\x1b" "AB", SUB);
+    checkCut("clear: cut in its numbers: SUB", "\x1b" "AJ3", SUB);
+    checkCut("clear: cut before S's character: SUB", "\x1b" "AS", SUB);
+    checkCut("clear: cut before U's character: SUB, SUB, DEVICE RESET", "\x1b" "AU", SUB + SUB + RESET);
+    checkCut("clear: cut before R's character: SUB, DEVICE RESET", "\x1b" "AR", SUB + RESET);
+    check("clear: ... as the 4662 reads them", cmds() == "AR AN" && tk.mode != 4);
+    ringPut("PU100,100;"); loopQuiet();
+    check("clear: ... then HP-GL draws", busOut == Evs({U(100, 100)}));
+    checkCut("clear: U for another address: SUB only", "\x1b" "BU", SUB);
+
+    // after DEVICE RESET the 4662 is at its alpha defaults: HP-GL's label
+    // settings, kept, go again before the next label; after S, not
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut("SI0.5,1;DI0,1;LBx\x03\x1b" "AU"); loopQuiet();
+    busCmd(GPIB_SDC); loopQuiet();
+    ringPut("LBy\x03"); loopQuiet();
+    {
+        bool ok = cmds() == "AI119,257 AJ90 AU AN AI119,257 AJ90" && sizeKind == 1 &&
+                  busOut == Evs({L("x"), L("y")});
+        check("clear: after DEVICE RESET the label settings go again", ok);
+        if (!ok) printf("     got %s\n", cmds().c_str());
+    }
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut("SI0.5,1;DI0,1;LBx\x03\x1b" "AS"); loopQuiet();
+    busCmd(GPIB_SDC); loopQuiet();
+    ringPut("LBy\x03"); loopQuiet();
+    check("clear: ... after S they stand", cmds() == "AI119,257 AJ90 AS");
+
+    // DEVICE RESET clears the 4662's output buffer, so a reply to a request
+    // sent before it may never come: the request is given up and the next
+    // one goes behind the reset, not STATUS_TIMEOUT later
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut("\x1b" "AR"); loopQuiet();
+    queryPending = true; querySentAt = fakeMs - 10;
+    limitCount = queuedCount + 4;       // a request out, and room for SUB and the reset only
+    busCmd(GPIB_SDC); loopQuiet();
+    check("clear: DEVICE RESET gives up the request pending", !queryPending);
+    {
+        unsigned long t0 = fakeMs;
+        replyAfter = t0; atMillis = answerNew;
+        ringPut("PU100,100;"); loopQuiet();
+        atMillis = 0;
+        size_t r = busRaw.find(RESET), q = busRaw.find("\x1b" "AO1\x1a");
+        bool ok = statusMode && fakeMs - t0 < 10000 && r != std::string::npos && q != std::string::npos &&
+                  r < q && busOut == Evs({U(100, 100)});
+        check("clear: ... the next asked behind the reset and answered", ok);
+        if (!ok) printf("     %lu ms, status mode %d, got %s\n", fakeMs - t0, (int)statusMode, show(busOut).c_str());
+    }
+    // a clear with no DEVICE RESET leaves a pending request alone
+    clearReset();
+    busCmd(GPIB_MLA);
+    ringPut("\x1b" "AS"); loopQuiet();
+    queryPending = true; querySentAt = fakeMs;
+    busCmd(GPIB_SDC); loopQuiet();
+    check("clear: no DEVICE RESET: the request still pending", queryPending);
+
+    // a clear in a pacing wait inside feedChar (timed pacing: the waits serve the bus)
+    clearReset();
+    statusMode = false; lastProbeAt = fakeMs;
+    busCmd(GPIB_MLA);
+    ringPut("PD0,0,10000,7000,0,0,10000,7000;LBnot this\x03");
+    clearStep = 0; clearSeenMidCommand = false; afterClear = "PU100,100;"; atMillis = clearInWait;
+    loopQuiet();
+    check("clear: in a wait: marked there, not reset there", clearSeenMidCommand);
+    {
+        // the stroke whose wait it came in is finished; the rest dropped; the PU after it kept
+        Evs want = {home, D(0, 0), D(10000, 7000), D(0, 0), U(100, 100)};
+        bool ok = busOut == want;
+        check("clear: in a wait: the stroke in hand, then the bytes after", ok);
+        if (!ok) printf("     want%s\n     got %s\n", show(want).c_str(), show(busOut).c_str());
+    }
+    // ... in the last byte before it: loop() feeds nothing after the clear
+    // until the reset, so the bytes after it go to the parser once
+    clearReset();
+    statusMode = false; lastProbeAt = fakeMs;
+    busCmd(GPIB_MLA);
+    ringPut("PD0,0,10000,7000,00000,0;");   // (25 bytes: the ';' first of loop()'s 8, room for "PU1,1;" after it)
+    clearStep = 0; clearSeenMidCommand = false; afterClear = "PU1,1;PU100,100;"; atMillis = clearInWait;
+    loopQuiet();
+    {
+        Evs want = {home, D(0, 0), D(10000, 7000), D(0, 0), U(1, 1), U(100, 100)};
+        bool ok = clearSeenMidCommand && busOut == want;
+        check("clear: in the last byte's wait: the bytes after it once", ok);
+        if (!ok) printf("     want%s\n     got %s\n", show(want).c_str(), show(busOut).c_str());
+    }
+    // ... in a label's pacing: the rest of the label is not drawn
+    clearReset();
+    statusMode = false; lastProbeAt = fakeMs;
+    busCmd(GPIB_MLA);
+    {
+        const char* text = "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        std::string lb = std::string("LB") + text + "\x03";
+        ringPut(lb.c_str());
+        clearStep = 0; clearSeenMidCommand = false; afterClear = "PU100,100;"; atMillis = clearInWait;
+        loopQuiet();
+        bool ok = clearSeenMidCommand && busOut.size() == 2 && busOut[1] == U(100, 100) &&
+                  busOut[0].size() > 3 && busOut[0].compare(0, 2, "L(") == 0 &&
+                  busOut[0].size() - 3 < strlen(text) &&
+                  std::string(text).compare(0, busOut[0].size() - 3, busOut[0], 2, busOut[0].size() - 3) == 0;
+        check("clear: in a label: the label stops there, the bytes after it drawn", ok);
+        if (!ok) printf("     got %s\n", show(busOut).c_str());
+    }
+    clearReset();
+}
+
+// LISTEN_ONLY (built with -DLISTEN_ONLY=true): it listens to every SDC on
+// the bus, whatever device it is for, so only DCL clears.
+#if LISTEN_ONLY
+static void testListenOnly() {
+    clearReset();
+    isListener = true;
+    busCmd(GPIB_SDC);
+    check("listen only: SDC (anyone's) ignored", !(events & EV_CLEAR));
+    clearReset();
+    isListener = true;
+    busCmd(GPIB_DCL);
+    check("listen only: DCL clears", events & EV_CLEAR);
+    clearReset();
+}
+#endif
+
 int main() {
+#if LISTEN_ONLY
+    testListenOnly();
+    printf(failures ? "%d FAILED\n" : "all passed\n", failures);
+    return failures ? 1 : 0;
+#endif
     std::string home = pt('U', 0, 0);   // (the first draw goes back into graph mode with a move to the pen)
 
     // ';' is optional, a letter after a mnemonic's arguments starts the next one
@@ -366,6 +655,7 @@ int main() {
     testPage();
     testAlpha();
     testNative();
+    testClear();
 
     printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;
