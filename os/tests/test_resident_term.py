@@ -1912,7 +1912,8 @@ def t_floppy_hot():
     once the owner has run again, no other key typed (it waited for one before): the pop-up is put off, not lost.
     Not in the transfer's result phase either, where the console's first DOS call would wait at MT's gate with
     windows 2-3 kept for the cylinder cache.  r_front's answers checked at each return (gate_watch), the read's own
-    peek (r_int16.pf) among them."""
+    peek (r_int16.pf) among them, and another task's calls: MTKEY P behind polls INT 16h, so CODE-\\ pending
+    reaches r_hot.p in its calls too."""
     floppy_hot()
 
 def t_floppy_semi():
@@ -1955,7 +1956,9 @@ def floppy_hot(pre=None):
         g, pc.watch = gate_watch(h, ms, w)
         def cnt(name, st): return n.get((name, st), 0)
         h.k.key('cls'); h.k.key(ENTER)
-        h.k.key('mtlaunch /f mtkey.com r bk.txt;mtspin.com 900 sp.txt;lcmd.com /c copy claude.com x3.com')
+        # (and for t_floppy_hot MTKEY P behind, polling: CODE-\ taken in its calls too, r_front's "another task's")
+        h.k.key('mtlaunch /f mtkey.com r bk.txt;%smtspin.com 900 sp.txt;lcmd.com /c copy claude.com x3.com'
+                % ('' if pre else 'mtkey.com p bq.txt;'))
         h.k.key(ENTER, settle=False)
         def out():                              # (the copy's task out in a transfer, MTKEY in front)
             d, f = pc.rd(ms, Y['mt_down'], 1)[0], pc.rd(ms, Y['mt_front'], 1)[0]
@@ -1994,7 +1997,7 @@ def floppy_hot(pre=None):
               ok and bk == b'0078' and fdw() == 0 and not pc.crash, (ok, bk, fdw(), pc.crash))
         check('... r_front\'s answer at every return as MT\'s bytes were (%d the front task\'s, %d with an owner out, %d '
               'another task\'s); %d wrong' % (g['front'], g['out'], g['behind'], len(g['bad'])),
-              not g['bad'] and g['front'] >= 1 and g['out'] >= 1, g['bad'][:10])
+              not g['bad'] and g['front'] >= 1 and g['out'] >= 1 and (pre or g['behind'] >= 1), g['bad'][:10])
     finally:
         pcemu.FD_STRICT = strict
         if h: h.close()
