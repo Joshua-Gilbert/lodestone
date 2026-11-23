@@ -6416,7 +6416,7 @@ envlen  equ $ - env
 def t_cmdedge():
     """LCMD at its edges: EXIT in a batch file run by LCMD /C (LCMD ends, with the last ERRORLEVEL); PROMPT=text
     (one '=' skipped, as PATH=X); a redirection that finds the handle table full, nested in CALLs and at the
-    outermost level; an inherited environment over its 1 KB, at the byte where a string stops fitting and when the
+    outermost level (>, >>, <, a pipe, a batch file's line; no handle free or one); an inherited environment over its 1 KB, at the byte where a string stops fitting and when the
     first string does not fit; the line editor's keys that do nothing and Tab's beeps; each of FOR's syntax errors
     and SET's; no screen saver at a prompt in a graphics mode.  (COPY's name over 79 characters is t_copycat's.)"""
     def bat(name, *lines):
@@ -6434,7 +6434,8 @@ def t_cmdedge():
     open(edge_a, 'wb').write(b'a\r\n')
     img = image('cmdedge.img', os.path.join(GOS, 'src', 'LCMD.COM'), envcom('ENVBIG'), envcom('ENV23', 'NV=20', 'WLEN=23', 'Z1'),
                 envcom('ENV24', 'NV=20', 'WLEN=24', 'Z1'), envcom('ENVFST', 'NV=0', 'WLEN=1024', 'Z1', 'PAUSE'), 'GFX6.COM=' + gfx,
-                'A.TXT=' + edge_a, 'E\\', 'F\\', 'F\\ONE.TXT=' + edge_a,
+                'A.TXT=' + edge_a, 'B.TXT=' + edge_a, 'B2.TXT=' + edge_a, 'B3.TXT=' + edge_a, 'E\\', 'F\\', 'F\\ONE.TXT=' + edge_a,
+                bat('X.BAT', '@echo off', 'echo BAT1 > o.txt', 'echo BAT2'),
                 bat('XB.BAT', '@echo off', 'echo before', 'type nosuch.x', 'exit', 'echo AFTER EXIT'),
                 bat('XA.BAT', '@echo off', 'call xb', 'echo AFTER CALL'),
                 bat('XC.BAT', '@echo off', 'ver', 'exit', 'type nosuch.x'),
@@ -6516,24 +6517,71 @@ def t_cmdedge():
     check('... and the file opened for the redirect that failed is closed: the whole table as before', j1 == j0, (j0.hex(), j1.hex()))
     f = fatcheck.read_files(bytes(k.pc.drives[0].img))
     of = {n: v for n, v in f.items() if n.startswith('A:\\O')}
-    want = {'A:\\O%s.TXT' % ('X' * i): b'%s.\r\n' % (b'x' * (i + 1)) for i in range(6)}
-    want.update({'A:\\OXXXXXX.TXT': b'xxxxxxxx.\r\nxxxxxxx.\r\n', 'A:\\OXXXXXXX.TXT': b''})
-    check('... each level\'s ECHO in the file its CALL\'s >> named, but the 8th\'s (its DUP failed): in the 7th\'s, '
-          'its own file made and left empty', of == want, sorted(of.items()))
+    want = {'A:\\O%s.TXT' % ('X' * i): b'%s.\r\n' % (b'x' * (i + 1)) for i in range(7)}
+    m7 = of.pop('A:\\OXXXXXX.TXT', b'')
+    check('... each level\'s ECHO in the file its CALL\'s >> named; the 8th CALL (the DUP for its < failed) not run: '
+          '"Too many open files" in the 7th\'s file (its handle 1), then its ECHO; the 8th\'s >> file never made',
+          of == {n: v for n, v in want.items() if n != 'A:\\OXXXXXX.TXT'} and m7 == b'D line 3: Too many open files\r\nxxxxxxx.\r\n',
+          (sorted(of.items()), m7))
     sh.run('del o*.txt')
     js, jo = k.pc.u16(psp, 0x36), k.pc.u16(psp, 0x34)
-    k.pc.wr(js, jo + 5, bytes([j0[0]]) * 14)           # handles 5-18 taken (as CON): one left, the file takes it
-    o = sh.run('echo OUTER > o.txt')                   #  and the DUP of handle 1 fails
-    j2 = k.pc.rd(js, jo, 20)
-    k.pc.wr(js, jo + 5, j0[5:19])
-    t = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\O.TXT')
-    check('a DUP failing at the outermost level (one handle free): the ECHO on the screen, O.TXT made and empty, '
-          'handles 0-18 as they were, the file closed again',
-          'OUTER' in o.split('\n') and t == b'' and j2 == j0[:5] + bytes([j0[0]]) * 14 + j0[19:], (j0.hex(), j2.hex(), o, t))
-    k.pc.wr(js, jo, j0)
-    o = sh.run('ver')
-    check('... the shell runs', 'Lodestone version' in o, o)
-    sh.run('del o.txt')
+    def full(line, free):
+        """LINE run with handles 5-19 taken (as CON) but FREE of them -> (the screen, the table after as it was given,
+        the table)"""
+        t = j0[:5] + bytes([j0[0]]) * (15 - free) + b'\xff' * free
+        k.pc.wr(js, jo, t)
+        o = sh.run(line)
+        j = k.pc.rd(js, jo, 20)
+        k.pc.wr(js, jo, j0)
+        return o.split('\n'), j == t, j.hex()
+    files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    pipes = lambda: [n for n in files() if 'PIPE' in n]
+    tmany = 'Too many open files'
+    check('(handles 5-19 free at the prompt)', j0[5:] == b'\xff' * 15, j0.hex())
+    sh.run('copy a.txt pipea1.$$$')                    # (this level's pipe files' names: a command
+    sh.run('copy a.txt pipea2.$$$')                    #  not in a pipe deletes neither)
+    sh.run('ver')                                      # (ERRORLEVEL 0)
+    o, same, j = full('echo OUTER > o.txt || echo ORRAN', 1)
+    o2 = sh.run('if errorlevel 1 echo EL1')
+    t = files().get('A:\\O.TXT')
+    check('> with one handle free (the file takes it, the DUP saving handle 1 fails): "Too many open files" on the '
+          'screen, the ECHO not run (|| runs: it failed), ERRORLEVEL left 0, O.TXT made and empty, the table as before',
+          tmany in o and 'OUTER' not in o and 'ORRAN' in o and 'EL1' not in o2 and t == b'' and same, (o, o2, t, j))
+    check('... the shell runs; PIPEA1.$$$ and PIPEA2.$$$ (made before) still there: no pipe, none deleted',
+          'Lodestone version' in sh.run('ver') and len(pipes()) == 2, pipes())
+    sh.run('del pipea?.$$$')
+    o, same, j = full('echo ZERO > o0.txt', 0)
+    o2, same2, j2 = full('echo NEW > b3.txt', 0)
+    f = files()
+    check('> with no handle free (the create fails): "File creation error" (as MS-DOS 3.30), not run, no file made, '
+          'an existing one left whole, the table as before', 'File creation error' in o and 'ZERO' not in o
+          and 'A:\\O0.TXT' not in f and 'File creation error' in o2 and f.get('A:\\B3.TXT') == b'a\r\n' and same and same2,
+          (o, o2, f.get('A:\\B3.TXT'), j, j2))
+    o, same, j = full('echo NEW > b.txt', 1)
+    o2, same2, j2 = full('echo NEW >> b2.txt', 1)
+    f = files()
+    check('... the DUP failing for > to an existing file: the file emptied (made before the DUP), not run; for >>: '
+          'the file whole; the table as before', tmany in o and tmany in o2 and 'NEW' not in o + o2
+          and f.get('A:\\B.TXT') == b'' and f.get('A:\\B2.TXT') == b'a\r\n' and same and same2, (o, o2, f.get('A:\\B.TXT'), f.get('A:\\B2.TXT'), j, j2))
+    o, same, j = full('echo IN < a.txt', 1)
+    check('< with one handle free (the DUP saving handle 0 fails): "Too many open files", not run, the table as before',
+          tmany in o and 'IN' not in o and same, (o, j))
+    o, same, j = full('echo IO < a.txt > o.txt', 2)
+    check('< then > with two free (the < done, the DUP for > fails): "Too many open files", not run, handle 0 put back, '
+          'the table as before', tmany in o and 'IO' not in o and same, (o, j))
+    o, same, j = full('echo P | echo Q', 1)
+    check('a pipe with one handle free (its file made, the DUP fails): "Too many open files", neither command run, '
+          'the pipe\'s file deleted, the table as before', tmany in o and 'Q' not in o and not pipes() and same, (o, pipes(), j))
+    o, same, j = full('echo P | echo Q | echo R', 2)
+    check('... a pipe of three with two free (the second\'s DUP for its > fails): "Too many open files", the second and '
+          'third not run, the pipe\'s files deleted, the table as before', tmany in o and 'Q' not in o and 'R' not in o
+          and not pipes() and same, (o, pipes(), j))
+    o, same, j = full('x', 1)
+    check('in a batch file (its line read in the one free handle, closed again): "Too many open files" (with the '
+          'batch\'s name and line), that line not run, the batch goes on, the table as before',
+          'X line 2: ' + tmany in o and 'BAT1' not in o and 'BAT2' in o and same, (o, j))
+    check('... the shell runs', 'Lodestone version' in sh.run('ver'))
+    sh.run('del o*.txt')
     m0 = mcbs(k)
     mine = [(b[0] + 1, b[3]) for b in m0 if b[2] == psp]
     check('the shell\'s blocks: its own and its 1 KB environment, no more (the one it was given, given back)',

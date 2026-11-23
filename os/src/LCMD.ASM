@@ -565,8 +565,7 @@ do_pipe:
         call    pipe_name
 .no:    inc     byte [pipe_n]           ; (counted first: a later one's
         call    parse_redir             ;  redirection failing, the files
-        jc      .x                      ;  the one before made go too)
-        call    redir_do
+        call    redir_do                ;  the one before made go too)
         jc      .x
         mov     si, cmdl
         call    run_cmd
@@ -576,10 +575,12 @@ do_pipe:
         call    redir_undo
         cmp     word [pipe_rest], 0
         jne     .seg
-.x:     call    redir_undo
+.x:     call    redir_undo              ; (CX 0)
         cmp     byte [pipe_n], 1        ; a pipe leaves its files (one
-        jbe     .r                      ;  command: none, and no INT 24h)
-        mov     al, '1'                 ; (the names no longer needed: made
+        ja      .d                      ;  command: none, and no INT 24h;
+        cmp     [pipe_rest], cx         ;  a pipe's first failing: the file
+        je      .r                      ;  its redirection made)
+.d:     mov     al, '1'                 ; (the names no longer needed: made
         call    .del                    ;  again there)
         mov     al, '2'
         call    .del
@@ -717,7 +718,7 @@ redir_do:
         jnc     .io
         jmp     err_notfound
 .io:    mov     bx, ax
-        mov     cx, 0
+        xor     cx, cx
         call    swap_handle
         mov     [save_in], ax
 .o:     cmp     byte [out_name], 0
@@ -729,9 +730,7 @@ redir_do:
         int     21h
         jc      .cr
         mov     bx, ax
-        push    bx
-        call    seek_end
-        pop     bx
+        call    seek_end                ; (BX kept)
         jmp     .oo
 .cr:    mov     dx, out_name
         xor     cx, cx
@@ -746,9 +745,10 @@ redir_do:
 .x:     clc
         ret
 
-; make handle CX refer to file handle BX (which is closed); AX = a copy
-; of what CX was.  No handle left for the copy: CX is left as it was, the
-; file is closed all the same, and AX = FFFFh
+; redir_do's: make handle CX refer to file handle BX (which is closed);
+; AX = a copy of what CX was.  No handle left for the copy: CX is left as
+; it was, the file is closed all the same, and "Too many open files" (CF)
+; goes back to redir_do's caller: the command is not run
 swap_handle:
         push    bx
         mov     bx, cx
@@ -759,12 +759,13 @@ swap_handle:
         push    ax
         mov     ah, 46h
         int     21h
-.c:     call    fclose
+        call    fclose
         pop     ax
         ret
-.f:     sbb     ax, ax                  ; no copy: FFFFh, "none saved" (not the
-        push    ax                      ;  error code, a handle redir_undo
-        jmp     .c                      ;  would force and close)
+.f:     call    fclose
+        pop     ax                      ; (redir_do's return)
+        mov     si, e_toomany
+        jmp     err
 
         times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so the hot labels after even)
 redir_undo:
