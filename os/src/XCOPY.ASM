@@ -370,6 +370,13 @@ target: cmp     byte [dstarg], 0        ; none: the current directory
 .g:     mov     si, dstarg
         call    canon
         jc      .x
+        mov     si, cpath               ; a second dot in any part (CANON.INC's
+        mov     dx, s_nopath            ;  '"', never in a path the kernel
+.q:     lodsb                           ;  takes): no name, refused now (a
+        cmp     al, '"'                 ;  name made from wildcards would
+        je      .bad                    ;  lose it, a directory would be
+        or      al, al                  ;  asked for and not made)
+        jnz     .q
         mov     si, dstarg              ; "B:\", "B:", "SUB\": a directory
         call    strend
         mov     al, [di-1]
@@ -414,6 +421,8 @@ target: cmp     byte [dstarg], 0        ; none: the current directory
         mov     [ddl], ax
         clc
 .x:     ret
+.bad:   stc
+        ret
 
 ; "Does B:\X specify a file name / or directory name on the target /
 ; (F = file, D = directory)?" -> CF: a file; NC: a directory
@@ -1110,7 +1119,8 @@ wfile:  mov     [rec], di
         add     si, Q_DST
         jmp     say
 
-; a file bigger than memory: its source to [ohandle] through the buffer.
+; a file bigger than memory: its source to [ohandle] through the buffer,
+; the size the search found and no more (if it has grown since).
 ; CF: AL = 0 a write failed (or came up short), 1 a read
 stream: mov     di, [rec]
         mov     dx, di
@@ -1118,17 +1128,29 @@ stream: mov     di, [rec]
         int     21h
         jc      .of
         mov     [ihandle], ax
+        mov     si, [di+Q_SIZE]         ; DI:SI = bytes left of the size
+        mov     di, [di+Q_SIZE+2]       ;  found (as held: no more)
 .l:     mov     bx, [ihandle]
         mov     cx, CHUNK
-        push    ds
+        or      di, di
+        jnz     .rd
+        cmp     si, cx
+        jae     .rd
+        mov     cx, si
+        jcxz    .end
+.rd:    push    ds
         mov     ds, [bufseg]
         xor     dx, dx
         mov     ah, 3Fh
         int     21h
         pop     ds
         jc      .rf
-        or      ax, ax
-        jz      .end
+        or      ax, ax                  ; (shrunk since it was found: copied
+        jz      .end                    ;  to its end here, so short, and /V
+                                        ;  fails it; one held in memory is
+                                        ;  "Cannot read" instead)
+        sub     si, ax
+        sbb     di, 0
         mov     cx, ax
         mov     bx, [ohandle]
         push    ds

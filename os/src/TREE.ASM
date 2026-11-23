@@ -22,8 +22,10 @@
 ; the root has none (without /F).  A directory whose path would pass 63
 ; characters after "D:\" is said ("Path too long - ") and left out.
 ;
+; A directory that can't be read is said ("Read error - ") and left.
+;
 ; Exit code: 0 listed, 1 couldn't (a bad drive or switch), or not all (a
-; path too long).
+; path too long, a directory that couldn't be read).
 cpu 286
 org 100h
 
@@ -57,6 +59,8 @@ start:  mov     sp, stack_top
         jne     .ok                     ;  listing)
         cmp     word [ndirs], 0
         jne     .ok
+        cmp     byte [err], 0           ; (none found, the root unread: not
+        jne     .ok                     ;  known; a path too long has one)
         mov     dx, s_none
         call    print
 .ok:    mov     al, [err]
@@ -163,6 +167,7 @@ walk:   call    set_dta
         call    print
         mov     cx, 16h
         call    names
+        jc      .x                      ; (unreadable: said, left)
         mov     dx, s_crlf
         call    print
         cmp     byte [fls], 0
@@ -171,6 +176,7 @@ walk:   call    set_dta
         call    print
         xor     cx, cx
         call    names
+        jc      .x
         mov     dx, s_crlf
         call    print
 .subs:  mov     si, s_all               ; each directory in it (no deeper
@@ -179,7 +185,7 @@ walk:   call    set_dta
         mov     cx, 16h
         mov     ah, 4Eh
         int     21h
-.d:     jc      .x
+.d:     jc      .de
         mov     bx, [dta]
         test    byte [bx+21], 10h
         jz      .dn
@@ -206,6 +212,10 @@ walk:   call    set_dta
 .dn:    mov     ah, 4Fh
         int     21h
         jmp     .d
+.de:    cmp     ax, 18                  ; no more, or the directory couldn't
+        jne     rderr                   ;  be read: said, left (each one TREE
+                                        ;  searches it found: 2 or 3 is no
+                                        ;  "not there" but a failed search)
 .x:     ret
 .long:  mov     dx, s_long2             ; "Path too long - A:\SUB\NAME"
         call    print
@@ -239,7 +249,7 @@ names:  push    cx
         int     21h
         pop     cx
         mov     byte [any], 0
-.l:     jc      .e
+.l:     jc      .ne
         mov     bx, [dta]
         mov     al, [bx+21]
         test    al, 08h
@@ -270,13 +280,36 @@ names:  push    cx
         int     21h
         pop     cx
         jmp     .l
+.ne:    cmp     ax, 18                  ; (couldn't be read: said, on its own
+        je      .e                      ;  line; CF)
+        mov     dx, s_crlf
+        call    print
+        call    rderr
+        stc
+        ret
 .e:     cmp     byte [any], 0
         jne     .x
         mov     dx, s_nonew
         call    print
 .x:     mov     bx, [dirlen]
         mov     byte [dir+bx], 0
+        clc
         ret
+
+; the directory at dir couldn't be read: "Read error - A:\SUB" (its first
+; [dirlen] characters, the root's "\" kept)
+rderr:  mov     byte [err], 1
+        mov     dx, s_rerr
+        call    print
+        mov     bx, [dirlen]
+        cmp     bx, 3
+        je      .r
+        dec     bx
+.r:     mov     byte [dir+bx], 0
+        mov     si, dir
+        call    puts
+        mov     dx, s_crlf
+        jmp     print
 
 ; DOS's "NAME.EXT" at SI as "NAME    .EXT" (no extension: the name alone)
 p83:    xor     cx, cx
@@ -356,6 +389,7 @@ s_files db 13, 10, 'Files:            $'
 s_nonew db 'None$'
 s_none  db 13, 10, 'No sub-directories exist', 13, 10, '$'
 s_long2 db 'Path too long - $'
+s_rerr  db 'Read error - $'
 s_badsw db 'Invalid parameter', 13, 10, '$'
 s_crlf2 db 13, 10
 s_crlf  db 13, 10, '$'

@@ -6,11 +6,13 @@ a deep tree; XCOPY from A: to B: and on one disk, a directory with /S and
 /E, a name with wildcards, the F/D question answered from a file, /A /M
 /D /P /V /W, a file onto itself, a cyclic copy, a full disk (the old
 destination kept, nothing half-written left), a file bigger than memory,
-and the exit codes.  Paths as the kernel reads them (8.3 parts, "SUB.", ".."
-from the root), a 63-character current directory, a path too long (said,
-the rest done), a tree 32 deep, ATTRIB leaving hidden and system files
-unless told, XCOPY *.* *.BAK into the directory it reads, /P answered
-line by line from a file, Ctrl-C at /P, and XCOPY in a terminal window.
+a file changed since XCOPY found it (copied as found), and the exit
+codes.  Paths as the kernel reads them (8.3 parts, "SUB.", ".." from the
+root, a second dot no name), a 63-character current directory, a path
+too long (said, the rest done), a tree 32 deep, ATTRIB leaving hidden
+and system files unless told, XCOPY *.* *.BAK into the directory it
+reads, /P answered line by line from a file, Ctrl-C at /P, and XCOPY in
+a terminal window.
 
     python3 tests/test_filetools.py [name ...]
 """
@@ -55,10 +57,21 @@ def boot(a=None, b=None, **kw):
 
 def out(k): return ''.join(k.pc.tty).replace('\r', '')
 
-def run(k, line, keys=(), sim=60):
-    """line at the prompt (keys typed as it asks) -> all it printed, and a line E0, E1, ... with its exit code"""
+def answer_f(k, sim):
+    """each "Abort, Retry, Fail?" answered F, till the prompt is back -> how many were asked"""
+    n = 0
+    while n < 8:
+        k.pc.run_until(lambda: out(k).count('Fail?') > n or out(k).rstrip().endswith('>') or k.pc.crash, sim)
+        if out(k).count('Fail?') <= n: break
+        n += 1; k.pc.keys.append(ord('f'))
+    return n
+
+def run(k, line, keys=(), sim=60, fails=False):
+    """line at the prompt (keys typed as it asks) -> all it printed, and a line E0, E1, ... with its exit code.
+    fails: each critical error answered F"""
     k.pc.tty.clear()
     k.key(line); k.key(ktest.ENTER, settle=False)
+    if fails: answer_f(k, sim)
     for x in keys:
         k.settle(sim); k.key(x, settle=False)
     k.settle(sim)
@@ -69,6 +82,11 @@ def run(k, line, keys=(), sim=60):
         k.key('if errorlevel %d echo L%d' % (n, n)); k.key(ktest.ENTER)
         lv += said(out(k), 'L%d' % n)
     return o + '\nE%d\n' % lv
+
+def body(o):
+    """the lines a command printed (o from run): its echo, the prompt after it, blank lines and the exit code left out"""
+    ls = [l.rstrip() for l in o.split('\n')][1:]
+    return [l for l in ls if l and not l.endswith('>') and not (len(l) == 2 and l[0] == 'E' and l[1].isdigit())]
 
 def files(img, drive='A'):
     return fatcheck.read_files(bytes(img), drive)
@@ -167,6 +185,76 @@ def t_tree():
     for line, want in (('tree q:', 'Invalid drive'), ('tree /x', 'Invalid parameter'), ('tree a: b:', 'Invalid parameter')):
         o = run(k, line)
         check('%s: "%s", exit code 1' % (line.upper(), want), want in o and said(o, 'E1'), o)
+
+def kernel24(k, line, **kw):
+    """run with the kernel's own INT 24h in the vector (a critical error failed, nobody asked: as from the
+    Executive), LCMD's put back after"""
+    old = k.pc.rd(0, 0x24 * 4, 4)
+    k.pc.wr(0, 0x24 * 4, struct.pack('<HH', k.Y['int24'], 0x60))
+    try: return run(k, line, **kw)
+    finally: k.pc.wr(0, 0x24 * 4, old)
+
+def t_rerr():
+    # MANY's directory two sectors (20 files and INNER), the second unreadable; ZED after it in the root
+    a = adisk(['MANY\\'] + [('MANY\\M%02d.TXT' % i, b'm') for i in range(20)] + ['MANY\\INNER\\', 'ZED\\', ('ZED\\Z.TXT', b'z')])
+    k = boot(a)
+    v = F.Volume(bytes(k.pc.drives[0].img), 0)
+    c = v.chain(next(cl for n, at, cl, s in v.entries(0) if n == 'MANY'))[0]
+    k.pc.drives[0].bad = {v.data + (c[1] - 2) * v.spc}
+    for how, go in (('Fail at the prompt', lambda l: run(k, l, fails=True)), ('the kernel\'s INT 24h, nobody asked',
+                                                                               lambda l: kernel24(k, l))):
+        o = go('attrib /s')
+        check('ATTRIB /S, A:\\MANY\'s second sector unreadable (%s): its first files, "Read error - A:\\MANY", the '
+              'rest of the tree (A:\\ZED\\Z.TXT); exit code 1' % how, 'A:\\MANY\\M13.TXT' in o and 'M14' not in o
+              and said(o, 'Read error - A:\\MANY') and 'A       A:\\ZED\\Z.TXT' in o and said(o, 'E1')
+              and ('Fail?' in o) == how.startswith('Fail'), o[-800:])
+        o = go('tree')
+        check('TREE, the same (%s): "Path: \\MANY", "Read error - A:\\MANY", then \\ZED; exit code 1' % how,
+              'Path: \\MANY' in o and said(o, 'Read error - A:\\MANY') and 'INNER' not in o and 'Path: \\ZED' in o
+              and o.index('Read error') < o.index('Path: \\ZED') and said(o, 'E1'), o[-800:])
+    o = run(k, 'tree /f', fails=True)
+    check('TREE /F, the same: "Read error - A:\\MANY" on a line of its own after "Sub-directories:  ", the rest listed',
+          '\nRead error - A:\\MANY\n' in o and 'Files:            Z       .TXT' in o and said(o, 'E1'), o[-800:])
+    o = run(k, 'attrib many\\m*.txt', fails=True)
+    check('ATTRIB MANY\\M*.TXT, the same: its first files, "Read error - A:\\MANY", exit code 1',
+          'A:\\MANY\\M00.TXT' in o and said(o, 'Read error - A:\\MANY') and said(o, 'E1'), o[-800:])
+    o = kernel24(k, 'attrib many\\z*.txt')
+    check('ATTRIB MANY\\Z*.TXT (nothing before the unreadable sector): "Read error - A:\\MANY" alone, no "File not '
+          'found" (not known), exit code 1', body(o) == ['Read error - A:\\MANY'] and said(o, 'E1'), o[-800:])
+    # B:'s root two sectors (20 files, no directories), the second unreadable
+    k = boot(b=mk('brerr.img', [('R%02d.TXT' % i, b'r') for i in range(20)]))
+    v = F.Volume(bytes(k.pc.drives[1].img), 0)
+    k.pc.drives[1].bad = {v.root + 1}
+    o = kernel24(k, 'attrib b:z*.*')
+    check('ATTRIB B:Z*.*, B:\'s root\'s second sector unreadable: "Read error - B:\\" alone, exit code 1',
+          body(o) == ['Read error - B:\\'] and said(o, 'E1'), o[-800:])
+    o = kernel24(k, 'tree b:')
+    check('TREE B:, the same: "Read error - B:\\", no "No sub-directories exist" (not known), exit code 1',
+          said(o, 'Read error - B:\\') and 'No sub-directories' not in o and said(o, 'E1'), o[-800:])
+    # a directory the walk found whose search fails with 3 (a name the kernel's parser refuses, a disk swapped part
+    # way): no "not there", a read error, the walk going on
+    k = boot()
+    fail_search(k, b'A:\\SUB\\DEEP\\', 3)
+    o = run(k, 'tree')
+    check('TREE, A:\\SUB\\DEEP\'s search answering 3: "Read error - A:\\SUB\\DEEP", the rest walked (\\EMPTY), exit code 1',
+          said(o, 'Read error - A:\\SUB\\DEEP') and 'Path: \\SUB\\HOLLOW' in o and 'Path: \\EMPTY' in o and said(o, 'E1'), o[-800:])
+    o = run(k, 'attrib /s')
+    check('ATTRIB /S, the same: "Read error - A:\\SUB\\DEEP", the rest listed (A:\\SUB\\X.TXT), exit code 1',
+          said(o, 'Read error - A:\\SUB\\DEEP') and 'A       A:\\SUB\\X.TXT' in o and said(o, 'E1'), o[-800:])
+
+def fail_search(k, prefix, err):
+    """each FIND FIRST of a path starting with prefix answers CF, AX = err"""
+    ret = {}
+    def h(pc):
+        a = k.addr & 0xFFFFF
+        if k.addr == k.i21 and pc.r('cs') == 0x60 and pc.r('ax') >> 8 == 0x4E \
+                and bytes(pc.asciiz(pc.r('ds'), pc.r('dx'))).startswith(prefix):
+            ss, sp = pc.r('ss'), pc.r('sp')
+            ret[(pc.u16(ss, sp + 2) * 16 + pc.u16(ss, sp)) & 0xFFFFF] = 1
+        elif a in ret:
+            del ret[a]
+            pc.w('ax', err); pc.cf(1)
+    k.hooks.append(h)
 
 def t_xcopy():
     k = boot()
@@ -292,6 +380,41 @@ def t_full():
     check('a file bigger than memory (700 KB, 256 KB machine): copied through memory a piece at a time, verified',
           files(k.pc.drives[0].img).get('A:\\HUGE.BIN') == huge and 'Verify' not in o and said(o, 'E0'), o)
 
+def found_size(k, name, delta):
+    """each FIND FIRST / NEXT that finds name answers with its size + delta, as if the file had changed since (another
+    task writing it under MULTITASK)"""
+    ret = {}
+    def h(pc):
+        a = k.addr & 0xFFFFF
+        if k.addr == k.i21 and pc.r('cs') == 0x60 and pc.r('ax') >> 8 in (0x4E, 0x4F):
+            ss, sp = pc.r('ss'), pc.r('sp')
+            ret[(pc.u16(ss, sp + 2) * 16 + pc.u16(ss, sp)) & 0xFFFFF] = 1
+        elif a in ret:
+            del ret[a]
+            off, seg = k.u16('dta'), k.u16('dta', 2)
+            if not pc.r('flags') & 1 and bytes(pc.rd(seg, off + 30, len(name) + 1)) == name + b'\0':
+                pc.wr(seg, off + 26, struct.pack('<I', struct.unpack('<I', bytes(pc.rd(seg, off + 26, 4)))[0] + delta))
+    k.hooks.append(h)
+
+def t_grown():
+    huge = bytes((i * 31 + i // 1000) & 0xFF for i in range(700000))
+    k = boot(adisk(), mk('hg.img', [('HUGE.BIN', huge)]), mem_kb=256)
+    found_size(k, b'HUGE.BIN', -3000)
+    o = run(k, 'xcopy b:\\huge.bin a:\\ /v', sim=200)
+    check('a file bigger than memory grown since XCOPY found it: copied as found (its first 697000 bytes), verified',
+          files(k.pc.drives[0].img).get('A:\\HUGE.BIN') == huge[:-3000] and 'Verify' not in o and said(o, 'E0'),
+          (o[-600:], len(files(k.pc.drives[0].img).get('A:\\HUGE.BIN', b''))))
+    k = boot(adisk(), mk('hs.img', [('HUGE.BIN', huge)]), mem_kb=256)
+    found_size(k, b'HUGE.BIN', 3000)
+    o = run(k, 'xcopy b:\\huge.bin a:\\', sim=200)
+    check('... shrunk since: copied to its end (no endless read), as before',
+          files(k.pc.drives[0].img).get('A:\\HUGE.BIN') == huge and said(o, 'E0'), o[-600:])
+    k = boot()
+    found_size(k, b'ONE.TXT', -100)
+    o = run(k, 'xcopy one.txt b: /v')
+    check('a file held in memory grown since: copied as found (its first 500 bytes), verified, as before',
+          files(k.pc.drives[1].img, 'B').get('B:\\ONE.TXT') == DATA[0][:-100] and 'Verify' not in o and said(o, 'E0'), o)
+
 LV = ['LEVEL%03d' % i for i in range(1, 8)]
 LVP = '\\'.join(LV)                                      # 62 characters
 LV6 = '\\'.join(LV[:6])                                  # 53
@@ -369,6 +492,51 @@ def t_spell():
           and files(k.pc.drives[1].img, 'B').get('B:\\L\\ONE.TXT') == DATA[0] and said(o, 'E0')
           and 'A       A:\\ONE.TXT' in o2 and said(o2, 'E0'), (o, o2))
 
+def t_dots():
+    da = lambda: adisk([('A.B', b'ab'), ('A', b'a'), ('F.ANS', b'F')])
+    db = lambda: mk('bdots.img', [('A.B', b'old'), ('ONE.TXT', b'old one')])
+    k = boot(da(), db())
+    for line, want, lv in (('attrib .', 'File not found - .', 1), ('attrib a.', 'A       A:\\A', 0), ('attrib a', 'A       A:\\A', 0),
+                           ('attrib a*.b?', 'A       A:\\A.B', 0), ('attrib sub\\..\\a.b', 'A       A:\\A.B', 0)):
+        o = run(k, line)
+        check('%s, as before: "%s" alone, exit code %d' % (line.upper(), want, lv), body(o) == [want] and said(o, 'E%d' % lv), o)
+    o = run(k, 'attrib *.*')
+    check('ATTRIB *.*, as before: A and A.B among the rest', 'A       A:\\A\n' in o and 'A       A:\\A.B' in o
+          and 'A       A:\\ONE.TXT' in o and said(o, 'E0'), o)
+    run(k, 'cd sub')
+    o = run(k, 'xcopy ..\\a. b:\\n\\')
+    o2 = run(k, 'xcopy . b:\\s\\')
+    got = files(k.pc.drives[1].img, 'B')
+    check('XCOPY ..\\A. and XCOPY . (from SUB), as before: A, and SUB\'s files', got.get('B:\\N\\A') == b'a'
+          and got.get('B:\\S\\X.TXT') == DATA[2] and said(o, 'E0') and said(o2, 'E0'), (o, o2, sorted(got)))
+    o = run(k, 'tree a.b.c')
+    check('TREE A.B.C: no path taken (a drive only), "Invalid parameter", as before', 'Invalid parameter' in o and said(o, 'E1'), o)
+    k = boot(da(), db())
+    for line, want, lv in (('attrib +r a.b.c', 'File not found - A.B.C', 1), ('attrib +r a..b', 'File not found - A..B', 1),
+                           ('attrib +r ...', 'File not found - ...', 1), ('attrib +r sub..\\x.txt', 'File not found - SUB..\\X.TXT', 1),
+                           ('xcopy a.b.c b:', 'File not found - A.B.C', 1), ('xcopy a..b b:\\', 'File not found - A..B', 1)):
+        o = run(k, line)
+        check('%s: a second dot is no name (as the kernel, MS-DOS): "%s", exit code %d' % (line.upper(), want, lv),
+              (body(o) == [want] if line.startswith('attrib') else want in o) and said(o, 'E%d' % lv), o)
+    for line, want in (('attrib nosuch\\x.txt', 'File not found - NOSUCH\\X.TXT'), ('attrib nosuch\\', 'File not found - NOSUCH\\'),
+                       ('attrib nosuch\\*.* /s', 'File not found - NOSUCH\\*.*'), ('attrib one.txt\\x', 'File not found - ONE.TXT\\X'),
+                       ('attrib a..b', 'File not found - A..B'), ('attrib "one.txt"', 'File not found - "ONE.TXT"')):
+        o = run(k, line)
+        check('%s: a directory not there or a name the kernel refuses (FIND FIRST\'s 3) ends the search: "%s" alone, '
+              'exit code 1' % (line.upper(), want), body(o) == [want] and said(o, 'E1'), o)
+    e, es = entries(k.pc.drives[0].img), entries(k.pc.drives[0].img, 'SUB')
+    check('... nothing marked (not A.B, A, ONE.TXT or SUB\\X.TXT), nothing copied',
+          e['A.B'][0] == 0x20 and e['A'][0] == 0x20 and e['ONE.TXT'][0] == 0x20 and es['X.TXT'][0] == 0x20
+          and files(k.pc.drives[1].img, 'B') == {'B:\\A.B': b'old', 'B:\\ONE.TXT': b'old one'}, (e, es, files(k.pc.drives[1].img, 'B')))
+    for line in ('xcopy one.txt b:a.b.c', 'xcopy one.txt b:\\*.txt.x', 'xcopy one.txt b:a..b', 'xcopy one.txt b:\\x.y.z\\new.txt',
+                 'xcopy one.txt b:a..b\\c\\new.txt', 'xcopy one.txt b:\\x.y.z\\', 'xcopy *.txt b:\\x.y.z\\sub\\*.new'):
+        k = boot(da(), db())
+        o = run(k, line + ' < f.ans')
+        got = files(k.pc.drives[1].img, 'B')
+        check('%s: a destination with a second dot: "Path not found", exit code 4, no question; B:\\A.B, B:\\ONE.TXT '
+              'and B:\\A not written, nothing new left' % line.upper(), 'Path not found' in o and 'Does' not in o and said(o, 'E4')
+              and got == {'B:\\A.B': b'old', 'B:\\ONE.TXT': b'old one'}, (o, sorted(got)))
+
 def t_hidden():
     a = adisk([('HID.TXT', b'h'), ('SYS.TXT', b's')])
     img = bytearray(open(a, 'rb').read()); setattr_img(img, 'HID.TXT', 0x22); setattr_img(img, 'SYS.TXT', 0x24)
@@ -421,7 +589,8 @@ def t_term():
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_attrib, t_tree, t_xcopy, t_switches, t_refuse, t_full, t_paths, t_spell, t_hidden, t_same, t_answers, t_term):
+    for t in (t_attrib, t_tree, t_xcopy, t_switches, t_refuse, t_full, t_grown, t_paths, t_spell, t_dots, t_hidden, t_same, t_answers, t_term,
+              t_rerr):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

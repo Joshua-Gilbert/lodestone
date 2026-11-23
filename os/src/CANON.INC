@@ -4,7 +4,8 @@
 ; the drive's root (the root itself "D:\"), upper case, no "\" last.
 ; A relative path goes on from the drive's current directory (INT 21h
 ; 47h).  Each part is cut as the kernel's parse cuts it (part83), so two
-; spellings of one directory come out the same.  CF: DX = message (an
+; spellings of one directory come out the same, and one the kernel
+; refuses (a second dot) stays one it refuses.  CF: DX = message (an
 ; invalid drive, ".." from the root, which the kernel refuses too, a
 ; path past CMAX: the longest directory, and a name in it).  cdir: CF
 ; if cpath is too long for a directory.
@@ -126,7 +127,6 @@ canon:  push    ax
         mov     cx, di
         sub     cx, cpart
         pop     di
-        jcxz    .comps                  ; (nothing of it left: "...")
         mov     ax, di                  ; room for it (and a "\" first)?
         cmp     di, [croot]
         je      .nb
@@ -171,7 +171,10 @@ cdir:   push    ax
 ; the path part at SI (to a "\", "/" or 0) -> DI as the kernel's parse
 ; takes it: the name's first 8 characters and the extension's first 3
 ; (the rest left out, a "." with nothing after it dropped), upper case,
-; ASCIIZ (DI at its 0); "." and ".." as they are.  SI: past the part
+; ASCIIZ (DI at its 0); "." and ".." as they are.  A second dot, which
+; the kernel refuses, is a '"' last (A.B.C is A.B", A..B A.", ... .":
+; 14 bytes at most with the 0), so the name finds no file.  SI: past
+; the part
 part83: push    cx
         cmp     byte [si], '.'
         jne     .n
@@ -195,16 +198,20 @@ part83: push    cx
         call    .term
         je      .z
         cmp     al, '.'
-        je      .sk
         mov     al, '.'
         stosb
+        je      .sk                     ; (A..B: a second dot)
         mov     cx, 3
         call    .fld
-.sk:    mov     al, [si]                ; (past 8.3: left out)
+.sk:    mov     al, [si]                ; past 8.3 the end, or a second dot:
+        call    .term                   ;  '"' for it, a character the
+        je      .z                      ;  kernel refuses, so the name is
+        mov     al, '"'                 ;  no file's, as MS-DOS (the rest
+        stosb                           ;  left out)
+.sk1:   inc     si
+        mov     al, [si]
         call    .term
-        je      .z
-        inc     si
-        jmp     .sk
+        jne     .sk1
 .z:     mov     byte [di], 0
         pop     cx
         ret

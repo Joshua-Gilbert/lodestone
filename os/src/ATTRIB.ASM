@@ -22,7 +22,8 @@
 ; left out.
 ;
 ; Exit code: 0 done, 1 something failed (no file found, a bad switch, a
-; file that refused or wasn't changed, a path too long: each said).
+; file that refused or wasn't changed, a path too long, a directory that
+; couldn't be read: each said).
 cpu 286
 org 100h
 
@@ -43,6 +44,8 @@ start:  mov     sp, stack_top
         mov     word [depth], 0
         call    walk
         cmp     word [nfound], 0
+        jne     .done
+        cmp     byte [rdbad], 0         ; (a directory unread: not known)
         jne     .done
         mov     dx, s_nf                ; "File not found - X"
         call    print
@@ -150,7 +153,7 @@ walk:   mov     ax, [depth]             ; this level's DTA
         mov     cx, 06h                 ; (hidden and system too)
         mov     ah, 4Eh
         int     21h
-.f:     jc      .sub
+.f:     jc      .fe
         mov     bx, [dta]
         test    byte [bx+21], 18h       ; (no directories, no label)
         jnz     .fn
@@ -161,6 +164,8 @@ walk:   mov     ax, [depth]             ; this level's DTA
 .fn:    mov     ah, 4Fh
         int     21h
         jmp     .f
+.fe:    call    ended                   ; no more files, or the directory
+        jne     rderr                   ;  couldn't be read: said, left
 .sub:   cmp     byte [subs], 0          ; /S: each directory in it (no
         je      .x                      ;  deeper than PMAX lets it:
         mov     si, s_all               ;  MAXDEPTH's DTAs)
@@ -169,7 +174,7 @@ walk:   mov     ax, [depth]             ; this level's DTA
         mov     cx, 16h
         mov     ah, 4Eh
         int     21h
-.d:     jc      .x
+.d:     jc      .de
         mov     bx, [dta]
         test    byte [bx+21], 10h
         jz      .dn
@@ -200,6 +205,8 @@ walk:   mov     ax, [depth]             ; this level's DTA
 .dn:    mov     ah, 4Fh
         int     21h
         jmp     .d
+.de:    call    ended
+        jne     rderr
 .x:     ret
 .long:  mov     byte [err], 1           ; "Path too long - A:\SUB\NAME"
         mov     dx, s_long2
@@ -208,6 +215,35 @@ walk:   mov     ax, [depth]             ; this level's DTA
         call    puts
         call    crlf
         jmp     .dl
+
+; the directory at dir couldn't be read: "Read error - A:\SUB" (its first
+; [dirlen] characters, the root's "\" kept), and that is its end (and,
+; with nothing found, no "File not found": whether it is there isn't known)
+rderr:  mov     byte [err], 1
+        mov     byte [rdbad], 1
+        mov     dx, s_rerr
+        call    print
+        mov     bx, [dirlen]
+        cmp     bx, 3
+        je      .r
+        dec     bx
+.r:     mov     byte [dir+bx], 0
+        mov     si, dir
+        call    puts
+        jmp     crlf
+
+; FIND FIRST / NEXT's error AX: ZF if the search just ended (18 no more
+; files; 2 or 3 a file or directory not there, or a name the kernel's
+; parser refuses, as MS-DOS's), NZ if the directory couldn't be read.
+; Below the one typed (/S: one the walk found) only 18 ends it
+ended:  cmp     ax, 18
+        je      .x
+        cmp     word [depth], 0
+        jne     .x
+        cmp     ax, 2
+        je      .x
+        cmp     ax, 3
+.x:     ret
 
 ; ASCIIZ at SI after dir's first [dirlen] characters -> [dirend], CF if
 ; too long (it isn't then added: dir's directory and an 8.3 name always
@@ -389,6 +425,7 @@ s_fail  db 'Cannot change - $'
 s_nrhid db 'Not resetting hidden file - $'
 s_nrsys db 'Not resetting system file - $'
 s_long2 db 'Path too long - $'
+s_rerr  db 'Read error - $'
 s_badsw db 'Invalid parameter', 13, 10, '$'
 s_crlf  db 13, 10, '$'
 
@@ -399,6 +436,7 @@ aset    resb 1
 aclr    resb 1
 subs    resb 1
 err     resb 1
+rdbad   resb 1
         alignb 2
 depth   resw 1
 nfound  resw 1
