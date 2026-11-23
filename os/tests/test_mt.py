@@ -5630,12 +5630,14 @@ def t_tsrd():
     cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
     pad = dw_pad()
     def resident(k):                    # CLAUDE /R at the prompt: MT_TSR's CL (at the kernel's ok after mt_tsrc), DX:AX
-        seg, Y, got, on = mt_seg(k), k.Y, [], [0]
+        seg, Y, got, on = mt_seg(k), k.Y, [], [0, 0]
         def h(a):
-            if a == seg * 16 + Y['mt_tsrc']: on[0] = 1
+            pc = k.pc; ss, bp = pc.r('ss'), pc.r('bp')
+            if a == seg * 16 + Y['mt_tsrc']: on[:] = [1, pc.rd(ss, bp + equ('F_CX') + 1, 1)[0]]    # (CH as it came)
             elif on[0]:
-                on[0] = 0; pc = k.pc; ss, bp = pc.r('ss'), pc.r('bp')
-                got.append((pc.rd(ss, bp + equ('F_CX'), 1)[0], pc.u16(ss, bp + equ('F_AX')), pc.u16(ss, bp + equ('F_DX'))))
+                on[0] = 0
+                got.append((pc.rd(ss, bp + equ('F_CX'), 1)[0], pc.u16(ss, bp + equ('F_AX')), pc.u16(ss, bp + equ('F_DX')),
+                            on[1], pc.rd(ss, bp + equ('F_CX') + 1, 1)[0]))
         code_hooks(k, [seg * 16 + Y['mt_tsrc'], 0x600 + Y['ok']], h)
         o = Shell(k).run('claude /r')
         stub = R.stub_seg(k)
@@ -5653,10 +5655,11 @@ def t_tsrd():
     b0 = bytes(k.pc.rd(rmt[1], rmt[0], 5))
     typ(k, 'mtlaunch lcmd.com /c copy pad.bin p.bin', 0.2); typ(k, '', 0.0)
     d, dev, w = out_bytes(k, rmt, 20)
-    check('CLAUDE /R: MT_TSR answers CL = 4 (%s), DX:AX mt_front (%04X:%04X); its bytes with nobody out: front %d, '
-          'running %d, pop-up %d, %02Xh none out; a copy behind out on the floppy: %02Xh, the task waiting there %s, '
-          'device %d' % ([g[0] for g in got], rmt[1], rmt[0], b0[0], b0[1], b0[2], b0[3], d, w, dev),
-          'resident' in o and [g[0] for g in got] == [4] and got[0][1:] == (Y['mt_front'], seg)
+    check('CLAUDE /R: MT_TSR answers CL = 4 (%s), CH as it came (%s), DX:AX mt_front (%04X:%04X); its bytes with nobody '
+          'out: front %d, running %d, pop-up %d, %02Xh none out; a copy behind out on the floppy: %02Xh, the task waiting '
+          'there %s, device %d' % ([g[0] for g in got], [g[3:] for g in got], rmt[1], rmt[0], b0[0], b0[1], b0[2], b0[3],
+                                   d, w, dev),
+          'resident' in o and [g[0] for g in got] == [4] and got[0][1:3] == (Y['mt_front'], seg) and got[0][3] == got[0][4]
           and rmt == (Y['mt_front'], seg) and b0[3] == 0xFF and d in w and dev == 1 and not k.crashed,
           (o[-120:], got, rmt, b0.hex(), d, dev, w))
     data = hw_data()
@@ -7891,34 +7894,50 @@ def t_wfall():
     mt_wfront) and finds no other task to run gave its turn to the task in front whatever that one was doing.  In
     front KEYIN, waiting for a key inside INT 21h (kbd_get, MT's key wait): a task that mt_dok keeps off the CPU while
     an owner is out, as its kernel code may touch what the owner's call is in the middle of.  Behind MTKEY W (36
-    ticks of computing, then a read) or V (then mode 40h), and a copy on C:."""
+    ticks of computing, then a read) or V (then mode 40h), and a copy on C: (and on the floppy)."""
     print('== with a disk\'s owner out, a task behind with nothing to run never hands its turn to one inside INT 21h')
     data = hw_data()
-    for mode, how in (('w', 'an INT 16h read (mt_wkey)'), ('v', 'an INT 10h mode set that waits for the front (mt_wfront)')):
-        ata = hw_ata(data)
-        k, hw = hw_boot('mt_wf%s.img' % mode, ata, b'MULTITASK=1\r\n', MTK, 'KEYIN.COM=' + os.path.join(HERE, 'KEYIN.COM'))
+    pad = dw_pad(); want = open(pad, 'rb').read()
+    kin = 'KEYIN.COM=' + os.path.join(HERE, 'KEYIN.COM')
+    for disk, mode, how in (('C:', 'w', 'an INT 16h read (mt_wkey)'),
+                            ('C:', 'v', 'an INT 10h mode set that waits for the front (mt_wfront)'),
+                            ('A:', 'w', 'an INT 16h read (mt_wkey)')):
+        if disk == 'C:':
+            ata = hw_ata(data)
+            k, hw = hw_boot('mt_wf%s.img' % mode, ata, b'MULTITASK=1\r\n', MTK, kin)
+            copy = r'copy c:\big.bin c:\b2.bin'
+        else:
+            k = boot('mt_wff.img', b'MULTITASK=1\r\n', 88, MTK, kin, 'PAD.BIN=' + pad, fd_wait=True, disk_model='real')
+            Shell(k).run('ver')
+            copy = 'copy pad.bin p.bin'
         seg, Y = mt_seg(k), k.Y
         b = lambda n: k.pc.rd(seg, Y[n], 1)[0]
-        ran, waits, prev = [], [0], k.pc.watch
+        lo, hi = 0x600, 0x600 + k.Y['bss_end']      # (the kernel's segment, image and BSS: not the UI's)
+        ran, refused, prev = [], [0], k.pc.watch
         def w(a):                       # (kernel code run by another task than the owner, out of any interrupt)
             if prev: prev(a)
-            if 0x600 <= a < 0x10000 and a != 0x600 + Y['int21'] and b('mt_down') != 0xFF and b('mt_cur') != b('mt_down') \
+            if lo <= a < hi and a != 0x600 + Y['int21'] and b('mt_down') != 0xFF and b('mt_cur') != b('mt_down') \
                     and k.pc.isr == 0 and len(ran) < 4:
                 ran.append((hex(a), b('mt_cur'), b('mt_down'), round(k.pc.us / 1e6, 3)))
-        def h(a): waits[0] += b('mt_down') != 0xFF
-        code_hooks(k, [seg * 16 + Y['mt_wkey' if mode == 'w' else 'mt_wfront']], h)
+        def h(a):                       # (mt_fok's answer: the front task refused, an owner out)
+            refused[0] += b('mt_down') != 0xFF and not k.pc.r('flags') & 0x40
+        code_hooks(k, [seg * 16 + Y['mt_fok.x']], h)
         k.pc.watch = w
-        typ(k, r'mtlaunch /f keyin.com;mtkey.com %s rr.txt;lcmd.com /c copy c:\big.bin c:\b2.bin' % mode, 0.5)
-        k.pc.run_until(lambda: not any(t == 3 for t, _, _ in tstate(k)[0]) or k.pc.crash, 60)
+        typ(k, 'mtlaunch /f keyin.com;mtkey.com %s rr.txt;lcmd.com /c %s' % (mode, copy), 0.5)
+        k.pc.run_until(lambda: not any(t == 3 for t, _, _ in tstate(k)[0]) or k.pc.crash, 90)
         k.pc.watch = prev
-        fs, probs = hw_files(ata)
+        if disk == 'C:':
+            fs, probs = hw_files(ata); exact = fs.get('\\B2.BIN') == data and not probs
+        else:
+            exact = A.disk_file(k, 'P.BIN') == want and not A.fatcheck.check(bytes(k.pc.drives[0].img))[0]
         st = tstate(k)
-        check('KEYIN in front waiting for a key inside INT 21h, MTKEY %s behind, %s, with the copy out (%d times): no '
-              'task but the owner ran the kernel\'s code while it was out (%s); the copy ended, exact; KEYIN still '
-              'waiting in front' % (mode.upper(), how, waits[0], ran or 'none'),
-              waits[0] >= 1 and not ran and not any(t == 3 for t, _, _ in st[0]) and fs.get('\\B2.BIN') == data
-              and not probs and any(t == 1 and n == 'KEYIN.COM' for t, _, n in st[0]) and st[1] == 1 and not k.crashed,
-              (ran, waits, st, probs))
+        check('KEYIN in front waiting for a key inside INT 21h, MTKEY %s behind, %s, a copy on %s out; KEYIN refused '
+              'while it was out (%d times), no task but the owner ran the kernel\'s code then (%s); the copy ended, '
+              'exact; KEYIN, its key not yet typed, still there and in front'
+              % (mode.upper(), how, disk, refused[0], ran or 'none'),
+              refused[0] >= 1 and not ran and not any(t == 3 for t, _, _ in st[0]) and exact
+              and any(t == 1 and n == 'KEYIN.COM' for t, _, n in st[0]) and st[1] == 1 and not k.crashed,
+              (ran, refused, st))
 
 def t_dmaems():
     """The 1520 restarts when an EMS page register changes while the floppy's DMA runs (found 2026-11-04 with
@@ -8615,7 +8634,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd,t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_wfall, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_wfall, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
