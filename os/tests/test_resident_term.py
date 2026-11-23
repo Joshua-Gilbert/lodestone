@@ -1913,6 +1913,16 @@ def t_floppy_hot():
     Not in the transfer's result phase either, where the console's first DOS call would wait at MT's gate with
     windows 2-3 kept for the cylinder cache.  r_front's answers checked at each return (gate_watch), the read's own
     peek (r_int16.pf) among them."""
+    floppy_hot()
+
+def t_floppy_semi():
+    """As t_floppy_hot, CODE-; (2700h, a key MTKEY R's AH=00h can't give) typed just before CODE-\\: the read's own
+    peek (r_int16.pf), with the owner out, is AH=01h still, which drops it, and the read waits at the stub's HLT.  (An
+    AH=11h peek would find it and pass the read on to MT, which would wait for a key there, the stub out of it: the
+    console would not come.)"""
+    floppy_hot(TR.SEMI)
+
+def floppy_hot(pre=None):
     pcemu = CK.pcemu
     strict, h = pcemu.FD_STRICT, None
     try:
@@ -1952,12 +1962,14 @@ def t_floppy_hot():
             return d != 0xFF and d != f and f != 0 and pc.fd_dma()
         got = h.wait(lambda: pc.crash or out(), 20) and out()
         gen = generation(h)
+        if pre: h.press(pre)
         h.press(HOT)
         t0 = pc.us
         came = h.wait(lambda: pc.crash or h.inpop() == 1, 30) and h.inpop() == 1
         dt = (pc.us - t0) / 1e6
         came = came and h.pi_wait(lambda: generation(h) not in (None, gen) and h.rv('connected') == 1, 30)
-        check('CODE-\\ typed while a task behind is out in a floppy transfer, MTKEY R waiting in its read, MTSPIN behind: '
+        check(('CODE-; then ' if pre else '') +
+              'CODE-\\ typed while a task behind is out in a floppy transfer, MTKEY R waiting in its read, MTSPIN behind: '
               'the console comes by itself once its owner is back (%.2f s; due %d times in flight, %d with the owner '
               'out otherwise), its HELLO through; no page register written under a transfer (%d)'
               % (dt, cnt('r_hot.p', 'dma'), cnt('r_hot.p', 'out'), fdw()),
@@ -2208,7 +2220,7 @@ def t_bg_hot():
 
 
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_replies, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_floppy, t_floppy_hot, t_floppy_nodwait, t_bg_screen, t_bg_ksum, t_bg_hot]
+         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_floppy, t_floppy_hot, t_floppy_semi, t_floppy_nodwait, t_bg_screen, t_bg_ksum, t_bg_hot]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

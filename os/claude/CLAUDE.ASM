@@ -4398,11 +4398,11 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         call    r_look                  ; (none, or CODE-\ next: wait)
         jz      .h
         push    ax
-        inc     ah                      ; (a peek of the caller's kind, the
-        call    r_front                 ;  front task's with an owner out too,
-        jbe     .pf                     ;  CF; for a background task's, AH=11h:
-                                        ;  the BIOS's AH=01h drops the keys AH=00h
-        mov     ah, 11h                 ;  can't give, the front task's.  A
+        inc     ah                      ; (a peek of the caller's kind, for
+        call    r_front                 ;  the front task with an owner out
+        jbe     .pf                     ;  too, CF; for a task behind, AH=11h:
+                                        ;  the BIOS's AH=01h drops the keys
+        mov     ah, 11h                 ;  AH=00h can't give, the front's.  A
 .pf:    pushf                           ;  key: the read on to MT, which holds
         call    far [cs:r_old16]        ;  it behind, or lets it through where
         pop     ax                      ;  it can't switch: an INT 24h prompt's)
@@ -4512,11 +4512,12 @@ r_feed: cmp     byte [cs:r_ks], 0
 ; gives the front task a turn as for a key.  Refused in the front task's
 ; call (r_front: a disk's owner out; r_isr), it tells MT each time (r_pend
 ; stays 1), so a read waiting at our HLT comes back: CODE-\ during a
-; floppy's transfer comes when its owner has run again.  The fold (OR AL, 0F0h) takes any 2Bx0h as the hot key: the 1520's
-; keyboard gives none but CODE-\ (its key gives 2B5Ch, 2B7Ch, 2B1Ch and
-; 2BF0h / 2B00h); a national keyboard driver could.  Registers kept.  (Never called with the
-; console up: r_int16 answers itself then, and r_popup clears r_inpop
-; before it returns here.)
+; floppy's transfer comes when its owner has run again.  The fold (OR AL,
+; 0F0h) takes any 2Bx0h as the hot key: the 1520's keyboard gives none but
+; CODE-\ (its key gives 2B5Ch, 2B7Ch, 2B1Ch and 2BF0h / 2B00h); a national
+; keyboard driver could.  Registers kept.  (Never called with the console
+; up: r_int16 answers itself then, and r_popup clears r_inpop before it
+; returns here.)
 r_hot:  push    ax
         push    bx
         push    si
@@ -4593,12 +4594,12 @@ r_tell: cmp     word [cs:r_mt + 2], 0
 ; A background look, if the console asked for them (r_bgon 1: the user
 ; went back to the program with the link up), none was made for R_BGT
 ; ticks, no CLAUDE.COM runs, the call is the front task's with no disk's
-; owner out, and nothing is in service (as for the pop-up).  The console comes as at a pop-up, with
-; r_bgon 2, and says in it whether to go on looking.  (Never with Claude's
-; keys under way: the console never leaves r_bgon set with r_ks set.  It
-; sets r_ks only in type_start, never in a background pass, and the
-; session that does so ends with r_bgon 0; r_ks is 0 again before any
-; session can set r_bgon 1.)  Registers kept.
+; owner out, and nothing is in service (as for the pop-up).  The console
+; comes as at a pop-up, with r_bgon 2, and says in it whether to go on
+; looking.  (Never with Claude's keys under way: the console never leaves
+; r_bgon set with r_ks set.  It sets r_ks only in type_start, never in a
+; background pass, and the session that does so ends with r_bgon 0; r_ks
+; is 0 again before any session can set r_bgon 1.)  Registers kept.
 r_bg:   cmp     byte [cs:r_bgon], 1
         jne     .x
         call    r_front
