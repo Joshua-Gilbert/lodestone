@@ -184,7 +184,8 @@ def t_damage():
         what = ('LCMD.COM' if fn not in (dots, fats) else '')
         check('%s: "%s"%s, exit code 1, nothing written' % (name, msg, ' (on its path)' if what else ''),
               msg in o and said(o, 'E1') and bytes(k.pc.drives[1].img) == raw and (what == '' or 'B:\\' + what in o)
-              and (fn is not cross or 'cross linked on cluster %d' % n in o), o)
+              and (fn is not cross or 'cross linked on cluster %d' % n in o)
+              and (fn is not fats or 'Cannot read the first' not in o), o)
         k.pc.tty.clear()
         k.key('chkdsk b: /f'); k.key(ktest.ENTER, settle=False)
         k.pc.run_until(lambda: '(Y/N)?' in out(k) or 'bytes free' in out(k), 60)
@@ -360,6 +361,48 @@ def t_swap():
     check('... a drive without a change line: the same disk known by its boot sector and FAT, corrected',
           probs == [] and '\\FILE0000.CHK' in files, (o, probs))
 
+def t_fat1():
+    # the first FAT's fourth sector unreadable, in a drive without a change line: the second FAT is
+    # read, said so, and before each write the disk is known by the second's first sector (as last
+    # written)
+    d = lost_disk('f1.img'); d.save()
+    k = boot(d.path)
+    k.pc.drives[1].bad = {1 + 3}
+    k.pc.drives[1].no_changeline = True
+    o = fixrun(k, 'chkdsk b: /f', 'y')
+    k.pc.drives[1].bad = set()
+    img = bytes(k.pc.drives[1].img)
+    files, probs = vcheck(img)
+    check('the first FAT unreadable, no change line (/F, Y): "the second used", corrected, both FATs alike after',
+          'Cannot read the first File Allocation Table: the second used' in o and 'differ' not in o
+          and 'The disk was changed' not in o and probs == [] and '\\FILE0000.CHK' in files
+          and img[512:512 + 9 * 512] == img[512 + 9 * 512:512 + 18 * 512], (o, probs, sorted(files)))
+    # the same with the first FAT's first sector the one unreadable (it still won't read back once written), and
+    # with a lost cluster in the FAT's first sector (it changes there, in each copy in turn); the second FAT's
+    # first sector unreadable, the first good
+    for name, bad, ans, low in (('its first sector', {1}, 'y', False), ('its first sector', {1}, 'n', True),
+                                ('its first sector', {1}, 'y', True), ('its fourth sector', {4}, 'n', True),
+                                ('the second FAT\'s first sector, the first good', {10}, 'y', False)):
+        d = lost_disk('f1b.img')
+        if low:
+            d = disk('f1b.img'); lc = next(c for c in range(2, 330) if d.get(c) == 0); d.set(lc, 0xFFF)
+        d.save()
+        k = boot(d.path)
+        k.pc.drives[1].bad = set(bad)
+        k.pc.drives[1].no_changeline = True
+        o = fixrun(k, 'chkdsk b: /f', ans)
+        k.pc.drives[1].bad = set()
+        img = bytes(k.pc.drives[1].img)
+        files, probs = vcheck(img)
+        first = bad != {10}
+        check('%s unreadable, a lost %s, no change line (/F, %s): %scorrected, no "The disk was changed", both FATs '
+              'alike after' % (name, 'cluster low (%d)' % lc if low else 'chain high', ans.upper(),
+                               '"the second used", ' if first else ''),
+              ('Cannot read the first File Allocation Table: the second used' in o) == first
+              and 'The disk was changed' not in o and probs == []
+              and (('\\FILE0000.CHK' in files) == (ans == 'y')) and (not low or ans == 'y' or struct.unpack_from('<H', img, 512 + lc * 3 // 2)[0] & (0xFFF0 if lc & 1 else 0xFFF) == 0)
+              and img[512:512 + 9 * 512] == img[512 + 9 * 512:512 + 18 * 512], (o[-700:], probs, sorted(files)))
+
 def t_cwd():
     d = disk('cw.img', files=(LCMD, 'SUB\\', BIG))
     c = d.first('SUB'); d.set(c, 0); d.save()           # SUB's first cluster free
@@ -446,7 +489,7 @@ def t_refused():
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_clean, t_lost, t_damage, t_deep, t_720, t_safety, t_swap, t_cwd, t_mt, t_wp, t_hd, t_mdisk, t_refused):
+    for t in (t_clean, t_lost, t_damage, t_deep, t_720, t_safety, t_swap, t_fat1, t_cwd, t_mt, t_wp, t_hd, t_mdisk, t_refused):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

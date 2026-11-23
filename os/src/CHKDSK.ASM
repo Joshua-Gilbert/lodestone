@@ -32,9 +32,12 @@
 ; is a file's), or are freed (Y/N).  If part of the disk couldn't be
 ; looked at (a directory sector that won't read: the rest of it is read;
 ; a directory cut short; too deep), its files may be among them: they are
-; left as they are.  A root that fills leaves the rest lost, for next time.  The two FAT copies must be the same;
-; /F writes both.  Without /F nothing is written, and it says what /F
-; would do.  The figures, as DOS's: total, hidden files, directories,
+; left as they are.  A root that fills leaves the rest lost, for next
+; time.  The two FAT copies must be the same; /F writes both.  A first
+; FAT that can't be read (a sector of it) is "Cannot read the first File
+; Allocation Table: the second used": the second is checked, and /F
+; writes both from it.  Without /F nothing is written, and it says what
+; /F would do.  The figures, as DOS's: total, hidden files, directories,
 ; user files, bad sectors, free; then the memory.
 ;
 ; Floppies are read through INT 13h (a track at a time), C: through the
@@ -45,8 +48,8 @@
 ; tells it for C:), and the current directory goes to the root if /F
 ; removed a directory.  With /F, other tasks (multitasking) or files open
 ; on the drive refuse it, and before each write a floppy must still be
-; the disk that was read (its change line; or its boot sector and first
-; FAT sector): "The disk was changed".
+; the disk that was read (its change line; or its boot sector and the
+; first sector of the FAT copy it read): "The disk was changed".
 ;
 ; Exit code: 0 no errors, 1 errors found (corrected with /F), 2 couldn't
 ; check (no such drive, not a FAT disk, a read error, ...), 3 Ctrl-C.
@@ -145,7 +148,10 @@ start:  mov     sp, stack_top
         cmp     byte [fatdiff], 0
         je      .w
         mov     dx, s_fats
-        call    report0
+        cmp     byte [fat1bad], 0
+        je      .fd
+        mov     dx, s_fat1
+.fd:    call    report0
 .w:     cmp     byte [fix], 0
         je      .fig
         call    write_back
@@ -517,8 +523,8 @@ alloc:  mov     bx, [spf]
         mov     dx, s_nomem
         ret
 
-; the first FAT (the second if it can't be read), and are they alike?
-; CF: DX = message
+; the first FAT (the second if it can't be read: [fat1bad]), and are they
+; alike?  CF: DX = message
 rd_fat: mov     ax, [rsv]
         call    .one
         jnc     .keep
@@ -529,8 +535,8 @@ rd_fat: mov     ax, [rsv]
         call    .one
         jc      .bad
         mov     byte [fatdiff], 1       ; (/F writes both)
-        clc
-        ret
+        mov     byte [fat1bad], 1
+        jmp     short .keep
 .bad:   mov     dx, s_fatbad
         stc
         ret
@@ -549,6 +555,8 @@ rd_fat: mov     ax, [rsv]
         mov     cx, 256
         rep     movsw
         pop     ds
+        cmp     byte [fat1bad], 0       ; (the second is what was read)
+        jne     .ok
 .cmp:   cmp     word [nfat], 2          ; the second, a sector at a time
         jb      .ok
         xor     bp, bp
@@ -710,7 +718,10 @@ xsec:   pusha
 
 ; before a write: still the disk that was read?  (A floppy's change line;
 ; when it says changed, or the drive has none, the boot sector's BPB and
-; the first FAT sector as they were read.)  CF if not: [dchg].  All kept
+; the first sector of the FAT copy read, as they were read or as /F last
+; wrote it: the second's throughout if the first couldn't be read, a
+; sector that may still not read back once written.)  CF if not: [dchg].
+; All kept
 same:   cmp     byte [kind], K_FL
         jne     .ok
         cmp     byte [dchg], 0
@@ -737,8 +748,11 @@ same:   cmp     byte [kind], K_FL
         mov     cx, 51
         repe    cmpsb
         jne     .chg
-        mov     ax, [rsv]               ; its first FAT sector
-        xor     dx, dx
+        mov     ax, [rsv]               ; the first sector of the FAT read
+        cmp     byte [fat1bad], 0
+        je      .f1
+        add     ax, [spf]
+.f1:    xor     dx, dx
         mov     cx, 1
         mov     bx, chkbuf
         call    fl_io
@@ -2086,9 +2100,12 @@ write_back:
         mov     cx, 1
         call    wrsec
         jc      .err
-        mov     ax, bp                  ; (the first FAT's first sector as
-        or      ax, [k]                 ;  the disk has it now: same's)
-        jnz     .sn
+        or      bp, bp                  ; (the first sector of the copy same
+        jnz     .sn                     ;  reads, [fat1bad]'s, as the disk
+        mov     al, [fat1bad]           ;  has it now)
+        cbw
+        cmp     ax, [k]
+        jne     .sn
         push    ds
         mov     ds, [fatseg]
         xor     si, si
@@ -2320,6 +2337,7 @@ s_dots  db '   Invalid sub-directory entry$'
 s_baddir db '   Invalid sub-directory entry, removed$'
 s_dread db '   Cannot read this directory$'
 s_fats  db 'The two copies of the File Allocation Table differ$'
+s_fat1  db 'Cannot read the first File Allocation Table: the second used$'
 s_lost2 db ' lost clusters found in $'
 s_lost3 db ' chains.', 13, 10, '$'
 s_conv  db 'Convert lost chains to files (Y/N)? $'
@@ -2373,6 +2391,7 @@ fix     resb 1
 verbose resb 1
 fat16   resb 1
 fatdiff resb 1
+fat1bad resb 1                          ; the first FAT unread: the second's
 hasser  resb 1
 xop     resb 1
 bstat   resb 1
