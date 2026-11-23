@@ -2386,7 +2386,11 @@ mw_clean:
         pop     bp
         pop     si
         pop     ax
-.x:     pusha                           ; run_cleanup's own first 5 bytes,
+.x:     and     word [cs:mw_fh], 0      ; (mw_peek's file, if open: the root's
+                                        ;  start over closes its handles, so
+                                        ;  the next mw_start mustn't read on
+                                        ;  through one closed or reused)
+        pusha                           ; run_cleanup's own first 5 bytes,
         push    es                      ;  then on there
         mov     si, alloc_tab
         push    ds
