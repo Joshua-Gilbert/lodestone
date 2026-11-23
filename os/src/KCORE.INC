@@ -156,8 +156,15 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; the gate refuses for reasons the faulting context may hold itself (an
 ; interrupt in service, InDOS, mt_inb, mt_crit, mt_swing, the mouse event
 ; handler's m33_busy): then every retry is refused and the machine spins
-; here with interrupts on.  Inside the kernel (InDOS) no message: that call
-; would take the stack this one runs on, and 4Ch never comes back to it
+; here with interrupts on.  Inside the kernel (InDOS not 0) no message,
+; only the 4Ch, which never comes back to the interrupted call.  int21's
+; entry puts a call at InDOS 0 on kstack_top and a nested one on
+; astack_top, so from InDOS 2 up the message's call would take the stack
+; the fault is on.  At InDOS 1 it would not (the fault is on kstack, the
+; call goes to astack), but the message is left out there too: AH=09h
+; writes through handle 1, a file or device whose code, and the kernel's
+; one set of per-call state (rw_sft, the buffers), the interrupted call
+; may be in the middle of
 int00:  sti
         push    cs
         pop     ds

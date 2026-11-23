@@ -1588,7 +1588,7 @@ def t_divctx():
     o = sh.run('divt b')
     e = sh.run('if not errorlevel 1 echo E0')
     check('a divide error inside INT 21h (DIVT T\'s resident INT 10h hook, under DIVT B\'s AH=02h \'!\'): the '
-          'program ends there, without "Divide overflow" (the kernel\'s stack is in use) and nothing after it; exit '
+          'program ends there, without "Divide overflow" (none inside the kernel: InDOS not 0) and nothing after it; exit '
           'code 0, InDOS 0, its handles closed', o.split('\n')[0] == 'A' and 'Divide overflow' not in o
           and 'E0' in e.replace('echo E0', '') and k.rd('indos', 1)[0] == 0 and sft() == s0 and not k.crashed,
           (o, e, s0, sft()))
@@ -6104,12 +6104,13 @@ sdx     dw      0
 buf     times 10 db 0
 """
 def t_errexits():
-    """The answers of error exits that go through a 2-byte jcc to a hub (XITS.COM; each answer as origin/main gave
-    it before those jumps were made short): RENAME of an open file 5, RENAME onto a file there 5, RMDIR, MKDIR and
+    """The answers of error exits that go through a 2-byte jcc to a hub (XITS.COM):
+    RENAME of an open file 5, RENAME onto a file there 5, RMDIR, MKDIR and
     CHDIR of "" 3, RMDIR of "\\" 16 (the current directory) and from a subdirectory 5 (no last name), of "D\\" 3,
     a read after a seek past the end 0 bytes and no error, IOCTL 4409h (drive A:) and 440Ah (an open
     file) no error, DX 0 (local), AX kept; FIND NEXT after FIND FIRST with the DTA's drive byte made Z:, B: or C:
-    (no such drive: drv_present's exit), and on a machine with a B: not yet mounted (D_MNT's exit): 18.  ^C typed at INT 21h 01h and 08h: "^C", the program ends there."""
+    (no such drive: drv_present's exit), and on a machine with a B: not yet mounted (D_MNT's exit): 18.  ^C typed
+    at INT 21h 01h and 08h: "^C", the program ends there."""
     src = os.path.join(OUT, 'XITS.ASM'); open(src, 'w').write(XITS)
     com = os.path.join(OUT, 'XITS.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)

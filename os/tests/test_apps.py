@@ -1113,9 +1113,9 @@ def t_divrun():
         k.pc.tty.clear()
         k.key(key)
         check('DIVRUN.RUN (a window, a UI_ALLOC block), a divide error in %s: "Divide overflow" written, the Executive '
-              'starts over (its list, its band), the window gone, run_active 0, no window left (wdepth 0), the block '
-              'freed and the UI block its own size again' % where, up and '\r\nDivide overflow\r\n' in ''.join(k.pc.tty)
-              and not has(k, 'Divide test') and k.band()[:1] == ['Select a file and confirm'] and 'DIVRUN.RUN' in k.exec_list()
+              'starts over (its list, its band), the message drawn over (not on the screen), the window gone, run_active 0, '
+              'no window left (wdepth 0), the block freed and the UI block its own size again' % where,
+              up and '\r\nDivide overflow\r\n' in ''.join(k.pc.tty) and not has(k, 'Divide overflow') and not has(k, 'Divide test') and k.band()[:1] == ['Select a file and confirm'] and 'DIVRUN.RUN' in k.exec_list()
               and k.rd('run_active', 1) == b'\x00' and k.u16('wdepth') == 0 and free_paras(k) == free0 and not k.crashed,
               (up, ''.join(k.pc.tty), k.band(), k.rd('run_active', 1), k.u16('wdepth'), free_paras(k), free0, k.where()))
     check('(a limit: a .RUN\'s open files stay open after its divide error) DIVRUN.RUN\'s file, opened in each of '
