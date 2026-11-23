@@ -282,7 +282,7 @@ mt_down     db      0FFh                ; the task switched from at a
                                         ;  register while an owner is out
 mt_ddev     db      1                   ; its device: 1 the floppy, 0 the hard
                                         ;  disk (as 9001h/9000h's AL)
-        times   -(mt_cur != mt_front + 1 || mt_tsrk != mt_front + 2 || mt_down != mt_front + 3) db 0
+        times   -(mt_cur != mt_front + 1 || mt_tsrk != mt_front + 2 || mt_down != mt_front + 3 || mt_ddev != mt_front + 4) db 0
 mt_tsro     dw      0                   ; Resident Claude's key wait (MT_TSR):
 mt_tsrs     dw      0                   ;  a switch may come there; 0:0 none
 mt_hotk     dw      0A500h, 0A5F0h      ; the hot key, CODE-Tab, as AH=10h

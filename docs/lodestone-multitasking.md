@@ -1363,7 +1363,7 @@ Changes to existing checks:
 **What was already so:** while the console is up, nothing needs holding. Its code runs at E000h and on the stub's own stack, and `mt_safe` refuses both. A switch due meanwhile comes once the console has closed. So no hold is needed (the name `mt_hold` is M6's parked handles).
 
 **What it does:**
-- **`MT_TSR` (F0h AL=1Ah)**, made once by `CLAUDE /R`, with ES:BX = the instruction after the stub's key wait's HLT. MT keeps that place (`mt_tsro`, `mt_tsrs`) and answers DX:AX = the address of three bytes: `mt_front`, `mt_cur` and `mt_tsrk`. `CLAUDE /U` makes it again with 0:0. With multitasking off it fails, and the stub is as before.
+- **`MT_TSR` (F0h AL=1Ah)**, made once by `CLAUDE /R`, with ES:BX = the instruction after the stub's key wait's HLT. MT keeps that place (`mt_tsro`, `mt_tsrs`) and answers DX:AX = the address of three bytes: `mt_front`, `mt_cur` and `mt_tsrk`. `CLAUDE /U` makes it again with 0:0. With multitasking off it fails, and the stub is as before. (Since 2026-11-23 five bytes, `mt_down` and `mt_ddev` after them, and CL = 4: see "A kill while a disk is out" below.)
   - (`MT_FLAGS` is 18h. 1Bh is still unused and fails.)
 - **The stub's key wait** (`..@r_idle`, after its HLT) is a safe point (`mt_safe`), as the UI's idle HLTs are, when:
   - the HLT is still there (a stale place, left by an older CLAUDE.COM's `/U`, is not taken);
