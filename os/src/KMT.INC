@@ -4990,13 +4990,20 @@ mt_wkey:
 .x:     ret
 
 ; the front task may run now (mt_dok: not one inside INT 21h, or with a
-; window the transfer holds, while a disk's owner is out)?  ZF if so.  BL
-; = it; BH changed
+; window the transfer holds, while a disk's owner is out; nor the owner
+; itself while it waits for its disk: its interrupt or the time-out makes
+; it ready, and mt_pick takes it then)?  ZF if so.  BL = it; BH changed
 mt_fok: push    ax
         mov     al, [cs:mt_front]
         call    mt_ent
         call    mt_dok
-        mov     bl, al
+        jnz     .x
+        cmp     byte [cs:bx+TE_STATE], TS_WAITD
+        jne     .y
+        or      sp, sp                  ; (NZ)
+        jmp     short .x
+.y:     cmp     al, al                  ; (ZF)
+.x:     mov     bl, al
         pop     ax
         ret
         db      90h                     ; (what follows keeps its parity)
