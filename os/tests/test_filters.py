@@ -2,15 +2,18 @@
 each against what DOS 3.30's do, the output read whole from the
 screen's teletype stream (a pipe, a redirected file, a named file),
 switches, wildcards, the exit codes, and their edges (a line too long,
-no LF at the end, Ctrl-Z, 63 KB, ten mismatches).
+no LF at the end, Ctrl-Z, 63 KB, ten mismatches).  A read that fails
+(Fail at the prompt, or the kernel's own INT 24h), a full disk behind
+'>' or a pipe and a write that fails (a write-protected disk), each
+said; NUL, the screen and pipes still taking all.
 
     python3 tests/test_filters.py
 """
-import os, sys, tempfile, time
+import os, struct, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
 sys.path.insert(0, GOS); sys.path.insert(0, HERE)
-import ktest, mkimg, fatcheck
+import ktest, mkimg, fatcheck, fat16img as F
 
 OUT = tempfile.mkdtemp()
 SRC = os.path.join(GOS, 'src')
@@ -38,11 +41,21 @@ def out(k): return ''.join(k.pc.tty).replace('\r', '')
 
 def said(o, line): return any(l.strip() == line for l in o.split('\n'))
 
-def run(k, line, *keys, sim=30):
+def answer_f(k, sim):
+    """each "Abort, Retry, Fail?" answered F, till the prompt is back -> how many were asked"""
+    n = 0
+    while n < 8:
+        k.pc.run_until(lambda: out(k).count('Fail?') > n or out(k).rstrip().endswith('A:\\>') or k.pc.crash, sim)
+        if out(k).count('Fail?') <= n: break
+        n += 1; k.pc.keys.append(ord('f'))
+    return n
+
+def run(k, line, *keys, sim=30, fails=False):
     """line at the prompt, keys after (each once the machine waits) -> what it printed (the line itself left
-    out), and E<exit code> on a line of its own"""
+    out), and E<exit code> on a line of its own.  fails: each critical error answered F"""
     k.pc.tty.clear()
-    k.key(line); k.key(ktest.ENTER)
+    k.key(line); k.key(ktest.ENTER, settle=not fails)
+    if fails: answer_f(k, sim)
     for x in keys: k.key(x)
     k.settle(sim)
     o = out(k)
@@ -57,6 +70,22 @@ def body(o):
     return o[:o.rfind('A:\\>')] if 'A:\\>' in o else o
 
 def lines(data): return [l for l in data.decode('latin-1').replace('\r', '').split('\n')]
+
+def sector_of(img, name, off):
+    """the sector holding byte off of the root's file name"""
+    v = F.Volume(bytes(img), 0)
+    cl = next(c for n, a, c, s in v.entries(0) if n == name)
+    return v.data + (v.chain(cl)[0][off // (512 * v.spc)] - 2) * v.spc + off % (512 * v.spc) // 512
+
+def kernel24(k, line, **kw):
+    """run with the kernel's own INT 24h in the vector (a critical error failed, nobody asked: as from the
+    Executive), LCMD's put back after"""
+    old = k.pc.rd(0, 0x24 * 4, 4)
+    k.pc.wr(0, 0x24 * 4, struct.pack('<HH', k.Y['int24'], 0x60))
+    try: return run(k, line, **kw)
+    finally: k.pc.wr(0, 0x24 * 4, old)
+
+def files_a(k): return fatcheck.read_files(bytes(k.pc.drives[0].img))
 
 def t_find():
     k = boot(f('TWO.TXT', b'one COM\r\ntwo\r\nthree COM\r\n'))
@@ -175,6 +204,117 @@ def t_comp():
     check('no names: asked for ("Enter primary file name"), answered from a file, then N', 'Enter primary file name' in o
           and 'Enter 2nd file name' in o and 'Files compare OK' in o and said(o, 'E0'), o)
 
+RBIG = b''.join(b'%05d %s\r\n' % (i, b'mark' if i % 100 == 0 else b'line') for i in range(2000))   # 24,000 bytes
+RCR = b'ab\r' * 9000                                    # (no LF: MORE never stops for a key)
+def t_rerr():
+    # a sector of each file unreadable, at byte 20,000: past FIND's first 16 KB read, SORT's and MORE's fourth 4 KB
+    k = boot(f('BIG.TXT', RBIG), f('CR.TXT', RCR), f('TWO.TXT', b'one mark\r\ntwo\r\n'))
+    k.pc.drives[0].bad = {sector_of(k.pc.drives[0].img, n, 20000) for n in ('BIG.TXT', 'CR.TXT')}
+    first = [l for l in lines(RBIG[:16384]) if 'mark' in l]
+    for how, go in (('Fail at the prompt', lambda l: run(k, l, fails=True)), ('the kernel\'s INT 24h, nobody asked',
+                                                                               lambda l: kernel24(k, l))):
+        o = go('find "mark" big.txt two.txt')
+        got = [l for l in body(o).split('\n') if 'mark' in l]
+        check('FIND "mark" BIG.TXT TWO.TXT, BIG.TXT unreadable part way (%s): its lines before it, "FIND: Read error in '
+              'BIG.TXT", then TWO.TXT\'s; exit 2' % how, got == first + ['one mark'] and said(o, 'FIND: Read error in BIG.TXT')
+              and o.index('Read error') < o.index('---------- TWO.TXT') and said(o, 'E2')
+              and ('Fail?' in o) == how.startswith('Fail'), o[-600:])
+        o = go('find "mark" < big.txt')
+        check('FIND "mark" < BIG.TXT (%s): "FIND: Read error in standard input", exit 2' % how,
+              [l for l in body(o).split('\n') if 'mark' in l] == first and said(o, 'FIND: Read error in standard input')
+              and said(o, 'E2'), o[-600:])
+        o = go('sort < big.txt > s.txt')
+        check('SORT < BIG.TXT > S.TXT (%s): "SORT: Read error", nothing written (not the first 16 KB sorted), exit 1' % how,
+              said(o, 'SORT: Read error') and files_a(k).get('A:\\S.TXT') == b'' and said(o, 'E1'),
+              (o[-600:], len(files_a(k).get('A:\\S.TXT', b''))))
+        o = go('more < cr.txt > m.txt')
+        check('MORE < CR.TXT > M.TXT (%s): what it read before it written, "MORE: Read error", exit 1' % how,
+              said(o, 'MORE: Read error') and files_a(k).get('A:\\M.TXT') == RCR[:16384] and said(o, 'E1'),
+              (o[-600:], len(files_a(k).get('A:\\M.TXT', b''))))
+    o = run(k, 'more cr.txt', fails=True)
+    check('MORE CR.TXT (a file named, Fail): what it read, the question, "MORE: Read error", exit 1',
+          said(o, 'MORE: Read error') and o.index('Fail?') > o.index('abab') and said(o, 'E1'), o[-300:])
+
+def boot_full(leave, *extra):
+    """boot() with A: holding only leave bytes more (a PAD.DAT over the rest)"""
+    k = boot(*extra)
+    v = F.Volume(bytes(k.pc.drives[0].img), 0)
+    return boot(*(list(extra) + [f('PAD.DAT', bytes(v.free() * 512 * v.spc - leave))]))
+
+def t_wfull():
+    # 4 KB left on A:: each one's output into a file there comes up short (a fresh disk each)
+    full = lambda: boot_full(4096, f('BIG.TXT', RBIG), f('CR.TXT', RCR))
+    k = full()
+    o = run(k, 'find "line" big.txt > out.txt')
+    got = files_a(k).get('A:\\OUT.TXT', b'')
+    check('FIND "line" BIG.TXT > OUT.TXT, 4 KB left: "FIND: Insufficient disk space", exit 2, what fitted written',
+          said(o, 'FIND: Insufficient disk space') and said(o, 'E2') and 0 < len(got) <= 4096
+          and got.startswith(b'\r\n---------- BIG.TXT\r\n00001 line\r\n'), (o[-300:], len(got), got[:60]))
+    k = full()
+    o = run(k, 'sort < big.txt > s.txt')
+    check('SORT < BIG.TXT > S.TXT, 4 KB left: "SORT: Insufficient disk space", exit 1 (MS-DOS 3.30\'s)',
+          said(o, 'SORT: Insufficient disk space') and said(o, 'E1'), (o[-300:], len(files_a(k).get('A:\\S.TXT', b''))))
+    k = full()
+    o = run(k, 'more < cr.txt > m.txt')
+    check('MORE < CR.TXT > M.TXT, 4 KB left: "MORE: Insufficient disk space", exit 1',
+          said(o, 'MORE: Insufficient disk space') and said(o, 'E1'), (o[-300:], len(files_a(k).get('A:\\M.TXT', b''))))
+    k = full()
+    o = run(k, 'sort < big.txt | find "mark"')
+    check('SORT < BIG.TXT | FIND "mark", 4 KB left: the pipe\'s file fills: "SORT: Insufficient disk space"',
+          said(o, 'SORT: Insufficient disk space'), o[-300:])
+    k = full()
+    o = run(k, 'find /n "mark" big.txt > n.txt')
+    check('... with room (FIND /N "mark", 20 lines): "[1]00000 mark" ... written whole, exit 0', said(o, 'E0')
+          and files_a(k).get('A:\\N.TXT') == b'\r\n---------- BIG.TXT\r\n' + b''.join(b'[%d]%05d mark\r\n' % (i + 1, i)
+                                                                        for i in range(0, 2000, 100)), o[-300:])
+    # NUL, the screen and a pipe take all: nothing said
+    k = boot()
+    o = run(k, 'find "COM" list.txt > nul')
+    check('FIND "COM" LIST.TXT > NUL: nothing printed, exit 0', body(o).strip() == '' and said(o, 'E0'), o)
+    o = run(k, 'sort < words.txt > nul')
+    check('SORT < WORDS.TXT > NUL: nothing printed, exit 0', body(o).strip() == '' and said(o, 'E0'), o)
+    o = run(k, 'more < words.txt > nul')
+    check('MORE < WORDS.TXT > NUL: nothing printed, exit 0', body(o).strip() == '' and said(o, 'E0'), o)
+    o = run(k, 'sort < words.txt > w.txt')
+    check('SORT < WORDS.TXT > W.TXT: its empty line a write of CR LF alone, no "disk space", the file whole, exit 0',
+          files_a(k).get('A:\\W.TXT') == b''.join(l.encode() + b'\r\n' for l in sorted(lines(WORDS), key=sortkey))
+          and body(o).strip() == '' and said(o, 'E0'), (o, files_a(k).get('A:\\W.TXT')))
+    o = run(k, 'sort < words.txt | find /v "zzz"')
+    check('SORT < WORDS.TXT | FIND /V "zzz": all 9 lines, the empty one too, exit 0', body(o).split('\n')[:9]
+          == sorted(lines(WORDS), key=sortkey) and 'Insufficient' not in o and said(o, 'E0'), o)
+    o = run(k, 'more < list.txt')
+    check('MORE < LIST.TXT to the screen: its 20 lines, exit 0', [l for l in body(o).split('\n') if l.strip()]
+          == [l for l in lines(LIST) if l] and said(o, 'E0'), o)
+    o = run(k, 'type list.txt | find "COM" | sort /r')
+    check('TYPE LIST.TXT | FIND "COM" | SORT /R: the COM lines, the other way round, exit 0',
+          [l for l in body(o).split('\n') if l.strip()] == sorted([l for l in lines(LIST) if 'COM' in l], key=sortkey, reverse=True)
+          and 'Insufficient' not in o and said(o, 'E0'), o)
+    o = run(k, 'find /c "COM" list.txt | more')
+    check('FIND /C "COM" LIST.TXT | MORE: "---------- LIST.TXT: 5", exit 0', said(o, '---------- LIST.TXT: 5')
+          and 'Insufficient' not in o and said(o, 'E0'), o)
+
+def protect_at_write(k):
+    """A:'s write-protect tab on once the program run writes to standard output (after its redirection's file was
+    made): the kernel's writes of it fail"""
+    st = {'exec': False}
+    def h(pc):
+        if k.addr != k.i21 or pc.r('cs') != 0x60: return
+        if pc.r('ax') >> 8 == 0x4B: st['exec'] = True
+        elif st['exec'] and pc.r('ax') >> 8 == 0x40 and pc.r('bx') == 1: k.pc.drives[0].wp = True
+    k.hooks.append(h)
+
+def t_werr():
+    # output into a file on a disk whose writes fail (the tab on after it was made): "Write error", not "disk space"
+    for tool, line, lv in (('FIND', 'find "line" big.txt > out.txt', 2), ('SORT', 'sort < big.txt > s.txt', 1),
+                           ('MORE', 'more < cr.txt > m.txt', 1)):
+        for how in ('Fail at the prompt', 'the kernel\'s INT 24h, nobody asked'):
+            k = boot(f('BIG.TXT', RBIG), f('CR.TXT', RCR))
+            protect_at_write(k)
+            o = run(k, line, fails=True) if how.startswith('Fail') else kernel24(k, line)
+            check('%s, A: write-protected once its output was made (%s): "%s: Write error", not "Insufficient disk '
+                  'space", exit code %d' % (line.upper(), how, tool, lv), said(o, '%s: Write error' % tool)
+                  and 'Insufficient' not in o and said(o, 'E%d' % lv), o[-600:])
+
 def t_review():
     # regression cases, each held to
     k = boot(f('NL.TXT', b'zz\r\nab\0cd\r\naa\r\n'), f('ST.TXT', b'1b\r\n2a\r\n3a\r\n4a\r\n5a\r\n'),
@@ -225,7 +365,7 @@ def t_review():
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_find, t_more, t_sort, t_comp, t_review):
+    for t in (t_find, t_more, t_sort, t_comp, t_review, t_rerr, t_wfull, t_werr):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

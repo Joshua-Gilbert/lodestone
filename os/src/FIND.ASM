@@ -14,8 +14,14 @@
 ; Lines longer than 1,024 characters are taken as several.  Each line goes
 ; out with CR LF (one that had only LF too).
 ;
+; A read that fails ends that file (its lines so far written), "FIND: Read
+; error in NAME" on standard error, and FIND goes on to the next.  Its
+; output not all written (a full disk) ends it: "FIND: Insufficient disk
+; space"; a write that fails (a write-protected disk, a device error)
+; too: "FIND: Write error".
 ; Exit code: 0 a line found (or, /V, one without it), 1 none, 2 an error
-; (a file not found, a bad switch, no string).
+; (a file not found or unreadable, a bad switch, no string, a full disk,
+; a write that failed).
 cpu 286
 org 100h
 
@@ -211,6 +217,7 @@ one:    mov     [hin], bx
         mov     word [bend], 0
         mov     word [bpos], 0
         mov     byte [eof], 0
+        mov     byte [rerr], 0
 .line:  xor     di, di                  ; DI = the line's length
 .c:     call    getc
         jc      .last
@@ -238,7 +245,19 @@ one:    mov     [hin], bx
         call    pdec
         mov     dx, s_crlf
         call    print
-.x:     mov     bx, [hin]
+.x:     cmp     byte [rerr], 0          ; a read failed: "FIND: Read error in
+        je      .ok                     ;  NAME" (or "... in standard input")
+        mov     dx, s_rerr
+        call    eprint
+        mov     si, argbuf
+        cmp     byte [nfiles+2], 0
+        jne     .rn
+        mov     si, s_stdin
+.rn:    call    epz
+        mov     dx, s_crlf
+        call    eprint
+        mov     byte [result], 2
+.ok:    mov     bx, [hin]
         ret
 
 ; the line in lbuf (DI long, its LF not in it): has it the string?
@@ -259,27 +278,30 @@ do_line:
         jne     .x
         cmp     byte [opt_n], 0         ; "[12]"
         je      .t
-        mov     al, '['
-        call    putc
+        push    di
         mov     ax, [lno]
         mov     dx, [lno+2]
-        call    pdec
-        mov     al, ']'
-        call    putc
-.t:     mov     cx, di                  ; the line, and CR LF (its own CR if
-        mov     dx, lbuf                ;  it had one)
-        jcxz    .cr
-        mov     bx, di
+        call    pnum
+        dec     di
+        mov     byte [di], '['
+        mov     byte [numbuf + 12], ']'
+        mov     dx, di
+        mov     cx, numbuf + 13
+        sub     cx, di
+        mov     bx, 1
+        call    write
+        pop     di
+.t:     mov     bx, di                  ; the line and CR LF (in place of its
+        or      bx, bx                  ;  own CR if it had one): one write
+        jz      .w
         cmp     byte [lbuf+bx-1], 13
         jne     .w
-        dec     cx
-.w:     mov     bx, 1
-        mov     ah, 40h
-        int     21h
-.cr:    mov     al, 13
-        call    putc
-        mov     al, 10
-        call    putc
+        dec     bx
+.w:     mov     word [lbuf+bx], 0A0Dh
+        lea     cx, [bx+2]
+        mov     dx, lbuf
+        mov     bx, 1
+        call    write
 .x:     ret
 
 ; is pat in lbuf[0, DI)?  CF if so
@@ -325,7 +347,7 @@ getc:   cmp     byte [eof], 0
         pop     dx
         pop     cx
         pop     bx
-        jc      .eof
+        jc      .rerr
         or      ax, ax
         jz      .eof
         mov     [bend], ax
@@ -337,16 +359,18 @@ getc:   cmp     byte [eof], 0
         je      .eof
         clc
         ret
-.eof:   mov     byte [eof], 1
+.rerr:  mov     byte [rerr], 1          ; a read failed: its end too (said
+.eof:   mov     byte [eof], 1           ;  after the lines before it)
 .end:   stc
         ret
 
 ; ---------------------------------------------------------------------
-print:  mov     ah, 9
-        int     21h
-        ret
+print:  push    bx                      ; DX ($) to standard output
+        mov     bx, 1
+        jmp     short eprint.go
 eprint: push    bx                      ; DX ($) to standard error
-        push    cx
+        mov     bx, 2
+.go:    push    cx
         mov     si, dx
         xor     cx, cx
 .l:     cmp     byte [si], '$'
@@ -354,9 +378,7 @@ eprint: push    bx                      ; DX ($) to standard error
         inc     si
         inc     cx
         jmp     .l
-.w:     mov     bx, 2
-        mov     ah, 40h
-        int     21h
+.w:     call    write
         pop     cx
         pop     bx
         ret
@@ -371,20 +393,31 @@ pz:     mov     bx, 1                   ; SI (ASCIIZ) to standard output
         inc     cx
         jmp     .l
 .w:     pop     dx
-        mov     ah, 40h
+        jmp     write
+
+; CX bytes at DX to handle BX.  Standard output's write coming up short
+; (a full disk: a device takes all) ends FIND, "FIND: Insufficient disk
+; space", and one failing (a write-protected disk, a device's error, a
+; critical error answered Fail) "FIND: Write error", exit code 2
+write:  mov     ah, 40h
         int     21h
-        ret
-putc:   push    ax
-        push    dx
-        mov     dl, al
-        mov     ah, 2
+        jc      .e
+        cmp     ax, cx
+        je      .x
+        cmp     bx, 1
+        jne     .x
+        mov     dx, s_full
+        jmp     short .end
+.e:     cmp     bx, 1
+        jne     .x
+        mov     dx, s_wrerr
+.end:   call    eprint
+        mov     ax, 4C02h
         int     21h
-        pop     dx
-        pop     ax
-        ret
-; DX:AX in decimal
-pdec:   pusha
-        mov     di, numbuf + 12
+.x:     ret
+
+; DX:AX in decimal at DI, to numbuf + 12 (BX, SI changed)
+pnum:   mov     di, numbuf + 12
         mov     bx, 10
 .d:     push    ax
         mov     ax, dx
@@ -400,6 +433,10 @@ pdec:   pusha
         mov     si, ax
         or      si, dx
         jnz     .d
+        ret
+; DX:AX in decimal to standard output
+pdec:   pusha
+        call    pnum
         mov     byte [numbuf + 12], '$'
         mov     dx, di
         call    print
@@ -412,6 +449,10 @@ s_crlf  db 13, 10, '$'
 s_badsw db 'FIND: Invalid switch', 13, 10, '$'
 s_nostr db 'FIND: no string ("in quotes"): FIND [/V] [/C] [/N] "string" [name ...]', 13, 10, '$'
 s_nofile db 'File not found - $'
+s_rerr  db 'FIND: Read error in $'
+s_stdin db 'standard input', 0
+s_full  db 'FIND: Insufficient disk space', 13, 10, '$'
+s_wrerr db 'FIND: Write error', 13, 10, '$'
 
         alignb 2
 section .bss
@@ -421,6 +462,7 @@ opt_c   resb 1
 opt_n   resb 1
 eof     resb 1
 result  resb 1
+rerr    resb 1
         alignb 2
 nfiles  resw 2                          ; (the second word: files named)
 fptr    resw 1
@@ -435,7 +477,7 @@ pat     resb 128
 argbuf  resb 96
 numbuf  resb 14
 dta     resb 44
-lbuf    resb LMAX
+lbuf    resb LMAX + 1                   ; (and its CR LF)
 ibuf    resb CHUNK
         resb 512
 stack_top:
