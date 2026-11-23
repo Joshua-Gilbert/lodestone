@@ -1807,9 +1807,9 @@ def t_divcap():
                   'ems_su 0, its 18 KB block freed' if ems else 'tc_lock 0, and a later F002h lends it again: LEND.COM "Y"'),
                   at and st == (0, 0, 0, True) and (sc_blocks() == 0 if ems else 'Y' in ''.join(k.pc.tty)) and not k.crashed,
                   (at, st, k.band(), sc_blocks(), ''.join(k.pc.tty)))
-            check('(a limit: a capture\'s file stays open when the root ends) ... its SCREEN01.BMP (0 bytes) still '
-                  'open in the root\'s handle table: %d free, %d before' % (jfree(), j0),
-                  f1 == {'A:\\SCREEN01.BMP': 0} and jfree() == j0 - 1 and not probs, (f1, jfree(), j0, probs))
+            check('... its SCREEN01.BMP (0 bytes) closed with the root\'s other handles as the Executive starts over '
+                  '(exec_main): %d free, %d before' % (jfree(), j0),
+                  f1 == {'A:\\SCREEN01.BMP': 0} and jfree() == j0 and not probs, (f1, jfree(), j0, probs))
         k.pc.prtsc(); k.settle(6.0)
         new = sorted(set(files()) - set(f1))
         check('... the next Shift-PrtSc saves the screen again (%s), cap_req 0' % new,
