@@ -1677,6 +1677,32 @@ def t_divirq():
     finally:
         pcemu.PIC_ISR = old
 
+def t_divcap():
+    """A divide error while a screen capture is under way (raised in SCREEN.PRN's code, cap_req 2, from the
+    Executive's prompt): no message (inside INT 21h), the prompt's LCMD ends, InDOS 0, its files closed, and the
+    capture given up (cap_req 0): the next Shift-PrtSc saves a picture again.  (cap_req had stayed 2, and no
+    capture started again.)"""
+    k = ktest.KPC(image('divcap.img', os.path.join(GOS, 'src', 'LCMD.COM'), SCR)); k.start()
+    refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0] for i in range(24)]
+    r0 = refs()                                     # (the Executive's)
+    sh = Shell(k)
+    sh.run('ver')
+    shots = lambda: sorted(n for n in fatcheck.read_files(k.pc.drives[0].img) if 'SCREEN0' in n)
+    k.pc.prtsc(); k.settle(6.0)
+    s1 = shots()
+    at = divide_at(k, lambda pc: k.rd('cap_req', 1)[0] == 2 and pc.r('cs') != 0x60 and pc.r('cs') < 0xA000)
+    k.pc.tty.clear()
+    k.pc.prtsc(); k.settle(6.0)
+    after = (k.rd('cap_req', 1)[0], k.rd('indos', 1)[0], k.u16('cur_psp') == k.u16('root_psp'), k.band()[:1], shots())
+    check('a divide error in SCREEN.PRN while it saves the screen (%s): no message, the prompt\'s LCMD ends ("LCMD.COM '
+          'ended"), InDOS 0, cap_req 0, no new file' % (at and '%04X:%04X' % at[0]),
+          s1 == ['A:\\SCREEN01.TXT'] and at and after == (0, 0, True, ['LCMD.COM ended'], s1)
+          and 'Divide overflow' not in ''.join(k.pc.tty) and not k.crashed, (s1, at, after))
+    k.pc.prtsc(); k.settle(6.0)
+    check('... the next Shift-PrtSc saves the screen again (SCREEN01.BMP, the Executive\'s), cap_req 0, the handles '
+          'as the Executive had them (none left open by the capture given up)', shots() == ['A:\\SCREEN01.BMP', 'A:\\SCREEN01.TXT'] and k.rd('cap_req', 1)[0] == 0
+          and refs() == r0 and not k.crashed, (shots(), k.rd('cap_req', 1), refs(), r0))
+
 def t_trunc():
     """CREATE onto a file there (here a redirection): truncated and stamped,
     but bytes 12-21 of its entry, which other systems use (creation time,
@@ -6216,7 +6242,7 @@ sdx     dw      0
           and 'A:\\X' not in files and not k.crashed, (n, o, len(files)))
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_divirq, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_divirq, t_divcap, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
