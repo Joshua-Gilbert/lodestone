@@ -3479,10 +3479,10 @@ ui_form:
         pop     ax
         cmp     ax, K_ENTER
         je      .next
-        cmp     ax, K_CODE_ENTER
-        je      .ok
-        cmp     ax, K_ESC
-        je      .cancel
+        cmp     ax, K_CODE_ENTER        ; (the form's ends, and a text
+        je      .hok                    ;  field's key with no use here: by
+        cmp     ax, K_ESC               ;  the jmps before .cnext, in a short
+        je      .hcan                   ;  jump's reach)
         cmp     ax, K_TAB
         je      .down
         cmp     ax, K_DOWN
@@ -3494,7 +3494,7 @@ ui_form:
         cmp     ax, EV_CLICK
         je      .click
         cmp     byte [si+FL_TYPE], FT_CHOICE
-        jne     .same                   ; (a key the editor gave back)
+        jne     .hsame                  ; (a key the editor gave back)
         cmp     ax, K_RIGHT
         je      .cnext
         cmp     al, ' '
@@ -3502,9 +3502,11 @@ ui_form:
         cmp     ax, K_LEFT
         je      .cprev
         jmp     .l
-.next:  call    .adv
-        jae     .ok
+        db      90h                     ; (never run: .next, .down and .set
+.next:  call    .adv                    ;  keep their parity)
+        jae     .hok
         jmp     short .set
+        db      90h                     ; (never run, as above)
 .down:  call    .adv
         jb      .set
         xor     ax, ax
@@ -3517,6 +3519,9 @@ ui_form:
         mov     ax, [bx+F_N]
 .u1:    dec     ax
         jmp     .set
+.hok:   jmp     short .ok
+.hcan:  jmp     short .cancel
+.hsame: jmp     short .same
 .cnext: call    fm_choice_count         ; CX = options
         mov     bx, [si+FL_DATA]
         mov     al, [bx]
