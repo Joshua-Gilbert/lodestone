@@ -985,12 +985,16 @@ ems_lend:
         inc     ax
         jmp     f_F0.lx
 .no:    jmp     f_F0.nolend
-ems_back:
+ems_back:                               ; (f_F0.bk's: registers kept, a RET)
+        pusha
+        push    es
         xor     ax, ax
         xchg    ax, [ems_su]
         mov     es, ax
         call    mem_free                ; (none lent: no block at 0, nothing)
-        jmp     ok
+        pop     es
+        popa
+        ret
 %endif
 
 ems_pend:                               ; (the end of the code)
@@ -1123,15 +1127,15 @@ ems_init:
         mov     ax, ems_tc              ; dio's tc_piece
         sub     ax, dio.tcp + 3
         mov     [dio.tcp + 1], ax
-        mov     al, 0E9h                ; F0h's lend and back: JMP NEAR
-        mov     [f_F0.lend], al
-        mov     [f_F0.back], al
+        mov     al, 0E9h                ; F0h's lend and back: JMP NEAR (back's
+        mov     [f_F0.lend], al         ;  .bk, which root_restart calls too)
+        mov     [f_F0.bk], al
         mov     ax, ems_lend
         sub     ax, f_F0.lend + 3
         mov     [f_F0.lend + 1], ax
         mov     ax, ems_back
-        sub     ax, f_F0.back + 3
-        mov     [f_F0.back + 1], ax
+        sub     ax, f_F0.bk + 3
+        mov     [f_F0.bk + 1], ax
         mov     word [mem_init.tc], 0EBh | (mem_init.zm - mem_init.tc - 2) << 8
         mov     byte [mem_init.zm + 1], 'Z'     ; (no "SC" block)
         ; KMDISK.INC: M:'s installer and resident part into the cache's

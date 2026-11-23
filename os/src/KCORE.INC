@@ -162,10 +162,13 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; it had interrupted, all abandoned by the 4Ch; with nothing in service
 ; they do nothing.  Then the message.
 ;   Inside the kernel (InDOS not 0) neither.  No EOI: the call interrupted
-; may be half way through its buffers, its FAT or a floppy command, and
-; an IRQ ended there would let terminate's closes and flush write that;
-; left in service, the IRQ holds the disk back and nothing is written (the
-; level stays in service for good: the price).  No message: int21's entry
+; may be half way through its buffers, its FAT or a floppy command.  Only
+; a floppy is held back by a level left in service (IRQ 6 below it: the
+; BIOS times out, terminate's closes and flush write nothing); C: (polled,
+; IRQ 14 masked) and M: (memory) get whatever state the interrupted call
+; left, with or without the EOI.  The price: the level stays in service
+; for good, and with IRQ 0 the timer, keyboard and all below it stop,
+; also where nothing was half done (a key wait in INT 21h).  No message: int21's entry
 ; puts a call at InDOS 0 on kstack_top and a nested one on astack_top, so
 ; from InDOS 2 up the message's call would take the stack the fault is
 ; on; at InDOS 1 it would not, but AH=09h writes through handle 1, a file
@@ -173,9 +176,10 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; the buffers), the interrupted call may be in the middle of.  A screen
 ; capture under way (cap_req: it runs inside INT 21h, at InDOS 1 and up)
 ; is given up as its own end gives it up, a press made meanwhile too,
-; else no capture could start again.  (cap_req is the machine's, not a
-; task's: under MULTITASK=1 a fault inside another task's kernel call
-; gives up a capture that task's switch left under way.)
+; else no capture could start again.  (cap_req is the machine's, InDOS a
+; task's; but a capture is never left under way by a task switch while
+; another task runs inside the kernel: with a floppy owner out only tasks
+; outside it run, and a capture doesn't wait for keys.)
 ;   Then the 4Ch, through INT 21h with interrupts on, and never back to the
 ; interrupted context.  While a floppy owner is out, multitasking's gate
 ; (KMT.INC's mt_gate) holds it, on the stack the fault was on, until the
@@ -1199,6 +1203,11 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ; INT 21h F0h: Lodestone's own calls (MS-DOS doesn't have it).
 ;   AL = 0: AX = 4F47h ('GO'), BX = version (0201h)
 ;   AL = 1: DL = drive (0 = A:) -> CX = files open on it
+;   AL = 2: lend the disk cache's memory (the UI's save-under, a capture's
+;           buffer) -> ES = its segment, CX = bytes (CF, 8: no cache, or
+;           lent already).  Any caller may ask: nothing checks who it is
+;   AL = 3: give it back (and root_restart, when the root starts over)
+;   AL = 4: the UI's segment moved to BX
 ;   AL = 5: the Executive's screen saver, for a program at its prompt:
 ;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
 ;   AL = 6: PrtSc's printer driver -> ES:BX = its path ("": files), CX =
@@ -1259,9 +1268,13 @@ f_F0:   mov     al, [bp+F_AX]
 .nolend:
         mov     ax, 8
         jmp     fail
-; AL=3: the cache has its memory back
-.back:  mov     byte [tc_lock], 0
+; AL=3: the cache has its memory back.  .bk: the same for root_restart
+; (a lend from the root's own context goes when it starts over); all
+; registers but the flags kept, with EMS too
+.back:  call    .bk
         jmp     ok
+.bk:    mov     byte [tc_lock], 0       ; (KEMS.INC: JMP NEAR ems_back here)
+        ret
 ; AL=5: the saver's delay and ui_saver_far (UICORE.INC), which runs it
 .saver: mov     es, [ui_seg]
         mov     [bp+F_ES], es

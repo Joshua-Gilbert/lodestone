@@ -1714,25 +1714,34 @@ def t_divcap():
     """A divide error while a screen capture is under way, raised in SCREEN.PRN's code once it has its file open
     (cap_req 2, InDOS 1): no message, the capture given up (cap_req 0, so the next Shift-PrtSc saves again), InDOS 0.
     From the Executive's prompt the prompt's LCMD ends and terminate closes the file (left at 0 bytes).  From the
-    Executive itself, once the driver has borrowed the disk cache (F002h, tc_lock 1), the Executive starts over:
-    the cache is given back (tc_lock 0; it had stayed lent, the track cache off till a reboot), but the file stays
-    open in the root's handle table, as a .RUN's do (a limit, pinned as it stands).  (cap_req had stayed 2, and no
-    capture started again.)"""
-    for where in ('prompt', 'Executive'):
-        k = ktest.KPC(image('divcap.img', os.path.join(GOS, 'src', 'LCMD.COM'), SCR)); k.start()
+    Executive itself, once the driver has borrowed the disk cache (F002h: tc_lock 1, or with EMS a block of its own
+    in ems_su), the Executive starts over: the cache is given back (tc_lock 0, the block freed; it had stayed lent,
+    the track cache off or 18 KB gone till a reboot), and a later F002h is answered again (LEND.COM), but the file
+    stays open in the root's handle table, as a .RUN's do (a limit, pinned as it stands).  Shift-PrtSc pressed
+    again while the capture was under way (cap_req 3) is dropped with it, as the capture's own end drops one.
+    (cap_req had stayed 2, and no capture started again.)"""
+    lend = os.path.join(OUT, 'LEND.COM')            # F002h: "Y" if lent, "N" if refused; then F003h
+    open(lend, 'wb').write(bytes([0xB8, 0x02, 0xF0, 0xCD, 0x21, 0xB2, 0x59, 0x73, 0x02, 0xB2, 0x4E, 0xB4, 0x02, 0xCD,
+                                  0x21, 0xB8, 0x03, 0xF0, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]))
+    for where, ems in (('prompt', 0), ('Executive', 0), ('Executive', 88)):
+        k = ktest.KPC(image('divcap.img', os.path.join(GOS, 'src', 'LCMD.COM'), SCR, lend), ems_pages=ems); k.start()
         refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0] for i in range(24)]
         jfree = lambda: list(k.pc.rd(k.u16('root_psp'), 0x18, 20)).count(0xFF)
+        lent = lambda: k.u16('ems_su') if ems else k.rd('tc_lock', 1)[0]
         r0, j0 = refs(), jfree()                    # (the Executive's)
         if where == 'prompt': Shell(k).run('ver')
         rb = refs()
         files = lambda: {n: len(b) for n, b in fatcheck.read_files(k.pc.drives[0].img).items() if 'SCREEN0' in n}
-        cond = lambda pc: (k.rd('cap_req', 1)[0] == 2 and pc.r('cs') != 0x60 and pc.r('cs') < 0xA000
-                           and sum(refs()) > sum(rb) and (where == 'prompt' or k.rd('tc_lock', 1)[0] == 1))
+        def cond(pc):
+            if not (k.rd('cap_req', 1)[0] == 2 and pc.r('cs') != 0x60 and pc.r('cs') < 0xA000 and sum(refs()) > sum(rb)
+                    and (where == 'prompt' or lent())): return False
+            k.pc.wr(0x60, k.Y['cap_req'], b'\x03')  # (Shift-PrtSc pressed again meanwhile)
+            return True
         at = divide_at(k, cond)
         k.pc.tty.clear()
         k.pc.prtsc(); k.settle(6.0)
         f1, probs = files(), fatcheck.check(bytes(k.pc.drives[0].img))[0]
-        st = (k.rd('cap_req', 1)[0], k.rd('indos', 1)[0], k.rd('tc_lock', 1)[0], k.u16('cur_psp') == k.u16('root_psp'))
+        st = (k.rd('cap_req', 1)[0], k.rd('indos', 1)[0], lent(), k.u16('cur_psp') == k.u16('root_psp'))
         if where == 'prompt':
             check('a divide error in SCREEN.PRN with its file open, from the Executive\'s prompt (%s): no message, the '
                   'prompt\'s LCMD ends, InDOS 0, cap_req 0; terminate closed the file (SCREEN01.TXT, 0 bytes; the '
@@ -1741,10 +1750,21 @@ def t_divcap():
                   and refs() == r0 and not probs and 'Divide overflow' not in ''.join(k.pc.tty) and not k.crashed,
                   (at, st, k.band(), f1, refs(), r0, probs))
         else:
-            check('... from the Executive, with the cache borrowed (%s): the Executive starts over, cap_req 0, tc_lock 0 '
-                  '(the cache given back)' % (at and '%04X:%04X' % at[0]),
-                  at and st == (0, 0, 0, True) and k.band()[:1] == ['Select a file and confirm'] and not k.crashed,
-                  (at, st, k.band()))
+            def sc_blocks():                        # (ems_lend's block: owner 8, "SC" as its name)
+                seg, n = k.u16('first_mcb'), 0
+                for _ in range(200):
+                    t, own, sz = k.pc.rd(seg, 0, 1)[0], k.pc.u16(seg, 1), k.pc.u16(seg, 3)
+                    n += own == 8 and k.pc.rd(seg, 8, 2) == b'SC'
+                    if t != 0x4D: break
+                    seg += sz + 1
+                return n
+            k.pc.tty.clear()
+            if not ems: k.run_file('LEND.COM', 10)  # (with EMS a program can't: its 18 KB block needs room)
+            check('... from the Executive, with the cache borrowed%s (%s): the Executive starts over, cap_req 0, the '
+                  'cache given back (%s)' % (' (EMS)' if ems else '', at and '%04X:%04X' % at[0],
+                  'ems_su 0, its 18 KB block freed' if ems else 'tc_lock 0, and a later F002h lends it again: LEND.COM "Y"'),
+                  at and st == (0, 0, 0, True) and (sc_blocks() == 0 if ems else 'Y' in ''.join(k.pc.tty)) and not k.crashed,
+                  (at, st, k.band(), sc_blocks(), ''.join(k.pc.tty)))
             check('(a limit: a capture\'s file stays open when the root ends) ... its SCREEN01.BMP (0 bytes) still '
                   'open in the root\'s handle table: %d free, %d before' % (jfree(), j0),
                   f1 == {'A:\\SCREEN01.BMP': 0} and jfree() == j0 - 1 and not probs, (f1, jfree(), j0, probs))

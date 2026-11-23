@@ -712,9 +712,10 @@ root_restart:
         mov     ds, ax
         mov     es, ax
         mov     byte [indos], 0
-        mov     byte [tc_lock], 0       ; (the cache lent from the root's own
+        call    f_F0.bk                 ; (the cache lent from the root's own
         jmp     run_ui                  ;  context, F002h: a window's save-under,
-        db      90h                     ;  a capture's buffer, gone with it.  The
+        db      90h                     ;  a capture's buffer, gone with it; with
+                                        ;  EMS, ems_back frees its block.  The
                                         ;  pad, never run: what follows at its
                                         ;  parity)
 
