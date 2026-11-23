@@ -415,8 +415,7 @@ s_endq2 db ': Confirm to end the task',0
 e_tnot  db 'Not possible for that task',0
 e_tmem  db 'Not enough memory or EMS',0
 e_notask db 'No such task',0
-ending  db 0FFh                         ; the task asked to end (FFh: none),
-endgen  db 0                            ;  and its count then (MT_EXIT)
+ending  db 0FFh                         ; the task asked to end (FFh: none)
 
 ; the hot labels even (EVEN.INC: bench/hot.py's tasks)
 %include "EVEN.INC"
@@ -428,6 +427,7 @@ quit    resb 1
 paints  resb 1                          ; the window drawn: 1 once, more: not
 off     resb 1                          ; multitasking off
 front   resb 1                          ; the task in front
+endgen  resb 1                          ; the count of the task that asked to end (MT_EXIT)
 recs    resb MT_TASKS * MT_REC          ; MT_LIST's records
 flags   resb MT_TASKS                   ; each one's MT_FLAGS (FFh: task 0)
 line    resb 80

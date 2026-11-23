@@ -647,7 +647,7 @@ The aim: a calculator on the 80287, scriptable at the prompt (`CALC 4*4`) and a 
   - `-2^2` = −4, `2^3^2` = 2^9, and `2^-1` works;
   - functions `sqrt sin cos tan atan ln log exp abs`, constants `pi ans`; any other name is the host's (an environment variable in CALC.COM);
   - a sum that starts with `+ * / \ % ^` goes on from the answer.
-  - Brackets go 24 deep and 20 operators can wait at once ("Too deep"), so the `.RUN` stays well inside the Executive's stack.
+  - Brackets go 24 deep and 20 operators can wait at once ("Too deep"), so the `.RUN` stays well inside the Executive's stack. A unary minus has no depth check of its own: each `-` in a row uses 2 bytes of stack, bounded by the 120-character line (278 bytes measured for 119 minus signs, about 370 with 23 brackets as well).
 - **With a coprocessor:**
   - the number being worked on is ST0, and the left side of each operator waits in a 10-byte slot, so the coprocessor's stack never holds more than four;
   - all exceptions stay masked (there is no IRQ 13 handler);

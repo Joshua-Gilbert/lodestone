@@ -1304,14 +1304,14 @@ s_paste     db 'Paste          CODE-V', 0
 s_full      db 'Full screen    CODE-Tab', 0
 win:        dw 0, SCR_TOP, 80, SCR_BAND_Y - SCR_TOP
             dw 0, w_draw, WF_MOVE | WF_SIZE | WF_CLOSE     ; (the title: start)
-top         dw 0                        ; the view: its screen's first row and
-left        dw 0                        ;  column in the window
 
 ; the hot labels even (EVEN.INC: bench/hot.py's term)
 %include "EVEN.INC"
         EVEN    gone, mtc, show.w, scrl.v, scrl.l, cells.cell, cells.d, cells.ns, attr, attr.x, cell.a, cell.d
 
 section .bss
+top         resw 1                      ; the view: its screen's first row and
+left        resw 1                      ;  column in the window
 task        resb 1
 gen         resb 1
 note        resb 1                      ; 1: a note shown, not its screen
