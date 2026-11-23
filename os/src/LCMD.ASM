@@ -575,12 +575,10 @@ do_pipe:
         call    redir_undo
         cmp     word [pipe_rest], 0
         jne     .seg
-.x:     call    redir_undo              ; (CX 0)
+.x:     call    redir_undo
         cmp     byte [pipe_n], 1        ; a pipe leaves its files (one
-        ja      .d                      ;  command: none, and no INT 24h;
-        cmp     [pipe_rest], cx         ;  a pipe's first failing: the file
-        je      .r                      ;  its redirection made)
-.d:     mov     al, '1'                 ; (the names no longer needed: made
+        jbe     .r                      ;  command: none, and no INT 24h)
+        mov     al, '1'                 ; (the names no longer needed: made
         call    .del                    ;  again there)
         mov     al, '2'
         call    .del
@@ -748,7 +746,10 @@ redir_do:
 ; redir_do's: make handle CX refer to file handle BX (which is closed);
 ; AX = a copy of what CX was.  No handle left for the copy: CX is left as
 ; it was, the file is closed all the same, and "Too many open files" (CF)
-; goes back to redir_do's caller: the command is not run
+; goes back to redir_do's caller: the command is not run.  pipe_n is
+; counted on, so do_pipe deletes this level's pipe files even after a
+; pipe's first command, whose file is made (only then: no INT 24h from
+; a delete when a pipe fails otherwise)
 swap_handle:
         push    bx
         mov     bx, cx
@@ -763,6 +764,7 @@ swap_handle:
         pop     ax
         ret
 .f:     call    fclose
+        inc     byte [pipe_n]
         pop     ax                      ; (redir_do's return)
         mov     si, e_toomany
         jmp     err

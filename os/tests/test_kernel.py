@@ -6436,6 +6436,7 @@ def t_cmdedge():
                 envcom('ENV24', 'NV=20', 'WLEN=24', 'Z1'), envcom('ENVFST', 'NV=0', 'WLEN=1024', 'Z1', 'PAUSE'), 'GFX6.COM=' + gfx,
                 'A.TXT=' + edge_a, 'B.TXT=' + edge_a, 'B2.TXT=' + edge_a, 'B3.TXT=' + edge_a, 'E\\', 'F\\', 'F\\ONE.TXT=' + edge_a,
                 bat('X.BAT', '@echo off', 'echo BAT1 > o.txt', 'echo BAT2'),
+                bat('Y.BAT', '@echo off', 'ver', 'echo E > o.txt', 'if errorlevel 1 echo EL1', 'echo YEND'),
                 bat('XB.BAT', '@echo off', 'echo before', 'type nosuch.x', 'exit', 'echo AFTER EXIT'),
                 bat('XA.BAT', '@echo off', 'call xb', 'echo AFTER CALL'),
                 bat('XC.BAT', '@echo off', 'ver', 'exit', 'type nosuch.x'),
@@ -6538,17 +6539,24 @@ def t_cmdedge():
     pipes = lambda: [n for n in files() if 'PIPE' in n]
     tmany = 'Too many open files'
     check('(handles 5-19 free at the prompt)', j0[5:] == b'\xff' * 15, j0.hex())
-    sh.run('copy a.txt pipea1.$$$')                    # (this level's pipe files' names: a command
-    sh.run('copy a.txt pipea2.$$$')                    #  not in a pipe deletes neither)
-    sh.run('ver')                                      # (ERRORLEVEL 0)
     o, same, j = full('echo OUTER > o.txt || echo ORRAN', 1)
-    o2 = sh.run('if errorlevel 1 echo EL1')
     t = files().get('A:\\O.TXT')
     check('> with one handle free (the file takes it, the DUP saving handle 1 fails): "Too many open files" on the '
-          'screen, the ECHO not run (|| runs: it failed), ERRORLEVEL left 0, O.TXT made and empty, the table as before',
-          tmany in o and 'OUTER' not in o and 'ORRAN' in o and 'EL1' not in o2 and t == b'' and same, (o, o2, t, j))
-    check('... the shell runs; PIPEA1.$$$ and PIPEA2.$$$ (made before) still there: no pipe, none deleted',
-          'Lodestone version' in sh.run('ver') and len(pipes()) == 2, pipes())
+          'screen, the ECHO not run (|| runs: it failed), O.TXT made and empty, the table as before',
+          tmany in o and 'OUTER' not in o and 'ORRAN' in o and t == b'' and same, (o, t, j))
+    check('... the shell runs', 'Lodestone version' in sh.run('ver'))
+    o, same, j = full('y', 1)
+    check('... in a batch file after VER (ERRORLEVEL 0): IF ERRORLEVEL 1 after the failed line not true (left alone)',
+          'Y line 3: ' + tmany in o and 'EL1' not in o and 'YEND' in o and same, (o, j))
+    sh.run('copy a.txt pipea1.$$$')                    # (this level's pipe files' names)
+    sh.run('copy a.txt pipea2.$$$')
+    o, same, j = full('echo IN0 < a.txt', 0)
+    o2, same2, j2 = full('echo P0 | echo Q0', 0)
+    check('< with no handle free (the open fails): "File not found" (MS-DOS 3.30: "Path not found"); a pipe: "File '
+          'creation error" (MS-DOS: "Intermediate file error during pipe"); neither run, the table as before; a pipe '
+          'failing so, or a command not in a pipe, deletes no pipe file (PIPEA1.$$$ and PIPEA2.$$$, made before, there)',
+          'File not found' in o and 'IN0' not in o and 'File creation error' in o2 and 'P0' not in o2 and 'Q0' not in o2
+          and same and same2 and len(pipes()) == 2, (o, o2, j, j2, pipes()))
     sh.run('del pipea?.$$$')
     o, same, j = full('echo ZERO > o0.txt', 0)
     o2, same2, j2 = full('echo NEW > b3.txt', 0)
