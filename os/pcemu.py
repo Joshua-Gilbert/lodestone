@@ -475,6 +475,7 @@ class PC:
         s.due_at = float('inf'); s.on_due = None
         s.irq_pending = set(); s.pic_mask = 0xB8; s.irq_wait = False
         s.isr = 0; s.pic_rr = 2         # in service (EOI ends it); OCW3: what port 20h reads
+        s.isr2 = 0                      # the slave's in service (IRQ 8-15; the master's bit 2 for all of them)
         s.chip_int_was = False; s.irqs5 = 0
         s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
         s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
@@ -576,7 +577,7 @@ class PC:
             s.ems_reg = [0, 0, 0, 0]
             for w in range(4): s.ems_map(w)
         s.bios_init()
-        s.irq_pending = set(); s.soft = []; s.isr = 0; s.pic_rr = 2; s.irq_wait = False; s.ata_at = float('inf')
+        s.irq_pending = set(); s.soft = []; s.isr = 0; s.isr2 = 0; s.pic_rr = 2; s.irq_wait = False; s.ata_at = float('inf')
         s.pic_mask = 0xB8; s.pic2_mask = 0xFF
         s.keys.clear(); s.blocked = False; s.halted = False
         s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
@@ -707,6 +708,7 @@ class PC:
         for irq in reversed(due):
             s.irq_pending.discard(irq)
             s.isr |= 1 << (irq if irq < 8 else 2)
+            if irq >= 8: s.isr2 |= 1 << (irq - 8)
             off, seg = struct.unpack('<HH', s.rd(0, (8 + irq if irq < 8 else 0x68 + irq) * 4, 4))
             fl = s.r('flags')
             s.push(fl if first else fl & ~0x300); s.push(s.r('cs')); s.push(s.r('ip'))
@@ -878,6 +880,10 @@ class PC:
             if val == 0x20: s.isr &= s.isr - 1          # the highest priority's EOI
             elif val & 0xF8 == 0x60: s.isr &= ~(1 << (val & 7))
             elif val & 0x9A == 0x0A: s.pic_rr = val & 3  # OCW3: read IRR / ISR
+            return
+        if port == 0xA0:                                # (the slave's EOIs: isr2 only; nothing else of it)
+            if val == 0x20: s.isr2 &= s.isr2 - 1
+            elif val & 0xF8 == 0x60: s.isr2 &= ~(1 << (val & 7))
             return
         if 0x2F8 <= port <= 0x2FF: return s.uart_out(port - 0x2F8, val)
         if s.com1 is not None and 0x3F8 <= port <= 0x3FF: return s.com1.write(port - 0x3F8, val)
@@ -1424,7 +1430,7 @@ class PC:
             code = s.cmos[0x0F]; s.cmos[0x0F] = 0
             if code in (0x05, 0x0A):                    # the 1520's Reset_Actual (reset.asm): shutdown code 05h or
                 off, seg = struct.unpack('<HH', s.rd(0, 0x467, 4))   #  0Ah, a jump through 40:67h with memory as it
-                if code == 0x05: s.isr = 0                           #  was, no POST (05h: the PICs' EOI first)
+                if code == 0x05: s.isr = s.isr2 = 0                  #  was, no POST (05h: the PICs' EOI first)
                 s.w('ss', 0x30); s.w('sp', 0x80); s.w('flags', 0x02)
                 s.w('cs', seg); s.w('ip', off); s.resets_caught = getattr(s, 'resets_caught', 0) + 1
                 s.mu.emu_stop(); return
