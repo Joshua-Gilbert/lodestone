@@ -7886,6 +7886,40 @@ def t_dkill():
     dk_check(k, dk, 'the same while a copy behind is out on the hard disk', 'LCMD.COM', 'B2.BIN exact',
              fs.get('\\B2.BIN') == data and not probs and dk.no == 0, hw.sw())
 
+def t_wfall():
+    """With a disk's owner out, a task behind that waits (an INT 16h read: mt_wkey; an INT 10h call that needs the front:
+    mt_wfront) and finds no other task to run gave its turn to the task in front whatever that one was doing.  In
+    front KEYIN, waiting for a key inside INT 21h (kbd_get, MT's key wait): a task that mt_dok keeps off the CPU while
+    an owner is out, as its kernel code may touch what the owner's call is in the middle of.  Behind MTKEY W (36
+    ticks of computing, then a read) or V (then mode 40h), and a copy on C:."""
+    print('== with a disk\'s owner out, a task behind with nothing to run never hands its turn to one inside INT 21h')
+    data = hw_data()
+    for mode, how in (('w', 'an INT 16h read (mt_wkey)'), ('v', 'an INT 10h mode set that waits for the front (mt_wfront)')):
+        ata = hw_ata(data)
+        k, hw = hw_boot('mt_wf%s.img' % mode, ata, b'MULTITASK=1\r\n', MTK, 'KEYIN.COM=' + os.path.join(HERE, 'KEYIN.COM'))
+        seg, Y = mt_seg(k), k.Y
+        b = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+        ran, waits, prev = [], [0], k.pc.watch
+        def w(a):                       # (kernel code run by another task than the owner, out of any interrupt)
+            if prev: prev(a)
+            if 0x600 <= a < 0x10000 and a != 0x600 + Y['int21'] and b('mt_down') != 0xFF and b('mt_cur') != b('mt_down') \
+                    and k.pc.isr == 0 and len(ran) < 4:
+                ran.append((hex(a), b('mt_cur'), b('mt_down'), round(k.pc.us / 1e6, 3)))
+        def h(a): waits[0] += b('mt_down') != 0xFF
+        code_hooks(k, [seg * 16 + Y['mt_wkey' if mode == 'w' else 'mt_wfront']], h)
+        k.pc.watch = w
+        typ(k, r'mtlaunch /f keyin.com;mtkey.com %s rr.txt;lcmd.com /c copy c:\big.bin c:\b2.bin' % mode, 0.5)
+        k.pc.run_until(lambda: not any(t == 3 for t, _, _ in tstate(k)[0]) or k.pc.crash, 60)
+        k.pc.watch = prev
+        fs, probs = hw_files(ata)
+        st = tstate(k)
+        check('KEYIN in front waiting for a key inside INT 21h, MTKEY %s behind, %s, with the copy out (%d times): no '
+              'task but the owner ran the kernel\'s code while it was out (%s); the copy ended, exact; KEYIN still '
+              'waiting in front' % (mode.upper(), how, waits[0], ran or 'none'),
+              waits[0] >= 1 and not ran and not any(t == 3 for t, _, _ in st[0]) and fs.get('\\B2.BIN') == data
+              and not probs and (1, TS_WAITK, 'KEYIN.COM') in st[0] and st[1] == 1 and not k.crashed,
+              (ran, waits, st, probs))
+
 def t_dmaems():
     """The 1520 restarts when an EMS page register changes while the floppy's DMA runs (found 2026-11-04 with
     CRASHLOG: MT's switch at a floppy's wait, mt_load writing the next task's windows).  pcemu models it
@@ -8580,7 +8614,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd,t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd,t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_wfall, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

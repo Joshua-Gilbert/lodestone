@@ -4966,8 +4966,10 @@ mt_kgive:
 ; the running task waits for a key (from mt_i16, where the caller is at a
 ; safe point): TS_WAITK, while the next ready task runs (mt_kwant and
 ; mt_preempt bring the front one back when one is typed), or in the
-; background the front one if none is.  CF, nothing done, if it is in front
-; and no other is ready; else back, CF clear, when it runs again
+; background the front one if none is and it may run now (mt_fok).  CF,
+; nothing done, if it is in front and no other is ready, or none may run
+; (a disk's owner out): the caller HLTs and asks again; else back, CF
+; clear, when it runs again
 mt_wkey:
         call    mt_fdrain               ; (first: nothing saved or chosen yet)
         call    mt_pick
@@ -4976,6 +4978,9 @@ mt_wkey:
         cmp     bl, [cs:mt_cur]
         stc
         je      .x
+        call    mt_fok
+        stc
+        jnz     .x
 .go:    push    bx
         call    mt_cent
         mov     byte [cs:bx+TE_STATE], TS_WAITK
@@ -4983,6 +4988,18 @@ mt_wkey:
         call    mt_switch
 .sw:    clc
 .x:     ret
+
+; the front task may run now (mt_dok: not one inside INT 21h, or with a
+; window the transfer holds, while a disk's owner is out)?  ZF if so.  BL
+; = it; BH changed
+mt_fok: push    ax
+        mov     al, [cs:mt_front]
+        call    mt_ent
+        call    mt_dok
+        mov     bl, al
+        pop     ax
+        ret
+        db      90h                     ; (what follows keeps its parity)
 
 ; task AL to the front: the front one's screen kept, AL's shown; a DOS
 ; program's INT 33h pointer off meanwhile (as RCON does), and each one's
@@ -6138,7 +6155,9 @@ mt_vfast:
 
 ; the running task, in the background, waits to be in front (TS_WAITF;
 ; mt_scrld makes it TS_RUN): the next ready one runs, or the front one if
-; it waits for a key.  (From mt_v10, where the caller is at a safe point:
+; it waits for a key and may run now (mt_fok); else it HLTs and asks again
+; (a disk's owner out: its interrupt, or the tick's time-out, makes the
+; owner ready).  (From mt_v10, where the caller is at a safe point:
 ; returns when this task runs again)
 mt_wfront:
         call    mt_fdrain               ; (first: nothing saved or chosen yet)
@@ -6161,9 +6180,15 @@ mt_wfront:
         pop     es
 .p:     call    mt_pick
         jnc     .go
-        mov     bl, [cs:mt_front]
+        call    mt_fok
+        jz      .go
+        sti
+        hlt
+        cli
+        jmp     mt_wfront
 .go:    jmp     mt_switch
 .x:     ret
+        db      90h                     ; (what follows keeps its parity)
 
 ; a call not shadowed went to the screen: whether the front task writes it
 ; itself can't be known at its switch away (not frozen for it), and its
