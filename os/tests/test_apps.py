@@ -1292,9 +1292,9 @@ def t_divrun():
               up and '\r\nDivide overflow\r\n' in ''.join(k.pc.tty) and not has(k, 'Divide overflow') and not has(k, 'Divide test') and k.band()[:1] == ['Select a file and confirm'] and 'DIVRUN.RUN' in k.exec_list()
               and k.rd('run_active', 1) == b'\x00' and k.u16('wdepth') == 0 and free_paras(k) == free0 and not k.crashed,
               (up, ''.join(k.pc.tty), k.band(), k.rd('run_active', 1), k.u16('wdepth'), free_paras(k), free0, k.where()))
-    check('(a limit: a .RUN\'s open files stay open after its divide error) DIVRUN.RUN\'s file, opened in each of '
-          'the two runs, still takes a slot of the root\'s handle table: %d free, %d before' % (jfree(), j0),
-          jfree() == j0 - 2, (jfree(), j0))
+    check('the .RUN\'s open file closed when the Executive starts over: DIVRUN.RUN\'s, opened in each of the two '
+          'runs, takes no slot of the root\'s handle table (%d free, %d before)' % (jfree(), j0),
+          jfree() == j0 and j0 == 15, (jfree(), j0))
     click(k, 40, 48)
     s1 = k.u16('sel')
     k.select('DIVRUN.RUN'); k.key(ktest.ENTER); k.key(ktest.ESC)

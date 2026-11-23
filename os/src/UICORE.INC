@@ -199,7 +199,13 @@ exec_main:
         cmp     byte [mstarted], 0
         jne     .again
         jmp     ui_boot                 ; (the first time: section uiboot)
-.again: call    m33_end
+.again: mov     bx, 5                   ; started over (a divide error, ^C, an
+.cl:    mov     ah, 3Eh                 ;  Abort): the files the code that was
+        int     21h                     ;  stopped had open in the root's own
+        inc     bx                      ;  handles 5-19 are closed (one not
+        cmp     bx, 20                  ;  open: error 6, nothing done)
+        jb      .cl
+        call    m33_end
         call    mouse_on
 .go:    call    set24
         call    act_now
