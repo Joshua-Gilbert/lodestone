@@ -163,9 +163,13 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; risk: a hook that faults while the program is inside a kernel disk call
 ; lets the program's end (terminate's closes and flush) write the half
 ; done state of that call.  On C: (polled) and M: that was so anyway; on
-; a floppy it is so because the level is ended (left in service, IRQ 6
-; was held back, the BIOS timed out and nothing was written, at the price
-; of the whole machine).  test_kernel's t_divirq runs it on a floppy.
+; a floppy it is so because the level is ended (left in service, by the
+; BIOS's code IRQ 6 would be held back, its wait time out and nothing be
+; written, at the price of the whole machine: read, not tested, pcemu's
+; floppy not waiting for IRQ 6).  test_kernel's t_divirq runs the case on
+; a floppy.  Also read, not tested: a hook that faults at every tick can
+; fault again inside terminate's own floppy closes (InDOS 2), so that
+; terminate is entered again from within close_all.
 ;   Outside the kernel (InDOS 0) then the message.  Inside it (InDOS not
 ; 0) none: int21's entry
 ; puts a call at InDOS 0 on kstack_top and a nested one on astack_top, so
@@ -1203,14 +1207,17 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ;   AL = 0: AX = 4F47h ('GO'), BX = version (0201h)
 ;   AL = 1: DL = drive (0 = A:) -> CX = files open on it
 ;   AL = 2: lend the disk cache's memory (the UI's save-under, a capture's
-;           buffer) -> ES = its segment, CX = bytes (CF, 8: no cache, or
-;           lent already).  Any caller may ask: nothing checks who it is
+;           buffer) -> ES = its segment, CX = bytes (CF, 8: no cache, lent
+;           already, or with EMS no room for the block of its own).  Any
+;           caller may ask: nothing checks who it is
 ;   AL = 3: give it back (and root_restart, when the root starts over)
 ;   AL = 4: the UI's segment moved to BX
 ;   AL = 5: the Executive's screen saver, for a program at its prompt:
 ;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
 ;   AL = 6: PrtSc's printer driver -> ES:BX = its path ("": files), CX =
 ;           its room (the caller changes it there)
+;   AL = 7: the internal hard disk's own name -> ES:BX, 40 characters (CF,
+;           1: no C:)
 ;   AL = 8: DL = a floppy (0 = A:) whose sector CX (0: the boot sector;
 ;           the root's first) the caller has just written itself through
 ;           INT 13h, ES:BX = 1,024 bytes: the sector as it read it, then as

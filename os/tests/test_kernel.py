@@ -1634,9 +1634,10 @@ def t_divirq():
     (PIC_ISR), IRQ 0 is not left in service, the timer's interrupt comes again (INT 08h delivered), the prompt
     works, and nested levels poked in at both PICs (IRQ 2 and 3, the slave's IRQ 14) are ended too; so too when
     the foreground waited in INT 21h 08h (InDOS 1: no message).  The risk, pinned as a limit: a fault inside a
-    floppy write (WBIG's INT 21h 40h) lets terminate's close write the half done call (the file's size as far as
-    it got, its FAT chain the whole write's).  (The keyboard's IRQ 1 can't be had here: pcemu gives keys to INT
-    16h without one.)"""
+    floppy write (WBIG's INT 21h 40h, on a machine of its own) lets terminate's close write the half done call
+    (the file's size as far as it got, its FAT chain what was linked so far: the written clusters and the next
+    track's run, linked before its write).  (The keyboard's IRQ 1 can't be had here: pcemu gives keys to INT 16h
+    without one.)"""
     subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
     old = pcemu.PIC_ISR
     pcemu.PIC_ISR = True
@@ -1717,9 +1718,12 @@ def t_divirq():
               waiting == 1 and k.pc.isr == 0 and k.pc.isr2 == 0 and n[0] >= 15 and 'Divide overflow' not in scr
               and 'AFTER' not in scr and scr.endswith('A:\\>') and 'Lodestone version' in o and not k.crashed,
               (waiting, hex(k.pc.isr), hex(k.pc.isr2), n[0], scr[-200:], o, k.where()))
-        # inside a disk call: the hook's fault while WBIG writes 30,000 bytes in one INT 21h 40h on A: (armed at its
-        # first floppy write: the next tick faults inside the call)
-        img0 = bytes(k.pc.drives[0].img)
+        # inside a disk call, on a machine of its own: the hook's fault while WBIG writes 30,000 bytes in one INT 21h
+        # 40h on A: (armed at the call's first floppy write: the next tick faults inside it)
+        k = ktest.KPC(image('divirq2.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT, wbig)); k.start()
+        sh = Shell(k)
+        sh.run('divt t')
+        seg = k.pc.u16(0, 0x1C * 4 + 2)
         c0 = len(k.pc.calls13)
         def arm(pc):
             if k.pc.rd(seg, 0x103, 1) == b'\x00' and k.rd('indos', 1)[0] == 1 and \
@@ -1735,14 +1739,16 @@ def t_divirq():
         writes = [c for c in k.pc.calls13[c0:] if c[0] == 3]
         print('   disk case: %d floppy writes, X.DAT %s bytes, the disk %s' % (len(writes), x is not None and len(x),
               'consistent' if not probs else 'inconsistent: ' + '; '.join(probs)))
+        pic = (k.pc.isr, k.pc.isr2)
+        v = sh.run('ver')
         check('(a limit: a hook that faults inside a kernel disk call lets the program\'s end write that call\'s half '
               'done state) WBIG writing 30,000 bytes on A:, the hook divides inside its INT 21h 40h: WBIG ends (no '
-              '"DONE"), IRQ 0 ended, and terminate\'s close writes the call\'s half: X.DAT in the directory with 7,680 '
-              'bytes (what was written before the fault), its FAT chain the whole write\'s 33 clusters where the size '
-              'needs 15 (an allocation error CHKDSK would have to mend)',
-              armed and 'DONE' not in o and not k.pc.isr & 1 and bytes(k.pc.drives[0].img) != img0
-              and x is not None and len(x) == 7680 and probs == ['\\X.DAT: 7680 bytes need 15 clusters, chain has 33']
-              and not k.crashed, (armed, o, hex(k.pc.isr), x is not None and len(x), probs, len(writes)))
+              '"DONE", no message), nothing left in service at either PIC, the prompt works (VER); terminate\'s close '
+              'writes the call\'s half: X.DAT with what was written before the fault (whole sectors, short of 30,000), '
+              'its FAT chain not its size (what file_write had linked so far): the disk inconsistent',
+              armed and 'DONE' not in o and 'Divide overflow' not in o and pic == (0, 0) and 'Lodestone version' in v
+              and x is not None and 0 < len(x) < 30000 and len(x) % 512 == 0 and any('chain has' in p for p in probs)
+              and not k.crashed, (armed, o, pic, v, x is not None and len(x), probs, len(writes)))
     finally:
         pcemu.PIC_ISR = old
 
