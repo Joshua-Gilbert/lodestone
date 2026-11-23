@@ -48,8 +48,7 @@ REF = None
 def reference():
     global REF
     if REF is None:
-        rock, nails = mksplash.read_trace()
-        REF = mksplash.render(*mksplash.build(rock, nails))
+        REF = mksplash.render(mksplash.drawing())
     return REF
 
 def differing(k):
@@ -70,6 +69,9 @@ def hd():
 
 def t_paths():
     print('== the picture, bit for bit, every way the kernel starts')
+    check('src/SPLASH.INC is what mksplash.py packs now', open(os.path.join(GOS, 'src', 'SPLASH.INC')).read()
+          == mksplash.pack(mksplash.drawing()))
+    check('LODE.PIC fits 2 sectors of ROM 1 (%d bytes)' % os.path.getsize(PIC), os.path.getsize(PIC) <= 2 * 512)
     img = A.image('sp.img', PIC, A.LCMD, A.SYSTEM)
     for tag, kw, image in (('floppies only', {}, img), ('EMS', {'ems_pages': 88}, img),
                            ('the hard disk as C:', {'ata': hd()}, img), ('C: and EMS', {'ata': hd(), 'ems_pages': 88}, img)):
@@ -171,7 +173,7 @@ def t_pic():
     for tag, files in (('no LODE.PIC on the disk', []),
                        ('LODE.PIC that is a text file', ['LODE.PIC=' + ini_file(b'Not a picture at all, just text.\r\n' * 4)]),
                        ('LODE.PIC too short', ['LODE.PIC=' + ini_file(b'\xEB\x0ALODEPIC\x01')]),
-                       ('LODE.PIC cut short (its first 2 KB)', ['LODE.PIC=' + ini_file(open(PIC, 'rb').read()[:2048])]),
+                       ('LODE.PIC cut short (its first half)', ['LODE.PIC=' + ini_file(open(PIC, 'rb').read()[:os.path.getsize(PIC) // 2])]),
                        ('LODE.PIC with more after it', ['LODE.PIC=' + ini_file(open(PIC, 'rb').read() + b'\0' * 512)])):
         k = ktest.KPC(A.image('sp_pic.img', A.LCMD, *files))
         t0 = k.pc.us; k.start(10)

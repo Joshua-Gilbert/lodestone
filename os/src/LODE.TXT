@@ -275,12 +275,15 @@ and GOSBOOT.COM can go.
   faster, and LCMD stays as small as before while a program runs from it.
 
 0.4.3: a start-up picture.  When the kernel has started, LODE.PIC shows
-Fig. 1 of F. A. Annett's Electrical Machinery (1921), "Lodestone
-attracting some iron nails", drawn from lines - the stone and 235 nails,
-each with its head and point - with LODESTONE beside it, for 2 seconds
-or until a key (the key does nothing else).  Copy LODE.PIC to the root of
-this disk to have it; without it Lodestone starts as before.  In System,
-Display, Space turns it off (LODE.INI then says SPLASH=0) and on again.
+a terrella, the "little earth" William Gilbert describes in De Magnete
+(1600): a lodestone turned into a sphere, here turning on a tilted rod
+among its lines of force.  It is Lodestone's own drawing, made from
+lines, not one of the book's woodcuts, with LODESTONE under it, for 2
+seconds or until a key (the key does nothing else).  (Until 2026-11-21
+it was Fig. 1 of F. A. Annett's Electrical Machinery (1921), a lodestone
+and the nails it holds.)  Copy LODE.PIC to the root of this disk to have
+it; without it Lodestone starts as before.  In System, Display,
+Space turns it off (LODE.INI then says SPLASH=0) and on again.
 It costs DOS programs nothing: the kernel reads it into free memory,
 shows it, and lets the memory go.
 
