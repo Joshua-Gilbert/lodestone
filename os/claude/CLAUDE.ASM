@@ -4157,10 +4157,15 @@ res_load:
 ; fourth byte FFh, res_mt; the stub's r_front has why: a task behind may
 ; be out in a floppy's transfer, and an EMS call before may have let it
 ; run).  Looked at and written with interrupts off, so no task switch
-; comes between; while one is out, interrupts on again (MT switches from
-; us to it) and another look.  No bound: only the owner clears mt_down,
-; when it runs again, and it is made ready by its device's interrupt or
-; MT's time-out (~2 s).  Without MT at once.  AX, DX kept
+; comes between; while one is out, interrupts on again and an INT 21h
+; call (AH=19h, the drive: nothing changed), which MT holds at its gate
+; while the owner is out (mt_i21: this task waits, the owner runs), then
+; another look.  So the wait doesn't hang on MT's tick switching from us
+; (a TSR's INT 08h hook ahead of MT's, the owner's IRQ 6 lost: its
+; time-out readies it, and the gate gives it its turn).  No bound: only
+; the owner clears mt_down, when it runs again, and it is made ready by
+; its device's interrupt or MT's time-out (~2 s); a bound would write
+; with it out.  Without MT at once.  AX, DX kept
 res_eout:
         push    ds
         push    bx
@@ -4171,6 +4176,11 @@ res_eout:
         cmp     byte [bx + 3], 0FFh
         je      .go
         sti
+        push    ax
+        mov     ah, 19h
+        int     21h
+..@res_gate:                            ; (the tests: back from MT's gate)
+        pop     ax
         jmp     .a
 .go:    out     dx, al
         sti
@@ -4599,10 +4609,9 @@ r_tell: cmp     word [cs:r_mt + 2], 0
 ; looking.  (Never with Claude's keys under way: the console never leaves
 ; r_bgon set with r_ks set.  It sets r_ks only in type_start, never in a
 ; background pass, and the session that does so ends with r_bgon 0; r_ks
-; is 0 again before any session can set r_bgon 1.)  Registers kept.
+; is 0 again before any session can set r_bgon 1.)  The tick first: most
+; calls find no look due and go without r_front's test.  Registers kept.
 r_bg:   cmp     byte [cs:r_bgon], 1
-        jne     .x
-        call    r_front
         jne     .x
         push    ax
         push    ds
@@ -4612,6 +4621,8 @@ r_bg:   cmp     byte [cs:r_bgon], 1
         sub     ax, [cs:r_bgt]
         cmp     ax, R_BGT
         jb      .n
+        call    r_front
+        jne     .n
         call    r_isr
         jz      .go
 .n:     pop     ds
@@ -4697,8 +4708,9 @@ r_stack_top equ r_code_end + R_STACK    ;  stub's block, not in CLAUDE.COM)
 r_end   equ     r_stack_top
 R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
 ; the stub's hot code even, by its order (r_tell between r_hot and r_bg),
-; r_int16's STI before .pk and three self-correcting pads, never run (after
-; .rt, .ky and r_hot's jmp .s); a peek's r_hot and r_feed go straight through
+; r_int16's STI before .pk and four self-correcting pads, never run (after
+; .rt, .ky, r_feed's RET (none now) and r_hot's jmp .s); a peek's r_hot and
+; r_feed go straight through
         times   -((R_HOT | 0F0h) != R_HOTRAW) db 0      ; (r_hot's one compare)
 %ifndef STUB_PAD                        ; (the tests: another version's layout)
         EVEN    r_int16, r_int16.ch, r_feed, r_hot, r_hot.s, r_hot.k, r_hot.nx, r_hot.n, r_bg, r_bg.x

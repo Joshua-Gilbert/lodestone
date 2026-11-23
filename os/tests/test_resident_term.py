@@ -1765,15 +1765,16 @@ def t_bg_floppy():
         # first BUSY passes, then FFh; its second, MT's own
         n = {'phase': 'install'}
         ms = mt_seg(pc)
-        at, eout = {}, {h.sym[x]: x for x in ('res_eout', 'res_eout.a', 'res_eout.go')}
+        at, eout = {}, {h.sym[x]: x for x in ('res_eout', 'res_eout.a', 'res_eout.go', '..@res_gate')}
         watch = pc.watch
         def w(addr):
             x = at.get(addr) or n['phase'] == 'install' and eout.get(addr - pc.r('cs') * 16)
             if x:
                 k = (n['phase'], x, pc.fd_dma())
                 n[k] = n.get(k, 0) + 1
-                if x in ('r_popup', 'r_bg.go', 'r_feed.in') and pc.rd(ms, pc.Y['mt_down'], 1)[0] != 0xFF:
-                    n['owner out'] = n.get('owner out', 0) + 1      # (a page in with a disk's owner out)
+                if x in ('r_popup', 'r_bg.go', 'r_feed.in', '..@r_back') and pc.rd(ms, pc.Y['mt_down'], 1)[0] != 0xFF:
+                    n['owner out'] = n.get('owner out', 0) + 1      # (a page in or out with a disk's owner out)
+                if x == '..@r_back': n['backs'] = n.get('backs', 0) + 1
                 if n['phase'] == 'install':
                     cs = pc.r('cs')
                     if x == 'res_eout' and 'ems0' not in n:
@@ -1785,6 +1786,8 @@ def t_bg_floppy():
                         ps = n.setdefault('passes', [])
                         ps.append((bool(pc.r('flags') & 0x200), list(pc.ems_reg) == n['ems0']))
                         if len(ps) == BUSY: pc.wr(0x40, 0xF3, b'\xFF')      # (the owner back)
+                    elif x == '..@res_gate' and 'go1' not in n:     # (each pass's INT 21h back: MT's gate there)
+                        n['gates'] = n.get('gates', 0) + 1
                     elif x == 'res_eout.go':
                         if 'go1' not in n:
                             n['go1'] = (list(pc.ems_reg) == n['ems0'], len(n.get('passes', [])))
@@ -1811,11 +1814,14 @@ def t_bg_floppy():
               (moving, early, ok, n, pc.crash, fdw(), pc.log[-3:], pc.text_screen()))
         ps = n.get('passes', [])
         check('... res_eout with a disk\'s owner out (its bytes\' fourth 05h for its first %d passes): %d passes more, '
-              'each with interrupts on and no page register written before the last' % (BUSY, len(ps)),
-              len(ps) == BUSY and all(a and b for a, b in ps) and n.get('go1') == (True, BUSY), (ps, n.get('go1')))
+              'each with interrupts on, after an INT 21h call (MT\'s gate: %d back), and no page register written before '
+              'the last' % (BUSY, len(ps), n.get('gates', 0)),
+              len(ps) == BUSY == n.get('gates', 0) and all(a and b for a, b in ps) and n.get('go1') == (True, BUSY),
+              (ps, n.get('gates'), n.get('go1')))
         if pc.crash: return
         base = h.stub() * 16
-        at.update({base + h.sym[x]: x for x in ('r_isr', 'r_feed.k', 'r_feed.in', 'r_popup', 'r_hot.p', 'r_bg.go')})
+        at.update({base + h.sym[x]: x for x in ('r_isr', 'r_feed.k', 'r_feed.in', 'r_popup', 'r_hot.p', 'r_bg.go',
+                                                '..@r_back')})
         g, pc.watch = gate_watch(h, ms, pc.watch, lambda: n['phase'])
         # (r_bg.go falls into r_popup: a look's start there, CODE-\'s at r_popup)
         n['phase'] = None
@@ -1870,9 +1876,13 @@ def t_bg_floppy():
         h.wait(lambda: pc.mode() == 3 and h.inpop() == 0, 5)
         h.k.key(ENTER, settle=False)            # (MTLAUNCH's line)
         ok = copied('X2.COM')
-        check('... the copy exact; no page register written under a transfer all the while (%d), and no page in with a '
-              'disk\'s owner out (%d times)' % (fdw(), n.get('owner out', 0)),
-              ok and fdw() == 0 and not pc.crash and n.get('owner out', 0) == 0, (ok, fdw(), pc.crash, n))
+        check('... the copy exact; no page register written under a transfer all the while (%d), and no page in or out '
+              '(..@r_back, the program\'s windows back: %d times) with a disk\'s owner out (%d times)'
+              % (fdw(), n.get('backs', 0), n.get('owner out', 0)),
+              ok and fdw() == 0 and not pc.crash and n.get('owner out', 0) == 0 and n.get('backs', 0) >= 1,
+              (ok, fdw(), pc.crash, n))
+        # (no task behind calls INT 16h here, so "another task's" isn't asked for: t_floppy_hot pins it, with MTKEY P
+        #  polling behind)
         check('r_front\'s answer at every return as MT\'s bytes were (%d the front task\'s, %d with an owner out, %d '
               'another task\'s): ZF, CF, neither; %d wrong' % (g['front'], g['out'], g['behind'], len(g['bad'])),
               not g['bad'] and g['front'] >= 1 and g['out'] >= 1, g['bad'][:10])
@@ -1942,7 +1952,7 @@ def floppy_hot(pre=None):
         # seek), 'idle'; and at the console's dos_check (its first DOS call), whether the windows are its four pages
         n = {}
         base = h.stub() * 16
-        at = {base + h.sym[x]: x for x in ('r_hot.p', 'r_popup', 'r_bg.go')}
+        at = {base + h.sym[x]: x for x in ('r_hot.p', 'r_popup', 'r_bg.go', '..@r_back')}
         dchk = 0xE0000 + h.rsym['dos_check']
         hw = bytes(h.m.rd(h.stub(), h.sym['r_hw'], 4))
         watch = pc.watch
@@ -1993,8 +2003,11 @@ def floppy_hot(pre=None):
         h.k.key(ENTER, settle=False)
         ok = h.wait(lambda: pc.crash or pc.fs.get('A:\\X3.COM') == com, 90) and pc.fs.get('A:\\X3.COM') == com
         bk = pc.fs.get('A:\\BK.TXT')
-        check('... MTKEY read its key (%s), the copy exact, no page register written under a transfer (%d)' % (bk, fdw()),
-              ok and bk == b'0078' and fdw() == 0 and not pc.crash, (ok, bk, fdw(), pc.crash))
+        check('... MTKEY read its key (%s), the copy exact, no page register written under a transfer (%d); the '
+              'program\'s windows put back (..@r_back) only with no disk\'s owner out (%s)'
+              % (bk, fdw(), sorted((k[1], v) for k, v in n.items() if k[0] == '..@r_back')),
+              ok and bk == b'0078' and fdw() == 0 and not pc.crash and cnt('..@r_back', 'idle') >= 1
+              and cnt('..@r_back', 'dma') + cnt('..@r_back', 'out') == 0, (ok, bk, fdw(), pc.crash, n))
         check('... r_front\'s answer at every return as MT\'s bytes were (%d the front task\'s, %d with an owner out, %d '
               'another task\'s); %d wrong' % (g['front'], g['out'], g['behind'], len(g['bad'])),
               not g['bad'] and g['front'] >= 1 and g['out'] >= 1 and (pre or g['behind'] >= 1), g['bad'][:10])
