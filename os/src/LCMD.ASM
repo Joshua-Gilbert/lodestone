@@ -4951,7 +4951,8 @@ do_start:
         jmp     env_set_line
 
 ; WAIT task: till it ends; ERRORLEVEL its exit code (AL of 4Dh's), and
-; && / || as for a program (ended by ^C or KILL: AL 0, but failed)
+; && / || as for a program (ended by ^C, KILL or a divide error: AL 0,
+; but failed)
 do_wait:
         call    task_arg
         jc      .er

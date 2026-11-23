@@ -66,7 +66,8 @@ MT_EXIT     equ 17h                     ; BL = a task's number -> AL = its state
                                         ;  that number (1-255, then 1 again; 0:
                                         ;  none yet); DX = the exit code of the
                                         ;  last one ended (its high byte 4Dh's
-                                        ;  AH: 0 ended, 1 ^C or MT_KILL, 2 a
+                                        ;  AH: 0 ended, 1 ^C, MT_KILL or a
+                                        ;  divide error, 2 a
                                         ;  critical error's Abort, 3 stayed
                                         ;  resident; FFxxh: its program not
                                         ;  started, xx EXEC's error), CL = the
