@@ -354,8 +354,10 @@ def t_core():
     k.key(CODE['F']); k.key('again'); k.key(K_CODE_ENTER)
     check('form: CODE-Return confirms from the first field', has(k, 'Find: again 1 1'), screen(k))
     k.key(CODE['F']); k.key('world'); k.key(K_CODE_ENTER)
-    k.key(CODE['F']); k.key(ktest.ESC)
-    check('form: ESC cancels and changes nothing', has(k, 'Find: world 1 1') and not has(k, 'Fill in form'), screen(k))
+    k.key(CODE['F']); k.key('typed'); k.key(ktest.ESC)
+    check('form: ESC cancels (text typed first is not confirmed: UITEST still says what it had)', has(k, 'Find: world 1 1')
+          and not has(k, 'Find: typed') and not has(k, 'Fill in form'), screen(k))
+    k.key(CODE['F']); k.key('world'); k.key(K_CODE_ENTER)  # (the field as it was: the form edits it in place)
     k.key(CODE['F']); k.key(ktest.DOWN); f1 = k.u16('fm_cur'); k.key(ktest.DOWN, ktest.DOWN); f3 = k.u16('fm_cur'); k.key(ktest.ESC)
     check('form: Down goes to the next field, and from the last back to the first', (f1, f3) == (1, 0), (f1, f3))
     k.key(CODE['F']); k.key(ktest.TAB); f1 = k.u16('fm_cur'); k.key(ktest.ESC)
@@ -1279,11 +1281,17 @@ def t_divrun():
     mkrun.build(os.path.join(HERE, 'DIVRUN.ASM'), DIVRUN)
     k = ktest.KPC(image('divrun.img', DIVRUN, MEMSZ)); k.pc.mouse = True; k.start()
     free0 = free_paras(k)
-    jfree = lambda: list(k.pc.rd(k.u16('root_psp'), 0x18, 20)).count(0xFF)     # (the root's handle table)
-    j0 = jfree()
+    jft = lambda: bytes(k.pc.rd(k.u16('root_psp'), 0x18, 20))                  # (the root's handle table)
+    jfree = lambda: list(jft()).count(0xFF)
+    eq = k.Y.equ
+    refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * eq('SFT_SZ') + eq('S_REF'), 1)[0] for i in range(eq('NSFT'))]
+    dsy = run_syms('tests/DIVRUN.ASM')
+    j0, r0, full = jfree(), refs(), []
     for key, where in (('M', 'its own loop'), ('D', 'a key handler UI_DISPATCH calls')):
         k.select('DIVRUN.RUN'); k.key(ktest.ENTER)
         up = has(k, 'Divide test') and k.rd('run_active', 1) == b'\x01' and free_paras(k) != free0
+        k.key('F')                                      # (its file opened till the table is full)
+        full.append((jfree(), k.pc.u16(k.useg, k.u16('run_base') + dsy['fillerr'])))
         k.pc.tty.clear()
         k.key(key)
         check('DIVRUN.RUN (a window, a UI_ALLOC block), a divide error in %s: "Divide overflow" written, the Executive '
@@ -1292,23 +1300,36 @@ def t_divrun():
               up and '\r\nDivide overflow\r\n' in ''.join(k.pc.tty) and not has(k, 'Divide overflow') and not has(k, 'Divide test') and k.band()[:1] == ['Select a file and confirm'] and 'DIVRUN.RUN' in k.exec_list()
               and k.rd('run_active', 1) == b'\x00' and k.u16('wdepth') == 0 and free_paras(k) == free0 and not k.crashed,
               (up, ''.join(k.pc.tty), k.band(), k.rd('run_active', 1), k.u16('wdepth'), free_paras(k), free0, k.where()))
-    check('the .RUN\'s open file closed when the Executive starts over: DIVRUN.RUN\'s, opened in each of the two '
-          'runs, takes no slot of the root\'s handle table (%d free, %d before)' % (jfree(), j0),
-          jfree() == j0 and j0 == 15, (jfree(), j0))
+    check('the .RUN\'s open files closed when the Executive starts over: DIVRUN.RUN, opened in each of the two runs '
+          'till the root\'s handle table was full (error 4), leaves all 15 of handles 5-19 free and the kernel\'s file '
+          'table\'s reference counts as at the start', full == [(0, 4), (0, 4)] and j0 == 15 and jfree() == 15
+          and refs() == r0, (full, j0, jfree(), r0, refs()))
     click(k, 40, 48)
     s1 = k.u16('sel')
     k.select('DIVRUN.RUN'); k.key(ktest.ENTER); k.key(ktest.ESC)
     check('... afterwards: a click selects a list row (the second: %d), DIVRUN.RUN runs again and ends with ESC '
           '(exit code 5), memory as before' % s1, s1 == 1 and run_ret(k) == 5 and free_paras(k) == free0 and not k.crashed,
           (s1, run_ret(k), free_paras(k), free0))
+    # an ordinary end closes nothing of the root's: a .RUN ending with its file open leaves it so (as it always
+    # has: the .RUN is the root's own code), and a DOS program's run after it leaves the table as it was
+    k.select('DIVRUN.RUN'); k.key(ktest.ENTER); k.key('K')
+    t1, r1 = jft(), refs()
+    k.run_file('MEMSZ.COM', 20)
+    check('a .RUN\'s ordinary end with its file open (DIVRUN.RUN, K: exit code 6): the file still open in the root\'s '
+          'handle table (14 free); after MEMSZ.COM ran, the table and the reference counts as they were',
+          run_ret(k) == 6 and list(t1).count(0xFF) == 14 and any('MEMSZ.COM ended' in l for l in k.band())
+          and jft() == t1 and refs() == r1, (run_ret(k), t1.hex(), jft().hex(), r1, refs(), k.band()))
+    k.select('DIVRUN.RUN')                              # (room below it for the Downs that follow)
     at = divide_at(k, lambda pc: pc.r('cs') == k.useg and pc.r('ip') == k.Y['ex_row'])
     k.pc.tty.clear()
     k.key(ktest.DOWN)
     k.key(ktest.DOWN)
     check('a divide error in the Executive\'s own code (raised at ex_row, a list row it draws): the message, the '
-          'Executive starts over and goes on (Down moves the selection), memory as before',
+          'Executive starts over and goes on (Down moves the selection), memory as before, and the file the .RUN '
+          'left open closed (15 free, the reference counts as at the start)',
           at and 'Divide overflow' in ''.join(k.pc.tty) and k.band()[:1] == ['Select a file and confirm']
-          and k.u16('sel') >= 1 and free_paras(k) == free0 and not k.crashed, (at, ''.join(k.pc.tty), k.band(), k.u16('sel')))
+          and k.u16('sel') >= 1 and free_paras(k) == free0 and not k.crashed and jfree() == 15 and refs() == r0,
+          (at, ''.join(k.pc.tty), k.band(), k.u16('sel'), jfree(), refs(), r0))
     k.run_file('MEMSZ.COM', 20)
     check('... and runs a program', any('MEMSZ.COM ended' in l for l in k.band()) and not k.crashed, k.band())
 
@@ -1521,6 +1542,14 @@ def t_saver_delay():
     k = ktest.KPC(image('svd8.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
     check('SAVER=30: a poll 14 ticks after the last, 30 minutes and 10 ticks after the last key: the saver',
           late(k, 0), lines(k)[:2])
+    # the last key ahead of the clock (an idle count of F000h or more): no saver, the count starts again
+    k = ktest.KPC(image('svd8.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
+    t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
+    k.wr('lastpoll', struct.pack('<H', t)); k.wr('lastact', struct.pack('<H', (t + 5) & 0xFFFF))
+    k.pc.run_for(4)
+    since = (struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0] - k.u16('lastact')) & 0xFFFF
+    check('SAVER=30: the last key 5 ticks ahead of the clock (idle FFFBh): no saver, and the idle count starts again',
+          not has(k, 'Drive A:') and since < 100, (lines(k)[:2], since))
     # past 511 bytes of other lines (System keeps a LODE.INI up to 1 KB and
     # puts its own lines last): font_boot read only the first 511
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'X1=1\r\n' * 160 + b'saver=2\r\nFONT=TERMBOLD.FNT\r\nTIDY=0\r\n')

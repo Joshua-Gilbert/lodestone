@@ -3,6 +3,9 @@
 ; file open (DIVRUN.RUN, read), a window; then keys:
 ;   M  a divide by zero in its own loop
 ;   D  a divide by zero in a key handler UI_DISPATCH calls
+;   F  DIVRUN.RUN opened again and again till the handle table is full
+;      (error 4), all left open
+;   K  the end with its file left open: the window closed, exit code 6
 ;   ESC  the end: the window closed, the file closed, exit code 5
 ; A window .RUN (RF_WIN): with MULTITASK=1 a session beside others; the
 ; core with the switch off ignores the flag.
@@ -31,11 +34,16 @@ start:  mov     bx, 64
 .l:     call    UI_EVENT
         cmp     ax, K_ESC
         je      .end
+        cmp     al, 'K'
+        je      .keep
         cmp     al, 'M'
         jne     .k
         xor     bx, bx
         div     bx
         jmp     .l
+.keep:  call    UI_WCLOSE
+        mov     ax, 6
+        ret
 .k:     mov     si, keys
         call    UI_DISPATCH
         jmp     .l
@@ -53,7 +61,15 @@ k_div:  xor     dx, dx
         div     cx
         ret
 
+k_fill: mov     dx, s_file
+.f:     mov     ax, 3D00h
+        int     21h
+        jnc     .f
+        mov     [fillerr], ax
+        ret
+
 keys:   KEY('D', k_div, 0)
+        KEY('F', k_fill, 0)
         dw 0
 
 win     dw      30, 100, 20, 60, s_win, 0, 0
@@ -64,4 +80,5 @@ s_file  db      'DIVRUN.RUN', 0
 section .bss
 bseg    resw    1
 hnd     resw    1
+fillerr resw    1                       ; (F: the error that stopped it)
 run_bss_end:
