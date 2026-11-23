@@ -199,12 +199,19 @@ exec_main:
         cmp     byte [mstarted], 0
         jne     .again
         jmp     ui_boot                 ; (the first time: section uiboot)
-.again: mov     bx, 5                   ; started over (a divide error, ^C, an
-.cl:    mov     ah, 3Eh                 ;  Abort): the files the code that was
-        int     21h                     ;  stopped had open in the root's own
-        inc     bx                      ;  handles 5-19 are closed (one not
-        cmp     bx, 20                  ;  open: error 6, nothing done)
-        jb      .cl
+.again: mov     bx, 5                   ; started over: terminate with the
+.cl:    mov     ah, 3Eh                 ;  root's PSP current (INT 00h's end,
+        int     21h                     ;  a .RUN's own 4Ch, 00h or 20h, the
+        inc     bx                      ;  default INT 23h, ^C, at the root;
+        cmp     bx, 20                  ;  an Abort there is a Fail, KDISK.INC
+        jb      .cl                     ;  crit_disk).  The files the stopped
+                                        ;  code had open in the root's own
+                                        ;  handles 5-19 are closed (one not
+                                        ;  open: error 6, nothing done), before
+                                        ;  INT 24h is ours again (set24) and
+                                        ;  before the mouse is ended, so a
+                                        ;  dirty file on a changed floppy asks
+                                        ;  in the band before the redraw
         call    m33_end
         call    mouse_on
 .go:    call    set24
