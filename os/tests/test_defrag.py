@@ -318,6 +318,44 @@ def t_saver():
     idle(k); k.pc.run_for(3)
     check('without DEFRAG.COM: the dark screen with the time', dark(k), k.ocr())
 
+def t_font():
+    """DEFRAG's screen font, read from its memory as it exits: Lodefont byte for byte (unpacked from
+    FONTPACK.INC's packing at the start), or with the Executive's F= the font it passes."""
+    m = os.path.join(OUT, 'dfm.asm'); mp = os.path.join(OUT, 'DEFRAG.MAP'); com = os.path.join(OUT, 'dfm.com')
+    open(m, 'w').write('[map symbols %s]\n%%include "DEFRAG.ASM"\n' % mp)
+    subprocess.run(['nasm', '-f', 'bin', '-I', os.path.join(GOS, 'src') + '/', '-o', com, m], check=True)
+    same = open(com, 'rb').read() == open(D.DEFRAG, 'rb').read()
+    font = ktest.Syms(mp)['font']
+    lode = b''.join(g for c, g in sorted(pcemu.load_font(os.path.join(GOS, 'src', 'FONT.INC')).items()))
+    grid = open(os.path.join(GOS, 'fonts', 'GRIDFONT.FNT'), 'rb').read()
+    def watch(k, got):
+        f4c = 0x600 + k.Y['f_4C']
+        def w(a):
+            if a == f4c and not got:
+                psp = k.pc.u16(0x60, k.Y['cur_psp'])
+                if bytes(k.pc.rd(psp, 0x100, 16)) == open(D.DEFRAG, 'rb').read(16):
+                    got.append(bytes(k.pc.rd(psp, font, 1536)))
+        k.pc.watch = w
+    img = D.fragmented(os.path.join(OUT, 'fn.img'), OUT)
+    k = ktest.KPC(img); k.start()
+    got = []
+    k.key(ktest.CODE_P); k.key('defrag /s'); watch(k, got)
+    k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: got, 600)
+    k.pc.watch = None
+    check('DEFRAG /S: its font Lodefont, all 96 glyphs (the map: the same build as DEFRAG.COM)',
+          same and len(lode) == 1536 and got == [lode], (same, got[:1] and got[0][:32].hex()))
+    img = D.fragmented(os.path.join(OUT, 'fg.img'), OUT, extra=(os.path.join(GOS, 'fonts', 'GRIDFONT.FNT'),))
+    D.mcopy(img, b'FONT=GRIDFONT.FNT\r\n', 'LODE.INI', OUT)
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    got = []; watch(k, got)
+    t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
+    k.wr('lastact', struct.pack('<H', (t - 5462 + 18) & 0xFFFF))
+    k.pc.run_until(lambda: got, 600)
+    k.pc.watch = None
+    check('the screen saver with FONT=GRIDFONT.FNT: DEFRAG\'s font the Executive\'s (F=), not Lodefont',
+          got == [grid] and grid != lode, got[:1] and got[0][:32].hex())
+
 def t_saver_all():
     """The saver goes round every disk: A:, B: and C:, each tidied, then
     the dark screen; an empty B: is passed over; a key during C:'s turn
@@ -668,7 +706,7 @@ def t_hd_misc():
 if __name__ == '__main__':
     t0 = time.time()
     only = sys.argv[1:]
-    for t in (t_basic, t_refuse, t_stop, t_open_file, t_root, t_drive_b, t_720, t_msdos, t_saver, t_bad,
+    for t in (t_basic, t_refuse, t_stop, t_open_file, t_root, t_drive_b, t_720, t_msdos, t_saver, t_font, t_bad,
               t_hd, t_hd_big, t_hd_max, t_hd_worn, t_hd_test, t_hd_misc, t_saver_all):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]

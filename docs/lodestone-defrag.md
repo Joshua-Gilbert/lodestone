@@ -221,7 +221,7 @@ The same operation on the internal drive, with as much code reused as possible, 
 
 ## Files
 - **Source:** `src\DEFRAG.ASM` (its header describes all of the above). The saver is in `src\UICORE.INC` (`saver`, `sv_move`, `sv_defrag`).
-- **Size:** DEFRAG.COM is **10,220 bytes** (0.3.14: it passes over M:; 9,158 in 0.2.2), including the 1.5 KB font. While it runs it needs memory sized to the disk (above) plus a 36 KB DMA buffer block; nothing stays behind.
+- **Size:** DEFRAG.COM is **9,496 bytes** (10,252 before Lodefont was packed; 9,158 in 0.2.2). The font is packed in the file (753 bytes, FONTPACK.INC) and unpacked into 1,536 bytes of BSS when it runs, so a run needs about 780 bytes more memory than with the font raw. While it runs it needs memory sized to the disk (above) plus a 36 KB DMA buffer block; nothing stays behind.
 - **Version:** Lodestone 0.2.2, kernel 24,400 bytes, 570 KB for programs.
 
 ## Possible later
