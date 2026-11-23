@@ -1269,8 +1269,8 @@ f_F0:   mov     al, [bp+F_AX]
         mov     ax, 8
         jmp     fail
 ; AL=3: the cache has its memory back.  .bk: the same for root_restart
-; (a lend from the root's own context goes when it starts over); all
-; registers but the flags kept, with EMS too
+; (a lend from the root's own context goes when it starts over); with
+; EMS, AX not kept (neither caller needs it)
 .back:  call    .bk
         jmp     ok
 .bk:    mov     byte [tc_lock], 0       ; (KEMS.INC: JMP NEAR ems_back here)

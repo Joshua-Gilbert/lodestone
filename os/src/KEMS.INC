@@ -985,15 +985,13 @@ ems_lend:
         inc     ax
         jmp     f_F0.lx
 .no:    jmp     f_F0.nolend
-ems_back:                               ; (f_F0.bk's: registers kept, a RET)
-        pusha
-        push    es
+ems_back:                               ; (f_F0.bk's: a RET, ES kept; AX not,
+        push    es                      ;  which neither caller needs)
         xor     ax, ax
         xchg    ax, [ems_su]
         mov     es, ax
         call    mem_free                ; (none lent: no block at 0, nothing)
         pop     es
-        popa
         ret
 %endif
 
