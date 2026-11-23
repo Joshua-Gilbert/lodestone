@@ -39,8 +39,7 @@ Lodestone was developed from a boot floppy before it moved to EPROM (`lodestone-
     - DISKMAP.COM (dumps the floppy's system area);
     - `trace.py`, `prof.py`, `gapprof.py`;
     - the results in `RESULTS.TXT`, the 1520 logs `BENCH_1520_2026-10-05*.TXT` and `DEFRAG_1520_2026-10-05_reformatted.TXT`, and `DISKMAP_1520_2026-10-05*.BIN`.
-  - Screenshots in `os\screens\0.2`, `screens\0.2.2` and `screens\0.3`.
-  - `gosim.py` and the `test_*.py` in the `os` folder are the 0.1 harness.
+  - Screenshots in `os\releases\0.2\screens`, `releases\0.2.2\screens` and `os\screens\0.3`.
 
 ## Rule: what must not be on this floppy
 - GRiD MS-DOS booted from the EPROM (no F) with this floppy in the drive takes `\COMMAND.COM` and `\CONFIG.SYS` from A: in place of its own. The strings `\CONFIG.SYS` and `\COMMAND.COM` sit in its IO.SYS, opened on the default drive, and AUTOEXEC.BAT follows from the shell.

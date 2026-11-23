@@ -14,6 +14,11 @@ rom/*.bin
 *.img
 *.IMG
 
+# archives (a third-party disk archive kept beside a working tree, say):
+# never ours to publish
+*.7z
+*.zip
+
 # the bridge's local settings and key
 claude-link/config.toml
 claude-link/api_key

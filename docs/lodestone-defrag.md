@@ -37,7 +37,7 @@ Design decisions (2026-10-05):
   - "Disk in order: 15 files, 1053 KB free in one piece[, N lost clusters][, N bad clusters marked]";
   - "Done - N files couldn't be read, left as they are";
   - "Done, but N files still in pieces (not enough room)".
-- Screenshots: `os\screens\0.2.2` (defrag_map, saver_dark, help).
+- Screenshots: `os\releases\0.2.2\screens` (defrag_map, saver_dark, help).
 
 ## What it does
 1. **Root directory:** deleted entries are squeezed out. The bridge's copies leave 4 dead entries per file; see `lodestone-0.2-kernel.md`.

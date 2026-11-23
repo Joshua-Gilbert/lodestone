@@ -1,4 +1,4 @@
-"""GGTEST.COM (the GPIBTEST read-only set through the GPIB driver API) run on
+"""GGTEST.COM (a read-only GPIB test set through the GPIB driver API) run on
 the Lodestone kernel's built-in GPIB against the bus model.  Prints the log.
 
     python3 tests/ggtest_kernel.py [out.txt]
