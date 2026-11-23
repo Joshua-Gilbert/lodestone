@@ -190,6 +190,7 @@ start:  mov     sp, stack_top
         mov     dx, s_total
         call    print
         mov     ax, [total]
+        mov     dx, [total+2]
         call    psecs
         mov     dx, s_crlf
         call    print
@@ -352,10 +353,12 @@ stamp:  mov     bl, [tno]
         sbb     cx, [t0+2]
         mov     [ticks], dx
         add     [total], dx
+        adc     word [total+2], 0       ; (the sum of the times shown)
         inc     byte [tno]
         ret
 finish: call    stamp
         mov     ax, [ticks]
+        xor     dx, dx
         call    psecs
         mov     dx, s_crlf
         jmp     print
@@ -371,6 +374,7 @@ div32:  mov     cx, ax
 finish_kb:
         call    stamp
         mov     ax, [ticks]
+        xor     dx, dx
         call    psecs
         mov     dx, s_sp4
         call    print
@@ -794,12 +798,16 @@ pnum:   push    bx
         pop     cx
         pop     bx
         ret
-; ticks AX -> "  12.34 s" (right-aligned)
-psecs:  mov     cx, 5493                ; hundredths = ticks * 5.4925
+; ticks DX:AX -> "  12.34 s" (right-aligned; up to 781,000 ticks, 11 h)
+psecs:  mov     bx, ax
+        mov     ax, dx
+        mov     cx, 5493                ; hundredths = ticks * 5.4925
         mul     cx
-        mov     cx, 1000
-        div     cx                      ; AX = hundredths
-        xor     dx, dx
+        xchg    ax, bx
+        mul     cx
+        add     dx, bx
+        mov     bx, 1000
+        call    div32                   ; DX:AX = hundredths
         mov     cx, 100
         div     cx                      ; AX = seconds, DX = hundredths
         push    dx
@@ -885,7 +893,7 @@ rsize       resw 1
 seed        resw 1
 t0          resw 2
 ticks       resw 1
-total       resw 1
+total       resw 2
 save_ss     resw 1
 save_sp     resw 1
 epb         resw 7
