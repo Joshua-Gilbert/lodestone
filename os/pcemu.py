@@ -58,7 +58,8 @@ R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
 # forgets it (old_exception back to -1).  So a second divide error in a machine's life came to the hook as a
 # double fault (8, the timer's vector here) and a third halted the CPU as a triple fault, where a 286 gives
 # INT 00h each time.  exc_forget puts the field back.  It is found once, in a scratch CPU: the one word of the
-# saved context that goes from -1 to 0 over a first divide error.
+# saved context that goes from -1 to 0 over a first divide error.  -> True when it did; anything else (no word
+# found) and run() ends the run as a crash, so the test fails at once rather than hanging at the next fault.
 _exc_at = []
 def _ctx(mu):
     c = mu.context_save()
@@ -74,15 +75,16 @@ def exc_forget(mu):
         c, at = _ctx(t); b = ctypes.string_at(at, c.size)
         found = [i for i in range(0, len(a) - 3, 4) if a[i:i + 4] == b'\xff' * 4 and b[i:i + 4] == bytes(4)]
         _exc_at.append(found[0] if len(found) == 1 else None)   # (not found: this unicorn is left as it is)
-    if _exc_at[0] is None:                                      # (said once, at the first fault it can't forget:
-        if len(_exc_at) == 1:                                   #  a later one would hang a test without a word)
+    if _exc_at[0] is None:                                      # (said once, at the first fault it can't forget)
+        if len(_exc_at) == 1:
             _exc_at.append(None)
             print('pcemu: exc_forget found no exception word in this unicorn: a second divide error will not be '
                   'delivered', file=sys.stderr)
-        return
+        return False
     c, at = _ctx(mu)
     ctypes.memmove(at + _exc_at[0], b'\xff' * 4, 4)
     mu.context_restore(c)
+    return True
 
 # real-code BIOS pieces at F000:1000 and up
 INT08 = bytes([0x50, 0x1E, 0x31, 0xC0, 0x8E, 0xD8, 0xFF, 0x06, 0x6C, 0x04, 0x75, 0x04,
@@ -1491,7 +1493,11 @@ class PC:
         except UcError as e:
             s.crash = 'CPU %s at %04X:%04X' % (e, s.r('cs'), s.r('ip')); return False
         if s.exc_seen:
-            s.exc_seen = False; exc_forget(s.mu)
+            s.exc_seen = False
+            if exc_forget(s.mu) is not True:            # (a second divide error would not be delivered: stop here)
+                s.crash = 'a divide error at %04X:%04X that unicorn would not deliver again (exc_forget missed)' % (
+                    s.r('cs'), s.r('ip'))
+                return False
         a, z = s.last_blk
         here = s.lin()
         s.halted = a + z == here and s.rd(0, here - 1, 1)[0] == 0xF4
