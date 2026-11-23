@@ -254,7 +254,9 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '562.4', 88: '578.5'}   # (16 bytes less of the UI kept: ed_enter's, ui_room's and run_app's
+MEM_044 = {0: '562.3', 88: '578.4'}   # (32 bytes more of the kernel: INT 00h ends what is in service,
+                                      #  sets ^C's type and gives up a capture, 2026-11-23; 562.4 / 578.5
+                                      #  before; 16 bytes less of the UI kept: ed_enter's, ui_room's and run_app's
                                       #  short jumps, 2026-11-21; 562.4 / 578.4 before;
                                       #  48 bytes less of the UI kept: relist through relist_at, run_app's
                                       #  short jumps, compose's REP MOVSB, 2026-11-20; 562.3 / 578.4 before;
