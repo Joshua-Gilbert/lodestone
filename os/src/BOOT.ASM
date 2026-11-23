@@ -154,7 +154,7 @@ read_run:
         int     13h
         dec     di
         jnz     .try
-        mov     si, m_disk
+.dsk:   mov     si, m_disk
         jmp     fail
 .ok:    pop     cx
         pop     ax
@@ -163,6 +163,8 @@ read_run:
         shl     bx, 5
         mov     dx, es
         add     dx, bx
+        cmp     dx, 9000h               ; a looping chain: not past 576 KB
+        jae     .dsk
         mov     es, dx
         jmp     .next
 .done:  ret

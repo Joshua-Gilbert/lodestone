@@ -5,6 +5,7 @@ starts), an old system replaced, one drive (the disk changed at "Insert
 the disk"), the source given, too little room (nothing written), a
 write-protected disk, a disk changed before the boot sector goes on, no
 LODE.SYS to copy, multitasking, and the drives and disks it refuses.
+Also BOOT.BIN on a disk whose LODE.SYS chain loops.
 
     python3 tests/test_sys.py [name ...]
 """
@@ -214,10 +215,35 @@ def t_review():
           'refused before anything is written', 'No room for the system in the root directory' in o and said(o, 'E1')
           and bytes(k.pc.drives[1].img) == raw, o)
 
+def t_loop():
+    # BOOT.BIN on a floppy whose LODE.SYS chain loops (its last cluster back to its first): the load stops before
+    # 9000:0 with "disk read error", nothing past it written
+    p = mkimg.build(os.path.join(OUT, 'loop.img'), [os.path.join(SRC, f) for f in ('LODE.SYS', 'LCMD.COM')])
+    d = bytearray(open(p, 'rb').read())
+    get = lambda n: (struct.unpack_from('<H', d, 512 + n * 3 // 2)[0] >> 4) if n & 1 else \
+        struct.unpack_from('<H', d, 512 + n * 3 // 2)[0] & 0xFFF
+    first = next(struct.unpack_from('<H', d, 19 * 512 + i * 32 + 26)[0] for i in range(224)
+                 if d[19 * 512 + i * 32:19 * 512 + i * 32 + 11] == b'LODE    SYS')
+    c = first
+    while get(c) < 0xFF8: c = get(c)
+    for fat in (0, 1):
+        o = 512 + fat * 9 * 512 + c * 3 // 2
+        w = struct.unpack_from('<H', d, o)[0]
+        struct.pack_into('<H', d, o, (w & 0x000F) | (first << 4) if c & 1 else (w & 0xF000) | first)
+    open(p, 'wb').write(d)
+    k = ktest.KPC(p)
+    k.pc.boot(0)
+    k.pc.mu.mem_write(0x90000, b'MARK')
+    k.pc.run_until(lambda: 'error' in ''.join(k.pc.tty) or k.pc.crash, 120)
+    o = ''.join(k.pc.tty)
+    check('a floppy whose LODE.SYS chain loops: "Lodestone: disk read error", 9000:0 untouched',
+          'Lodestone: disk read error' in o and bytes(k.pc.mu.mem_read(0x90000, 4)) == b'MARK' and not k.pc.crash,
+          (o[-200:], bytes(k.pc.mu.mem_read(0x90000, 4)), k.pc.crash))
+
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_basic, t_again, t_one_drive, t_source, t_room, t_changed, t_refused, t_mt, t_review):
+    for t in (t_basic, t_again, t_one_drive, t_source, t_room, t_changed, t_refused, t_mt, t_review, t_loop):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
