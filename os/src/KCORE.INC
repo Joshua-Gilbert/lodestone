@@ -153,22 +153,21 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; MS-DOS 3.30's (which doesn't call the program's INT 23h either).  LCMD
 ; and the Executive read AL alone; LCMD's WAIT counts a task that ended
 ; so as failed, as one ^C ended.
-;   Outside the kernel (InDOS 0: the program's own code, or a hook that
-; interrupted it), with interrupts still off, whatever is in service at
-; the PICs is ended first: a fault in an interrupt handler (a program's
-; INT 08h or 1Ch hook) would leave its IRQ in service for good, holding
-; back that IRQ and every lower one.  Eight non-specific EOIs to each PIC:
-; each ends the highest level in service, the faulting handler's, then any
-; it had interrupted, all abandoned by the 4Ch; with nothing in service
-; they do nothing.  Then the message.
-;   Inside the kernel (InDOS not 0) neither.  No EOI: the call interrupted
-; may be half way through its buffers, its FAT or a floppy command.  Only
-; a floppy is held back by a level left in service (IRQ 6 below it: the
-; BIOS times out, terminate's closes and flush write nothing); C: (polled,
-; IRQ 14 masked) and M: (memory) get whatever state the interrupted call
-; left, with or without the EOI.  The price: the level stays in service
-; for good, and with IRQ 0 the timer, keyboard and all below it stop,
-; also where nothing was half done (a key wait in INT 21h).  No message: int21's entry
+;   First, with interrupts still off, whatever is in service at the PICs
+; is ended, wherever the fault came: a fault in an interrupt handler (a
+; program's INT 08h or 1Ch hook) would leave its IRQ in service for good,
+; holding back that IRQ and every lower one (the timer, the keyboard).
+; Eight non-specific EOIs to each PIC: each ends the highest level in
+; service, the faulting handler's, then any it had interrupted, all
+; abandoned by the 4Ch; with nothing in service they do nothing.  The one
+; risk: a hook that faults while the program is inside a kernel disk call
+; lets the program's end (terminate's closes and flush) write the half
+; done state of that call.  On C: (polled) and M: that was so anyway; on
+; a floppy it is so because the level is ended (left in service, IRQ 6
+; was held back, the BIOS timed out and nothing was written, at the price
+; of the whole machine).  test_kernel's t_divirq runs it on a floppy.
+;   Outside the kernel (InDOS 0) then the message.  Inside it (InDOS not
+; 0) none: int21's entry
 ; puts a call at InDOS 0 on kstack_top and a nested one on astack_top, so
 ; from InDOS 2 up the message's call would take the stack the fault is
 ; on; at InDOS 1 it would not, but AH=09h writes through handle 1, a file
@@ -187,23 +186,23 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; hold itself (InDOS, mt_inb, mt_crit, mt_swing, the mouse event handler's
 ; m33_busy), and then every retry is refused and the machine spins here
 ; with interrupts on.
-int00:  push    cs                      ; (IF clear: the CPU's, for the fault)
+int00:  mov     al, 20h                 ; the PICs' levels in service ended (IF
+        mov     cx, 8                   ;  clear: the CPU's, for the fault)
+.eoi:   out     0A0h, al
+        out     20h, al
+        loop    .eoi
+        push    cs
         pop     ds
         mov     byte [term_type], 1     ; (^C's type, as MS-DOS: AH of 4Dh's)
         cmp     byte [indos], 0
         jne     .k
-        mov     al, 20h                 ; outside the kernel: the PICs' levels
-        mov     cx, 8                   ;  in service ended, the message
-.eoi:   out     0A0h, al
-        out     20h, al
-        loop    .eoi
-        sti
+        sti                             ; outside the kernel: the message
         mov     dx, s_divov
         mov     ah, 9
         int     21h
         jmp     short .q
 .k:     mov     byte [cap_req], 0       ; inside it: a capture under way given
-        sti                             ;  up, no EOI, no message
+        sti                             ;  up, no message
 .q:     mov     ax, 4C00h
         int     21h
         jmp     .q

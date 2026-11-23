@@ -1630,11 +1630,13 @@ def t_divctx():
 def t_divirq():
     """A divide error in an interrupt handler (DIVT T's resident INT 1Ch hook, armed through its byte at CS:0103h)
     ends the program that was interrupted, here the Executive's prompt (then LCMD /P's inside one), not the hook's
-    owner.  Outside the kernel int00 ends what is in service at the PICs first: with pcemu's 8259 model on
+    owner.  int00 ends what is in service at the PICs first, wherever the fault came: with pcemu's 8259 model on
     (PIC_ISR), IRQ 0 is not left in service, the timer's interrupt comes again (INT 08h delivered), the prompt
-    works, and nested levels poked in at both PICs (IRQ 2 and 3, the slave's IRQ 14) are ended too.  Inside a
-    kernel call (the foreground in INT 21h 08h) there is no EOI: IRQ 0 stays in service and nothing is written (a
-    limit, pinned as it stands).  (The keyboard's IRQ 1 can't be had here: pcemu gives keys to INT 16h without one.)"""
+    works, and nested levels poked in at both PICs (IRQ 2 and 3, the slave's IRQ 14) are ended too; so too when
+    the foreground waited in INT 21h 08h (InDOS 1: no message).  The risk, pinned as a limit: a fault inside a
+    floppy write (WBIG's INT 21h 40h) lets terminate's close write the half done call (the file's size as far as
+    it got, its FAT chain the whole write's).  (The keyboard's IRQ 1 can't be had here: pcemu gives keys to INT
+    16h without one.)"""
     subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
     old = pcemu.PIC_ISR
     pcemu.PIC_ISR = True
@@ -1642,7 +1644,13 @@ def t_divirq():
         cc = os.path.join(OUT, 'CCWAIT.COM')        # CCWAIT 8: INT 21h 08h, then "AFTER" (as t_errexits')
         open(cc, 'wb').write(bytes([0xB4, 0x01, 0x80, 0x3E, 0x82, 0x00, 0x38, 0x75, 0x02, 0xB4, 0x08, 0xCD, 0x21,
                                     0xBA, 0x19, 0x01, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x05, 0x4C, 0xCD, 0x21]) + b'AFTER$')
-        k = ktest.KPC(image('divirq.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT, cc)); k.start()
+        src = os.path.join(OUT, 'WBIG.ASM')         # WBIG: X.DAT created, 30,000 bytes in one write, "DONE"
+        open(src, 'w').write("org 100h\n mov ah, 3Ch\n xor cx, cx\n mov dx, nm\n int 21h\n mov bx, ax\n mov ah, 40h\n"
+                             " mov cx, 30000\n mov dx, buf\n int 21h\n mov ah, 3Eh\n int 21h\n mov dx, s\n mov ah, 9\n"
+                             " int 21h\n mov ax, 4C00h\n int 21h\nnm db 'X.DAT', 0\ns db 'DONE$'\nbuf:\n")
+        wbig = os.path.join(OUT, 'WBIG.COM')
+        subprocess.run(['nasm', '-f', 'bin', '-o', wbig, src], check=True)
+        k = ktest.KPC(image('divirq.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT, cc, wbig)); k.start()
         sh = Shell(k)
         sh.run('divt t')
         seg, top = k.pc.u16(0, 0x1C * 4 + 2), k.u16('cur_psp')
@@ -1688,12 +1696,13 @@ def t_divirq():
               'every level ended at both PICs (master %02X, slave %02X)' % (k.pc.isr, k.pc.isr2),
               k.pc.isr == 0 and k.pc.isr2 == 0 and k.u16('cur_psp') == k.u16('root_psp') and not k.crashed,
               (hex(k.pc.isr), hex(k.pc.isr2), k.where()))
-        # inside the kernel: the hook's fault while the foreground program waits in INT 21h 08h (InDOS 1)
+        # inside the kernel: the hook's fault while the foreground program waits in INT 21h 08h (InDOS 1), IRQ 3
+        # and the slave's IRQ 14 poked in under it again
         sh = Shell(k)
-        img0 = bytes(k.pc.drives[0].img)
         k.key('cls'); k.key(ktest.ENTER)
         k.key('ccwait 8'); k.key(ktest.ENTER)
         waiting = k.rd('indos', 1)[0]
+        k.pc.isr |= 0x0C; k.pc.isr2 |= 0x40
         k.pc.wr(seg, 0x103, b'\x01')
         k.run_for(1.0)
         n = [0]
@@ -1701,12 +1710,39 @@ def t_divirq():
         k.run_for(1.0)
         k.hooks.remove(h8)
         scr = k.pc.text_screen().rstrip()
-        check('(a limit: a divide error in an interrupt handler that came inside a kernel call leaves the interrupt in '
-              'service) CCWAIT 8 waiting in INT 21h 08h (InDOS %d), the hook divides: no message, CCWAIT ends (no '
-              '"AFTER"), no EOI: IRQ 0 still in service, INT 08h not delivered again (%d), nothing written to the disk'
-              % (waiting, n[0]), waiting == 1 and k.pc.isr & 1 and n[0] == 0 and 'Divide overflow' not in scr
-              and 'AFTER' not in scr and bytes(k.pc.drives[0].img) == img0 and not k.crashed,
-              (waiting, hex(k.pc.isr), n[0], scr[-200:], k.where()))
+        o = sh.run('ver')
+        check('CCWAIT 8 waiting in INT 21h 08h (InDOS %d), the hook divides: no message, CCWAIT ends (no "AFTER"), '
+              'nothing left in service at either PIC (master %02X, slave %02X), INT 08h delivered again (%d in 1 s), the '
+              'prompt works (VER)' % (waiting, k.pc.isr, k.pc.isr2, n[0]),
+              waiting == 1 and k.pc.isr == 0 and k.pc.isr2 == 0 and n[0] >= 15 and 'Divide overflow' not in scr
+              and 'AFTER' not in scr and scr.endswith('A:\\>') and 'Lodestone version' in o and not k.crashed,
+              (waiting, hex(k.pc.isr), hex(k.pc.isr2), n[0], scr[-200:], o, k.where()))
+        # inside a disk call: the hook's fault while WBIG writes 30,000 bytes in one INT 21h 40h on A: (armed at its
+        # first floppy write: the next tick faults inside the call)
+        img0 = bytes(k.pc.drives[0].img)
+        c0 = len(k.pc.calls13)
+        def arm(pc):
+            if k.pc.rd(seg, 0x103, 1) == b'\x00' and k.rd('indos', 1)[0] == 1 and \
+                    any(c[0] == 3 for c in k.pc.calls13[c0:]) and not armed:
+                armed.append(1); k.pc.wr(seg, 0x103, b'\x01')
+        armed = []
+        k.hooks.append(arm)
+        o = sh.run('wbig')
+        k.hooks.remove(arm)
+        files = fatcheck.read_files(k.pc.drives[0].img)
+        probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
+        x = files.get('A:\\X.DAT')
+        writes = [c for c in k.pc.calls13[c0:] if c[0] == 3]
+        print('   disk case: %d floppy writes, X.DAT %s bytes, the disk %s' % (len(writes), x is not None and len(x),
+              'consistent' if not probs else 'inconsistent: ' + '; '.join(probs)))
+        check('(a limit: a hook that faults inside a kernel disk call lets the program\'s end write that call\'s half '
+              'done state) WBIG writing 30,000 bytes on A:, the hook divides inside its INT 21h 40h: WBIG ends (no '
+              '"DONE"), IRQ 0 ended, and terminate\'s close writes the call\'s half: X.DAT in the directory with 7,680 '
+              'bytes (what was written before the fault), its FAT chain the whole write\'s 33 clusters where the size '
+              'needs 15 (an allocation error CHKDSK would have to mend)',
+              armed and 'DONE' not in o and not k.pc.isr & 1 and bytes(k.pc.drives[0].img) != img0
+              and x is not None and len(x) == 7680 and probs == ['\\X.DAT: 7680 bytes need 15 clusters, chain has 33']
+              and not k.crashed, (armed, o, hex(k.pc.isr), x is not None and len(x), probs, len(writes)))
     finally:
         pcemu.PIC_ISR = old
 
