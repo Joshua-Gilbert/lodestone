@@ -1,7 +1,7 @@
 """HEADCLN.COM in the emulator: run from the Executive, the cleaning disk
 swapped in (nothing on it can be read), 30 s of sweeps, then the boot disk
 back.  Also: a readable disk left in by mistake, Esc at the first prompt,
-and drive B:.
+drive B:, and C: (no floppy drive: refused).
 
     python3 tests/test_headcln.py
 """
@@ -17,12 +17,15 @@ def check(name, cond, detail=''):
     results.append((name, bool(cond)))
     print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)) if detail and not cond else ''))
 
-# every BIOS disk call: (unit, ah, cylinder, head)
+# every BIOS disk call: (unit, ah, cylinder, head); CALLERS: the segment each INT 13h was in (the BIOS's
+# own handler is taken at the INT instruction itself)
 CALLS = []
+CALLERS = []
 _o13 = pcemu.PC.int13
 def _i13(s):
     cx, dx = s.r('cx'), s.r('dx')
     CALLS.append((dx & 0xFF, s.r('ah'), cx >> 8, dx >> 8))
+    CALLERS.append(s.r('cs'))
     return _o13(s)
 pcemu.PC.int13 = _i13
 
@@ -123,9 +126,31 @@ def t_drive_b():
           and 'drive B:' in tty(k), (done, (k.pc.us - t0) / 1e6, calls[:5]))
     k.key(chr(27), settle=False)
 
+def t_drive_c():
+    k, raw = boot()
+    k.key(ktest.CODE_P)
+    k.pc.tty.clear()
+    n0 = len(CALLS)
+    segs = set()                                        # the segments INT 21h is called from (HEADCLN's among them)
+    def h(pc):
+        if k.addr == k.i21 and pc.r('cs') == 0x60: segs.add(pc.u16(pc.r('ss'), pc.r('sp') + 2))
+    k.hooks.append(h)
+    k.key('headcln c:'); k.key(ktest.ENTER, settle=False); k.settle(10)
+    k.key(ktest.ENTER, settle=False); k.settle(10)        # (were it asking for the cleaning disk: go on)
+    o = tty(k).replace('\r', '')
+    k.hooks.remove(h)
+    own = [c for c, cs in zip(CALLS[n0:], CALLERS[n0:]) if cs in segs]
+    k.pc.tty.clear()
+    for n in (2, 3):
+        k.key('if errorlevel %d echo L%d' % (n, n)); k.key(ktest.ENTER)
+    lv = [l.strip() for l in tty(k).replace('\r', '').split('\n')]
+    check('HEADCLN C:: "HEADCLN: there is no floppy drive C:", exit code 2, no INT 13h call of its own, A: untouched',
+          'HEADCLN: there is no floppy drive C:\n' in o and 'cleaning disk' not in o and 'L2' in lv and 'L3' not in lv
+          and own == [] and bytes(k.pc.drives[0].img) == raw, (o[-300:], lv[-6:], own[:5]))
+
 if __name__ == '__main__':
     t0 = time.time()
-    for t in (t_clean, t_data_disk, t_esc, t_drive_b):
+    for t in (t_clean, t_data_disk, t_esc, t_drive_b, t_drive_c):
         t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

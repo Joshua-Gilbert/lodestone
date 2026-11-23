@@ -313,7 +313,7 @@ args:   mov     si, 81h
         cmp     byte [si], ':'
         jne     .l
         sub     al, 'A'
-        cmp     al, 1
+        cmp     al, 25                  ; any letter: past B it is "no floppy drive"
         ja      .l
         mov     [unit], al
         inc     si
