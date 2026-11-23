@@ -6557,6 +6557,11 @@ def t_cmdedge():
           'failing so, or a command not in a pipe, deletes no pipe file (PIPEA1.$$$ and PIPEA2.$$$, made before, there)',
           'File not found' in o and 'IN0' not in o and 'File creation error' in o2 and 'P0' not in o2 and 'Q0' not in o2
           and same and same2 and len(pipes()) == 2, (o, o2, j, j2, pipes()))
+    o, same, j = full('echo X1 > o.txt', 1)
+    o2, same2, j2 = full('echo IN1 < a.txt', 1)
+    check('... nor a command not in a pipe whose DUP fails (one handle free, > and <): "Too many open files", '
+          'PIPEA1.$$$ and PIPEA2.$$$ there', tmany in o and tmany in o2 and same and same2 and len(pipes()) == 2,
+          (o, o2, j, j2, pipes()))
     sh.run('del pipea?.$$$')
     o, same, j = full('echo ZERO > o0.txt', 0)
     o2, same2, j2 = full('echo NEW > b3.txt', 0)
@@ -6584,6 +6589,10 @@ def t_cmdedge():
     check('... a pipe of three with two free (the second\'s DUP for its > fails): "Too many open files", the second and '
           'third not run, the pipe\'s files deleted, the table as before', tmany in o and 'Q' not in o and 'R' not in o
           and not pipes() and same, (o, pipes(), j))
+    o, same, j = full('echo P | echo Q > o.txt', 2)
+    check('... a pipe of two with two free (the second\'s DUP for its own > fails): "Too many open files", the second '
+          'not run, its handle 0 put back before the pipe\'s file is deleted, so none left; the table as before',
+          tmany in o and 'Q' not in o and not pipes() and same, (o, pipes(), j))
     o, same, j = full('x', 1)
     check('in a batch file (its line read in the one free handle, closed again): "Too many open files" (with the '
           'batch\'s name and line), that line not run, the batch goes on, the table as before',
@@ -6619,6 +6628,25 @@ def t_cmdedge():
           'SET shows nothing, a child started from it runs; the arena whole after',
           p2 != psp and blk == b'\0\0' and f.get('A:\\ENV.TXT') == b'' and b'Lodestone version' in f.get('A:\\VER.TXT', b'')
           and own(m1) == own(m0), (hex(p2), blk, f.get('A:\\ENV.TXT'), f.get('A:\\VER.TXT'), m0, m1))
+    k = ktest.KPC(img, bytes(1474560))                 # TEMP on B:, no disk in it
+    k.pc.drives[1].empty = True
+    k.start()
+    sh = Shell(k)
+    sh.run('set TEMP=B:\\')
+    psp = k.pc.u16(0x60, k.Y['cur_psp'])
+    js, jo = k.pc.u16(psp, 0x36), k.pc.u16(psp, 0x34)
+    j0 = k.pc.rd(js, jo, 20)
+    t = j0[:5] + bytes([j0[0]]) * 14 + b'\xff'
+    n24, nb = k.pc.ints[0x24], sum(1 for c in k.pc.calls13 if c[1] == 1)
+    o = []
+    for line in ('echo X > o.txt', 'echo IN < a.txt'):
+        k.pc.wr(js, jo, t)
+        o.append(sh.run(line))
+        if 'Fail?' in o[-1]: k.key('f')
+        k.pc.wr(js, jo, j0)
+    check('TEMP=B:\\ with no disk in B:, one handle free, > and < on a line with no pipe: "Too many open files", no '
+          'INT 24h, B: not read (no pipe file to delete)', all(tmany in x and 'Not ready' not in x for x in o)
+          and k.pc.ints[0x24] == n24 and sum(1 for c in k.pc.calls13 if c[1] == 1) == nb, (o, k.pc.ints[0x24] - n24))
     k = ktest.KPC(img); k.start()                      # the prompt in a graphics mode: no saver
     k.wr('saver_t', struct.pack('<H', 36))             # (2 s; read as LCMD starts)
     Shell(k)

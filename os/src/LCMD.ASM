@@ -746,10 +746,11 @@ redir_do:
 ; redir_do's: make handle CX refer to file handle BX (which is closed);
 ; AX = a copy of what CX was.  No handle left for the copy: CX is left as
 ; it was, the file is closed all the same, and "Too many open files" (CF)
-; goes back to redir_do's caller: the command is not run.  pipe_n is
-; counted on, so do_pipe deletes this level's pipe files even after a
-; pipe's first command, whose file is made (only then: no INT 24h from
-; a delete when a pipe fails otherwise)
+; goes back to redir_do's caller: the command is not run.  A pipe's
+; first command (a rest of the line after it) has pipe_n counted on, so
+; do_pipe deletes this level's pipe files, its own made.  Only then: no
+; delete, so no INT 24h, for a line with no pipe, or for a pipe failing
+; otherwise
 swap_handle:
         push    bx
         mov     bx, cx
@@ -764,7 +765,8 @@ swap_handle:
         pop     ax
         ret
 .f:     call    fclose
-        inc     byte [pipe_n]
+        mov     al, [pipe_rest + 1]     ; (the rest: in our buffers, 100h-
+        add     [pipe_n], al            ;  FEFFh, so 1-FEh; none: 0)
         pop     ax                      ; (redir_do's return)
         mov     si, e_toomany
         jmp     err
