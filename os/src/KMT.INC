@@ -268,11 +268,21 @@ mt_mrot     db      0                   ; the task such a boost took the turn
 mt_fpu      db      0                   ; 1: a coprocessor (INT 11h), kept per
                                         ;  task
 mt_front    db      0                   ; the task in front
-mt_cur      db      0                   ; the task running (the three in this
+mt_cur      db      0                   ; the task running (the four in this
 mt_tsrk     db      0                   ;  order: MT_TSR gives their address);
                                         ;  1: Resident Claude's pop-up waits
                                         ;  for the front task (as a key would:
                                         ;  mt_kin)
+mt_down     db      0FFh                ; the task switched from at a
+                                        ;  floppy's wait (INT 15h AX=9001h),
+                                        ;  or the hard disk's (9000h),
+                                        ;  till it runs again (FFh: none).
+                                        ;  MT_TSR's fourth byte: Resident
+                                        ;  Claude's stub writes no EMS page
+                                        ;  register while an owner is out
+mt_ddev     db      1                   ; its device: 1 the floppy, 0 the hard
+                                        ;  disk (as 9001h/9000h's AL)
+        times   -(mt_cur != mt_front + 1 || mt_tsrk != mt_front + 2 || mt_down != mt_front + 3) db 0
 mt_tsro     dw      0                   ; Resident Claude's key wait (MT_TSR):
 mt_tsrs     dw      0                   ;  a switch may come there; 0:0 none
 mt_hotk     dw      0A500h, 0A5F0h      ; the hot key, CODE-Tab, as AH=10h
@@ -315,12 +325,6 @@ mt_old25    dd      0                   ;  floppy's) as they were
 mt_old26    dd      0
 mt_old0e    dd      0
 mt_old76    dd      0                   ; INT 76h (IRQ 14, the hard disk's)
-mt_down     db      0FFh                ; the task switched from at a
-                                        ;  floppy's wait (INT 15h AX=9001h),
-                                        ;  or the hard disk's (9000h),
-                                        ;  till it runs again (FFh: none)
-mt_ddev     db      1                   ; its device: 1 the floppy, 0 the hard
-                                        ;  disk (as 9001h/9000h's AL)
 mt_hirq     db      0                   ; 1: an IRQ 14 has come (mt_i76)
 mt_htk      db      0                   ; hard-disk waits the tick ended, the
                                         ;  drive done, and no IRQ 14 yet (2: a
@@ -2825,8 +2829,12 @@ mt_ring:
         ret
 
 ; MT_TSR: Resident Claude's key wait, where it may be switched from
-; (mt_safe), and where it finds whose call it is (mt_front, mt_cur)
+; (mt_safe), and where it finds whose call it is (mt_front, mt_cur) and
+; whether a disk's owner is out (mt_down).  CL = 4: the bytes at DX:AX
+; (an earlier LODEMT.SYS left CX as it came and had three; CL alone, a
+; byte less, and what follows keeps its parity)
 mt_tsrc:
+        mov     byte [bp+F_CX], 4
         mov     ax, [bp+F_BX]
         mov     [cs:mt_tsro], ax
         mov     ax, [bp+F_ES]
