@@ -1526,7 +1526,8 @@ def t_exehuge():
 
 def t_divide():
     """A divide error (INT 00h): "Divide overflow" on a line of its own and the program ends, exit code 0, as
-    GRiD MS-DOS 3.30 (measured in the emulator from its ROM image: CR LF before and after, 4Dh's AL 0).  The
+    GRiD MS-DOS 3.30 (measured in the emulator from its ROM image: CR LF before and after, 4Dh's AL 0), its
+    termination type ^C's (1), which neither stops a batch file nor fails a && in LCMD.  The
     kernel had no handler: the 286 leaves the DIV's address on the stack, so the BIOS's IRET ran it again for
     ever.  (Three in one machine: pcemu's exc_forget.)"""
     msg = lambda at: bytes([0xB4, 0x09, 0xBA, at & 0xFF, at >> 8, 0xCD, 0x21])
@@ -1534,8 +1535,11 @@ def t_divide():
     assert len(code) == 0x14
     open(os.path.join(OUT, 'DIV0.COM'), 'wb').write(code + b'\x90BEFORE.$AFTER$')
     open(os.path.join(OUT, 'EXIT7.COM'), 'wb').write(bytes([0xB8, 0x07, 0x4C, 0xCD, 0x21]))
+    open(os.path.join(OUT, 'TYPE4D.COM'), 'wb').write(bytes([0xB4, 0x4D, 0xCD, 0x21, 0x88, 0xE0, 0x04, 0x30,  # 4Dh's AH
+                                                            0x88, 0xC2, 0xB4, 0x02, 0xCD, 0x21, 0xC3]))     #  as a digit
+    open(os.path.join(OUT, 'DV.BAT'), 'wb').write(b'div0\r\necho NEXT\r\n')
     k = ktest.KPC(image('div0.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(OUT, 'DIV0.COM'),
-                        os.path.join(OUT, 'EXIT7.COM'))); k.start()
+                        os.path.join(OUT, 'EXIT7.COM'), os.path.join(OUT, 'TYPE4D.COM'), os.path.join(OUT, 'DV.BAT'))); k.start()
     k.run_file('DIV0.COM', 20)
     check('a program that divides by zero, from the Executive: it ends, the Executive back',
           not k.crashed and k.pc.mode() == 0x40 and any('DIV0.COM ended' in l for l in k.band()), (k.crashed, k.band()))
@@ -1548,6 +1552,17 @@ def t_divide():
     o = sh.run('if errorlevel 1 echo E1')
     o2 = sh.run('if not errorlevel 1 echo E0')
     check('... its exit code is 0', 'E1' not in o.replace('echo E1', '') and 'E0' in o2.replace('echo E0', ''), (o, o2))
+    sh.run('div0')
+    t1 = sh.run('type4d')
+    sh.run('exit7')
+    t0 = sh.run('type4d')
+    check('... its termination type (4Dh\'s AH) 1, ^C\'s, as MS-DOS 3.30\'s; after a plain exit 0',
+          t1.split('\n')[0].strip() == '1' and t0.split('\n')[0].strip() == '0', (t1, t0))
+    o = sh.run('dv.bat')
+    o2 = sh.run('div0 && echo OK')
+    check('... in a batch file the next line runs, nothing asked ("Terminate batch job" is not); && counts it as '
+          'having worked (exit code 0), as COMMAND does', 'NEXT' in o and 'Terminate' not in o and '?' not in o
+          and o2.rstrip().split('\n')[-2:-1] == ['OK'], (o, o2))
     o = sh.run('div0 > nul')
     check('... the message is standard output\'s', 'Divide overflow' not in o and not k.crashed, o)
     check('... and the shell works on', 'Lodestone version' in sh.run('ver'))

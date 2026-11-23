@@ -149,7 +149,11 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; INT 00h, a divide error: the 286 leaves the DIV's own address on the
 ; stack, so a handler that returns runs it again, for ever.  As MS-DOS:
 ; "Divide overflow" on a line of its own, and the program ends with exit
-; code 0 (MS-DOS's termination type is ^C's, 1; ours 0).  First whatever
+; code 0 and the termination type 1, ^C's (AH of INT 21h 4Dh's), as
+; MS-DOS 3.30's; set before the message, so a fault in that call (a hook
+; under AH=09h) ends with the same type.  LCMD and the Executive read AL
+; alone; LCMD's WAIT counts a task that ended so as failed, as one ^C
+; ended.  First whatever
 ; is in service at the PICs is ended: a fault in an interrupt handler (a
 ; program's INT 08h or 1Ch hook) would leave its IRQ in service for good,
 ; holding back that IRQ and every lower one.  Eight non-specific EOIs to
@@ -180,6 +184,7 @@ int00:  mov     al, 20h                 ; (IF clear: the CPU's, for the fault)
         sti
         push    cs
         pop     ds
+        mov     byte [term_type], 1     ; (^C's type, as MS-DOS: AH of 4Dh's)
         cmp     byte [indos], 0
         jne     .q
         mov     dx, s_divov
@@ -188,8 +193,6 @@ int00:  mov     al, 20h                 ; (IF clear: the CPU's, for the fault)
 .q:     mov     ax, 4C00h
         int     21h
         jmp     .q
-        db      90h                     ; (a pad, never run: what follows at
-                                        ;  its parity)
 s_divov db      13, 10, 'Divide overflow', 13, 10, '$'
 
 int25:  mov     ax, 0207h               ; absolute disk I/O: not supported
