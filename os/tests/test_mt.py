@@ -5621,6 +5621,53 @@ def t_rpoll():
     check('KEYPK through MTKEY H\'s hook (loaded after CLAUDE /R), CODE-\\ at 16 moments, alone and with MTSPIN behind: '
           'the console every time', 'resident' in o and not m1 and not m2, (o[-160:], m1, m2))
 
+def t_tsrd():
+    """MT_TSR's answer to Resident Claude: CL = 4, DX:AX at mt_front, and there the front task, the running one, the
+    pop-up's wait, the task out on a disk (FFh: none) and its device (1 the floppy, 0 the hard disk): what the stub
+    reads before it writes an EMS page register."""
+    print('== MT_TSR: CL = 4, and its fourth byte the task out on a disk')
+    import test_resident as R
+    cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
+    pad = dw_pad()
+    def resident(k):                    # CLAUDE /R at the prompt: MT_TSR's CL (at the kernel's ok after mt_tsrc), DX:AX
+        seg, Y, got, on = mt_seg(k), k.Y, [], [0]
+        def h(a):
+            if a == seg * 16 + Y['mt_tsrc']: on[0] = 1
+            elif on[0]:
+                on[0] = 0; pc = k.pc; ss, bp = pc.r('ss'), pc.r('bp')
+                got.append((pc.rd(ss, bp + equ('F_CX'), 1)[0], pc.u16(ss, bp + equ('F_AX')), pc.u16(ss, bp + equ('F_DX'))))
+        code_hooks(k, [seg * 16 + Y['mt_tsrc'], 0x600 + Y['ok']], h)
+        o = Shell(k).run('claude /r')
+        stub = R.stub_seg(k)
+        rmt = (k.pc.u16(stub, R.csym('r_mt')), k.pc.u16(stub, R.csym('r_mt') + 2))
+        return o, got, rmt
+    def out_bytes(k, rmt, sim):         # (the bytes at the stub's DX:AX once a task is out: +3, +4; and the one waiting)
+        rd = lambda i: k.pc.rd(rmt[1], rmt[0] + i, 1)[0]
+        k.pc.run_until(lambda: rd(3) != 0xFF or k.pc.crash, sim)
+        w = [t for t, s, n in tstate(k)[0] if s == 6]
+        return rd(3), rd(4), w
+    k = boot('mt_tsd.img', b'MULTITASK=1\r\n', 88, cl, 'PAD.BIN=' + pad, fd_wait=True, disk_model='real')
+    Shell(k).run('ver')
+    o, got, rmt = resident(k)
+    seg, Y = mt_seg(k), k.Y
+    b0 = bytes(k.pc.rd(rmt[1], rmt[0], 5))
+    typ(k, 'mtlaunch lcmd.com /c copy pad.bin p.bin', 0.2); typ(k, '', 0.0)
+    d, dev, w = out_bytes(k, rmt, 20)
+    check('CLAUDE /R: MT_TSR answers CL = 4 (%s), DX:AX mt_front (%04X:%04X); its bytes with nobody out: front %d, '
+          'running %d, pop-up %d, %02Xh none out; a copy behind out on the floppy: %02Xh, the task waiting there %s, '
+          'device %d' % ([g[0] for g in got], rmt[1], rmt[0], b0[0], b0[1], b0[2], b0[3], d, w, dev),
+          'resident' in o and [g[0] for g in got] == [4] and got[0][1:] == (Y['mt_front'], seg)
+          and rmt == (Y['mt_front'], seg) and b0[3] == 0xFF and d in w and dev == 1 and not k.crashed,
+          (o[-120:], got, rmt, b0.hex(), d, dev, w))
+    data = hw_data()
+    ata = hw_ata(data)
+    k, hw = hw_boot('mt_tsh.img', ata, b'MULTITASK=1\r\n', cl)
+    o, got, rmt = resident(k)
+    typ(k, r'mtlaunch lcmd.com /c copy c:\big.bin c:\b2.bin', 0.2); typ(k, '', 0.0)
+    d, dev, w = out_bytes(k, rmt, 20)
+    check('... a copy behind out on the hard disk: the fourth byte %02Xh, the task waiting there %s, device %d'
+          % (d, w, dev), [g[0] for g in got] == [4] and d in w and dev == 0 and not k.crashed, (got, d, dev, w))
+
 TERMRUN = os.path.join(GOS, 'apps', 'TERM.RUN')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERM.FNT')
 
@@ -8533,7 +8580,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd,t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
