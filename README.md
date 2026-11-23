@@ -1,5 +1,7 @@
 # Lodestone
 
+<p align="center"><img src="os/screens/readme/splash.png" width="640" alt="Lodestone's start-up picture: a terrella on a tilted rod among its lines of force, LODESTONE underlined beneath"></p>
+
 A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display) and its 386 siblings, with GRiD's own look and feel. The whole base suite fits in one 128 KB EPROM: the kernel, the Executive, the command prompt, System, Write, the calculator and the terminal window. A second EPROM adds DEFRAG, the disk utilities, Paint and Claude. It boots from that EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them. It can also multitask: several DOS programs run at once, preemptively, each full screen or in a window beside the Executive (`MULTITASK=1`).
 
 The GRiDCase 1530 and 1535 (80386) share the 1520's video card, application-ROM sockets and AT chip set, so Lodestone may run on them from a floppy, given a BIOS with the 1520's 640×400 mode (40h); booting from the ROM also needs the 1520's BIOS ROM calls. Only the 1520 has been tried. The 80C86 models of the 1500 series can't run it: it needs an 80286 or later.
