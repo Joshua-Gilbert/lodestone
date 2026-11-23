@@ -5633,16 +5633,23 @@ def t_tsrd():
         seg, Y, got, on = mt_seg(k), k.Y, [], [0, 0]
         def h(a):
             pc = k.pc; ss, bp = pc.r('ss'), pc.r('bp')
-            if a == seg * 16 + Y['mt_tsrc']: on[:] = [1, pc.rd(ss, bp + equ('F_CX') + 1, 1)[0]]    # (CH as it came)
+            if a == seg * 16 + Y['mt_tsrc']:    # (CH as it came, CL as it came, ES:BX as it came)
+                on[:] = [1, pc.rd(ss, bp + equ('F_CX') + 1, 1)[0], pc.rd(ss, bp + equ('F_CX'), 1)[0],
+                         pc.u16(ss, bp + equ('F_ES')), pc.u16(ss, bp + equ('F_BX'))]
             elif on[0]:
                 on[0] = 0
                 got.append((pc.rd(ss, bp + equ('F_CX'), 1)[0], pc.u16(ss, bp + equ('F_AX')), pc.u16(ss, bp + equ('F_DX')),
-                            on[1], pc.rd(ss, bp + equ('F_CX') + 1, 1)[0]))
+                            on[1], pc.rd(ss, bp + equ('F_CX') + 1, 1)[0], on[2], on[3], on[4]))
         code_hooks(k, [seg * 16 + Y['mt_tsrc'], 0x600 + Y['ok']], h)
         o = Shell(k).run('claude /r')
         stub = R.stub_seg(k)
         rmt = (k.pc.u16(stub, R.csym('r_mt')), k.pc.u16(stub, R.csym('r_mt') + 2))
-        return o, got, rmt
+        return o, got, rmt, stub
+    def calls_ok(k, got, stub):         # (CLAUDE 1.19's two calls: asked first with CX 0 and ES:BX 0:0, before it takes
+        seg = mt_seg(k)                 #  any memory; then the stub's key wait registered.  Each: CL 4, CH as it came,
+        return len(got) == 2 and all(g[0] == 4 and g[1:3] == (k.Y['mt_front'], seg) and g[3] == g[4] for g in got) \
+            and got[0][3] == got[0][5] == 0 and got[0][6:8] == (0, 0) \
+            and got[1][6:8] == (stub, R.csym('..@r_idle'))  # DX:AX mt_front)
     def out_bytes(k, rmt, sim):         # (the bytes at the stub's DX:AX once a task is out: +3, +4; and the one waiting)
         rd = lambda i: k.pc.rd(rmt[1], rmt[0] + i, 1)[0]
         k.pc.run_until(lambda: rd(3) != 0xFF or k.pc.crash, sim)
@@ -5650,26 +5657,27 @@ def t_tsrd():
         return rd(3), rd(4), w
     k = boot('mt_tsd.img', b'MULTITASK=1\r\n', 88, cl, 'PAD.BIN=' + pad, fd_wait=True, disk_model='real')
     Shell(k).run('ver')
-    o, got, rmt = resident(k)
+    o, got, rmt, stub = resident(k)
     seg, Y = mt_seg(k), k.Y
     b0 = bytes(k.pc.rd(rmt[1], rmt[0], 5))
     typ(k, 'mtlaunch lcmd.com /c copy pad.bin p.bin', 0.2); typ(k, '', 0.0)
     d, dev, w = out_bytes(k, rmt, 20)
-    check('CLAUDE /R: MT_TSR answers CL = 4 (%s), CH as it came (%s), DX:AX mt_front (%04X:%04X); its bytes with nobody '
-          'out: front %d, running %d, pop-up %d, %02Xh none out; a copy behind out on the floppy: %02Xh, the task waiting '
-          'there %s, device %d' % ([g[0] for g in got], [g[3:] for g in got], rmt[1], rmt[0], b0[0], b0[1], b0[2], b0[3],
-                                   d, w, dev),
-          'resident' in o and [g[0] for g in got] == [4] and got[0][1:3] == (Y['mt_front'], seg) and got[0][3] == got[0][4]
+    check('CLAUDE /R: MT_TSR called twice (asked with CX 0 and ES:BX 0:0, then the stub\'s key wait %04X:%04X), each '
+          'answering CL = 4 (%s), CH as it came (%s), DX:AX mt_front (%04X:%04X); its bytes with nobody out: front %d, '
+          'running %d, pop-up %d, %02Xh none out; a copy behind out on the floppy: %02Xh, the task waiting there %s, '
+          'device %d' % (stub, R.csym('..@r_idle'), [g[0] for g in got], [g[3:5] for g in got], rmt[1], rmt[0], b0[0],
+                         b0[1], b0[2], b0[3], d, w, dev),
+          'resident' in o and calls_ok(k, got, stub)
           and rmt == (Y['mt_front'], seg) and b0[3] == 0xFF and d in w and dev == 1 and not k.crashed,
           (o[-120:], got, rmt, b0.hex(), d, dev, w))
     data = hw_data()
     ata = hw_ata(data)
     k, hw = hw_boot('mt_tsh.img', ata, b'MULTITASK=1\r\n', cl)
-    o, got, rmt = resident(k)
+    o, got, rmt, stub = resident(k)
     typ(k, r'mtlaunch lcmd.com /c copy c:\big.bin c:\b2.bin', 0.2); typ(k, '', 0.0)
     d, dev, w = out_bytes(k, rmt, 20)
     check('... a copy behind out on the hard disk: the fourth byte %02Xh, the task waiting there %s, device %d'
-          % (d, w, dev), [g[0] for g in got] == [4] and d in w and dev == 0 and not k.crashed, (got, d, dev, w))
+          % (d, w, dev), calls_ok(k, got, stub) and d in w and dev == 0 and not k.crashed, (got, d, dev, w))
 
 TERMRUN = os.path.join(GOS, 'apps', 'TERM.RUN')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERM.FNT')
