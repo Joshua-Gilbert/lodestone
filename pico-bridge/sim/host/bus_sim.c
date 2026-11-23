@@ -37,11 +37,24 @@ static _Atomic uint32_t c_assert = 0, d_assert = 0;    // lines the controller /
 static _Atomic uint32_t contention = 0;
 #define GPIB_LINES 0xFFFFu
 
-static uint32_t now_us(void) {
+// The Pico's two clocks: the u32 microsecond timer (core 1's stamps, hal_us) and millis() (core 0's timeouts).
+// Both come from one 64-bit count, as on the Pico, so each wraps at its own 2^32.  (Before 2026-11-20 the
+// milliseconds were the wrapped microseconds / 1000: every 71.6 min of the host's uptime they jumped back from
+// 4294967 to 0, and a usbstall or freeze1 that straddled that then lasted 71 min.)  They start at
+// $GPIB_SIM_CLOCK0 microseconds (default 0, a Pico just booted), so a test can start them just before their wrap.
+static uint64_t clock_base_us;
+static uint64_t now_us64(void) {
   struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
-  return (uint32_t)(t.tv_sec * 1000000ull + t.tv_nsec / 1000);
+  return t.tv_sec * 1000000ull + t.tv_nsec / 1000 + clock_base_us;
 }
-static uint32_t now_ms(void) { return now_us() / 1000u; }
+static uint32_t now_us(void) { return (uint32_t)now_us64(); }
+static uint32_t now_ms(void) { return (uint32_t)(now_us64() / 1000u); }
+static void clock_init(void) {
+  const char *s = getenv("GPIB_SIM_CLOCK0");
+  uint64_t start = s ? strtoull(s, NULL, 0) : 0;
+  clock_base_us = 0;
+  clock_base_us = start - now_us64();
+}
 
 static uint32_t pin_levels(void) {          // what each Pico pin would be at, as an output or pulled
   uint32_t out = b_out, oe = b_oe;
@@ -99,8 +112,10 @@ static int pty_master = -1;
 static atomic_bool host_open = false;
 
 static _Atomic uint32_t sim_stall_until = 0;      // "usbstall MS": the USB host takes no data for MS ms
+static _Atomic uint32_t stall_rx0 = 0, stall_rx1 = 0;   // SH.n_rx when it began, and as last seen during it
 size_t link_write_some(const uint8_t *b, size_t n) {
-  if (!host_open || (int32_t)(now_ms() - sim_stall_until) < 0) return 0;
+  if (!host_open) return 0;
+  if ((int32_t)(now_ms() - sim_stall_until) < 0) { stall_rx1 = SH.n_rx; return 0; }
   ssize_t k = write(pty_master, b, n);
   return k > 0 ? (size_t)k : 0;
 }
@@ -197,12 +212,14 @@ static atomic_bool late_engage = false;
 
 static void cset(uint32_t m, bool assert) { if (assert) c_assert |= m; else c_assert &= ~m; }
 
-// Source handshake, one byte.  0 ok, 1 timeout, 2 no listener.
+// Source handshake, one byte.  0 ok, 1 timeout, 2 no listener.  "No listener" (NRFD and NDAC both high) only
+// after 200 ms of it: on a loaded host the instrument's thread (device 5) may not yet have run since it was
+// addressed.  (Before 2026-11-20 at once, and B flaked under load.)
 static int c_send(uint8_t b, bool eoi, bool atn) {
   uint32_t t0 = now_ms();
   for (;;) {                                         // wait NRFD high (all ready)
     uint32_t A = bus_asserted();
-    if (!(A & NRFD_M)) { if (!(A & NDAC_M)) return 2; break; }
+    if (!(A & NRFD_M)) { if (A & NDAC_M) break; if (now_ms() - t0 > 200) return 2; continue; }
     if (now_ms() - t0 > tmo_ms) return 1;
   }
   cset(DIO_M, false); cset(b, true); cset(EOI_M, eoi && !atn);
@@ -222,10 +239,14 @@ static int c_send(uint8_t b, bool eoi, bool atn) {
 static int c_cmds(const uint8_t *c, int n) {
   cset(ATN_M, true);
   // A real controller waits T7/T1 (microseconds); the threads here may not be scheduled that fast, so allow the
-  // acceptors up to 20 ms to take part.  Logic, not timing, is what this simulation checks.
-  uint32_t t0 = now_ms();
+  // acceptors up to 20 ms to take part.  Logic, not timing, is what this simulation checks.  The bridge, online,
+  // gets 300 ms before c_send calls its engagement late: on a loaded host core 1's thread can wait longer than
+  // 20 ms to run.  The grace stays well under the firmware's 1 s engine poke (host_link.c ENGINE_POKE_MS), so a
+  // core 1 that misses ATN and is woken only by the poke is still called late.
+  // (Before 2026-11-20 it had 20 ms too, and late flaked under load.)
+  uint32_t t0 = now_ms(), bridge_ms = 300;
   while (!(bus_asserted() & NDAC_M) && now_ms() - t0 < 20) sched_yield();
-  while (SH.online && !(bridge_assert() & NDAC_M) && now_ms() - t0 < 20) sched_yield();   // the bridge too
+  while (SH.online && !(bridge_assert() & NDAC_M) && now_ms() - t0 < bridge_ms) sched_yield();   // the bridge
   usleep(200);
   for (int i = 0; i < n; i++) { int r = c_send(c[i], false, true); if (r) return r; }
   return 0;
@@ -302,6 +323,8 @@ static int unhex(const char *s, uint8_t *o) {
 
 int main(void) {
   setvbuf(stdout, NULL, _IOLBF, 0);
+  clock_init();
+  sim_freeze1_until = sim_stall_until = now_ms();   // (not 0: from a start near the wrap, 0 is still ahead)
   pty_master = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
   grantpt(pty_master); unlockpt(pty_master);
   const char *slave = ptsname(pty_master);
@@ -324,7 +347,13 @@ int main(void) {
     if (!strcmp(cmd, "quit")) break;
     else if (!strcmp(cmd, "ifc")) { cset(IFC_M, true); usleep(500); cset(IFC_M, false); cset(REN_M, true); printf("ok 0\n"); }
     else if (!strcmp(cmd, "ren")) { sscanf(line, "%*s %d", &a); cset(REN_M, a); usleep(20000); printf("ok 0\n"); }
-    else if (!strcmp(cmd, "usbstall")) { sscanf(line, "%*s %d", &a); sim_stall_until = now_ms() + (uint32_t)a; printf("ok 0\n"); }
+    else if (!strcmp(cmd, "usbstall")) {
+      sscanf(line, "%*s %d", &a);
+      stall_rx0 = stall_rx1 = SH.n_rx;
+      sim_stall_until = now_ms() + (uint32_t)a;
+      printf("ok 0\n");
+    }
+    else if (!strcmp(cmd, "clock")) printf("ok %llu\n", (unsigned long long)now_us64());   // the Pico's us, 64-bit
     else if (!strcmp(cmd, "freeze1")) { sscanf(line, "%*s %d", &a); sim_freeze1_until = now_ms() + (uint32_t)a; printf("ok 0\n"); }
     else if (!strcmp(cmd, "engine")) printf("ok %d %u\n", (int)engine_ok, SH.engine_alive);
     else if (!strcmp(cmd, "tmo")) { sscanf(line, "%*s %d", &a); tmo_ms = (uint32_t)a; printf("ok 0\n"); }
@@ -352,9 +381,10 @@ int main(void) {
     else if (!strcmp(cmd, "dev")) { printf("ok "); hexout(dev_last, dev_last_len); printf(" %d\n", (int)dev_cmds); }
     else if (!strcmp(cmd, "stats")) {
       printf("ok online=%d addr=%d L=%d T=%d gen=%u cmds=%u rx=%u tx=%u polls=%u lost=%u holds=%u fights=%u late=%d "
-             "held=%u held_void=%u dropped0=%u\n",
+             "held=%u held_void=%u dropped0=%u stall_rx=%u\n",
              SH.online, SH.addr, SH.listener, SH.talker, SH.gen, SH.n_cmd, SH.n_rx, SH.n_tx, SH.n_polls, SH.ev_lost,
-             SH.rx_holds, (unsigned)contention, (int)late_engage, SH.n_held, SH.n_held_void, SH.tx_dropped0);
+             SH.rx_holds, (unsigned)contention, (int)late_engage, SH.n_held, SH.n_held_void, SH.tx_dropped0,
+             (unsigned)(stall_rx1 - stall_rx0));
     } else if (cmd[0]) printf("err unknown command\n");
   }
   sim_stop = 1; SH.req_seq++;

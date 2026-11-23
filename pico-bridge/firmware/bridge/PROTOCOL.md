@@ -2,7 +2,8 @@
 
 The Pico is a USB CDC serial port (`/dev/ttyACM0`, or `/dev/gpib-bridge` with the udev rule). The baud rate
 is ignored. Every frame is **COBS-encoded and ends with one 0x00 byte**, so either side can resynchronise
-at the next 0x00. A decoded frame is one type byte and its fields, little-endian. The
+at the next 0x00. A decoded frame is one type byte and its fields, little-endian. A frame shorter than its
+type's fields (bytes lost inside it) is ignored, by either side, like one that fails COBS. The
 reference code is `host_link.c` (Pico) and `pi/gpibbridge/protocol.py` (Pi).
 
 ## Pi → Pico
@@ -41,7 +42,10 @@ sees nothing new.
 ## Generations: how a reply is matched to its question
 
 - The Pico counts a **generation** (`gen`). It goes up at the first byte of every new message from the 1520,
-  at every DCL or SDC, and when the Pi brings it online.
+  at every DCL or SDC, and when the Pi brings it online. It also goes up when a half-received message is
+  thrown away: at IFC; at the Pi's CONFIG taking it offline or moving its address; or when it goes offline
+  otherwise (a new HELLO_REQ session, the port closing, or no PING for 5 s). So no reply queued for that
+  message can be sent.
 - Every DATA and EVENT frame carries the current gen. The Pi tags each reply with the gen of the message it
   answers.
 - The Pico drops any reply whose gen is no longer current. A reply that arrives late (after the 1520 has
