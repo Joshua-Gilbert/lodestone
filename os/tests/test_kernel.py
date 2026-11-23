@@ -1614,9 +1614,10 @@ def t_divctx():
 
 def t_divirq():
     """A divide error in an interrupt handler (DIVT T's resident INT 1Ch hook, armed through its byte at CS:0103h)
-    ends the program that was interrupted, here the Executive's prompt, not the hook's owner, and the interrupt is
-    never ended at the PIC: with pcemu's 8259 model on (PIC_ISR), IRQ 0 is left in service.  A limit the kernel
-    documents, pinned as it stands so that a fix fails this on purpose."""
+    ends the program that was interrupted, here the Executive's prompt (then LCMD /P's inside one), not the hook's
+    owner, and int00 ends what is in service at the PICs first: with pcemu's 8259 model on (PIC_ISR), IRQ 0 is not
+    left in service, the timer's interrupt comes again (INT 08h delivered), and the prompt works.  (The keyboard's
+    IRQ 1 can't be had here: pcemu gives keys to INT 16h without one.)"""
     subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
     old = pcemu.PIC_ISR
     pcemu.PIC_ISR = True
@@ -1628,14 +1629,36 @@ def t_divirq():
         isr0 = k.pc.isr
         k.pc.tty.clear()
         k.pc.wr(seg, 0x103, b'\x01')
-        k.run_for(1.0); k.run_for(1.0)
-        check('(a limit: a divide error in an interrupt handler leaves the interrupt in service) DIVT T\'s INT 1Ch '
-              'hook divides: "Divide overflow", the program interrupted (the Executive\'s prompt) ends, the Executive '
-              'back ("LCMD.COM ended"); DIVT stays resident, its hook disarmed; IRQ 0 still in service at the PIC',
-              not isr0 & 1 and k.pc.isr & 1 and 'Divide overflow' in ''.join(k.pc.tty) and top != k.u16('root_psp')
-              and k.u16('cur_psp') == k.u16('root_psp') and k.pc.mode() == 0x40 and k.band()[:1] == ['LCMD.COM ended']
-              and k.pc.u16(0, 0x1C * 4 + 2) == seg and k.pc.u16(seg - 1, 1) == seg and k.pc.rd(seg, 0x103, 1) == b'\x00'
-              and not k.crashed, (hex(isr0), hex(k.pc.isr), ''.join(k.pc.tty), k.band(), k.where()))
+        k.run_for(1.0)
+        off8, seg8 = struct.unpack('<HH', k.pc.rd(0, 8 * 4, 4))
+        lin8, n = seg8 * 16 + off8, [0]                 # (INT 08h's handler entered: a block there)
+        def h8(pc):
+            if k.addr == lin8: n[0] += 1
+        k.hooks.append(h8)
+        k.run_for(1.0)
+        k.hooks.remove(h8)
+        n8 = n[0]
+        check('DIVT T\'s INT 1Ch hook divides: "Divide overflow", the program interrupted (the Executive\'s prompt) '
+              'ends, the Executive back ("LCMD.COM ended"); DIVT stays resident, its hook disarmed; IRQ 0 not left in '
+              'service at the PIC, INT 08h delivered again (%d in 1 s)' % n8,
+              not isr0 & 1 and not k.pc.isr & 1 and n8 >= 15 and 'Divide overflow' in ''.join(k.pc.tty)
+              and top != k.u16('root_psp') and k.u16('cur_psp') == k.u16('root_psp') and k.pc.mode() == 0x40
+              and k.band()[:1] == ['LCMD.COM ended'] and k.pc.u16(0, 0x1C * 4 + 2) == seg and k.pc.u16(seg - 1, 1) == seg
+              and k.pc.rd(seg, 0x103, 1) == b'\x00' and not k.crashed,
+              (hex(isr0), hex(k.pc.isr), n8, ''.join(k.pc.tty), k.band(), k.where()))
+        sh = Shell(k)
+        o = sh.run('ver')
+        sh.run('lcmd /p')
+        inner = k.u16('cur_psp')
+        k.pc.wr(seg, 0x103, b'\x01')
+        k.run_for(1.0); k.settle()
+        scr = k.pc.text_screen().rstrip()
+        o2 = sh.run('ver')
+        check('... the prompt again works (VER); armed again under LCMD /P inside it: that LCMD ends, "Divide '
+              'overflow", the prompt it was started from goes on (VER), IRQ 0 not in service',
+              'Lodestone version' in o and inner != k.u16('cur_psp') and 'Divide overflow' in scr
+              and 'Lodestone version' in o2 and not k.pc.isr & 1 and not k.crashed,
+              (o, hex(inner), hex(k.u16('cur_psp')), scr[-200:], o2, hex(k.pc.isr)))
     finally:
         pcemu.PIC_ISR = old
 

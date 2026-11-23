@@ -67,7 +67,9 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 485Dh on
 # 2026-11-09, with the 2 s timed from a floppy's last transfer), and a change past it moves image_end and bss_end.
 # The UI's pads, UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x47F0, 'bss_end': 0x7C50, 'ui_keep_end': 0x6894}  # (4870h/7CD0h before the error
+OFF_MAP ={'image_end': 0x4800, 'bss_end': 0x7C60, 'ui_keep_end': 0x6894}  # (47F0h/7C50h before INT 00h
+                                        #  ended what is in service at the PICs, 2026-11-23: 16 bytes,
+                                        #  562.3 / 578.4 KB as before; 4870h/7CD0h before the error
                                         #  exits of mount_bpb, the GPIB driver, EXEC and the path
                                         #  calls were short jumps to a shared one, IFC was timed by
                                         #  a counted loop, and INT 00h got its handler (44 bytes):

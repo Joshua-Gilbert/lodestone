@@ -149,14 +149,21 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; INT 00h, a divide error: the 286 leaves the DIV's own address on the
 ; stack, so a handler that returns runs it again, for ever.  As MS-DOS:
 ; "Divide overflow" on a line of its own, and the program ends with exit
-; code 0 (MS-DOS's termination type is ^C's, 1; ours 0).  Through INT 21h,
-; with interrupts on: while a floppy owner is out, multitasking's gate
-; (KMT.INC's mt_gate) holds a fault in plain code until the owner has run,
-; then the 4Ch goes through.  A call the gate refuses is made again, but
-; the gate refuses for reasons the faulting context may hold itself (an
-; interrupt in service, InDOS, mt_inb, mt_crit, mt_swing, the mouse event
-; handler's m33_busy): then every retry is refused and the machine spins
-; here with interrupts on.  Inside the kernel (InDOS not 0) no message,
+; code 0 (MS-DOS's termination type is ^C's, 1; ours 0).  First whatever
+; is in service at the PICs is ended: a fault in an interrupt handler (a
+; program's INT 08h or 1Ch hook) would leave its IRQ in service for good,
+; holding back that IRQ and every lower one.  Eight non-specific EOIs to
+; each PIC, the slave's first (IRQ 14 under IRQ 2): each ends the highest
+; level in service, the faulting handler's, then any it had interrupted,
+; all abandoned by the 4Ch; with nothing in service they do nothing.
+; Then through INT 21h, with interrupts on: while a floppy owner is out,
+; multitasking's gate (KMT.INC's mt_gate) holds a fault in plain code
+; until the owner has run, then the 4Ch goes through (in a handler, its IRQ
+; ended now, the gate's "in service" no longer refuses it).  A call the gate refuses is made again, but the gate
+; refuses for reasons the faulting context may hold itself (InDOS, mt_inb,
+; mt_crit, mt_swing, the mouse event handler's m33_busy): then every retry
+; is refused and the machine spins here with interrupts on.  Inside the
+; kernel (InDOS not 0) no message,
 ; only the 4Ch, which never comes back to the interrupted call.  int21's
 ; entry puts a call at InDOS 0 on kstack_top and a nested one on
 ; astack_top, so from InDOS 2 up the message's call would take the stack
@@ -165,7 +172,12 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; writes through handle 1, a file or device whose code, and the kernel's
 ; one set of per-call state (rw_sft, the buffers), the interrupted call
 ; may be in the middle of
-int00:  sti
+int00:  mov     al, 20h                 ; (IF clear: the CPU's, for the fault)
+        mov     cx, 8
+.eoi:   out     0A0h, al
+        out     20h, al
+        loop    .eoi
+        sti
         push    cs
         pop     ds
         cmp     byte [indos], 0
@@ -176,6 +188,8 @@ int00:  sti
 .q:     mov     ax, 4C00h
         int     21h
         jmp     .q
+        db      90h                     ; (a pad, never run: what follows at
+                                        ;  its parity)
 s_divov db      13, 10, 'Divide overflow', 13, 10, '$'
 
 int25:  mov     ax, 0207h               ; absolute disk I/O: not supported
