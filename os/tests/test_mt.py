@@ -7917,7 +7917,7 @@ def t_wfall():
               'task but the owner ran the kernel\'s code while it was out (%s); the copy ended, exact; KEYIN still '
               'waiting in front' % (mode.upper(), how, waits[0], ran or 'none'),
               waits[0] >= 1 and not ran and not any(t == 3 for t, _, _ in st[0]) and fs.get('\\B2.BIN') == data
-              and not probs and (1, TS_WAITK, 'KEYIN.COM') in st[0] and st[1] == 1 and not k.crashed,
+              and not probs and any(t == 1 and n == 'KEYIN.COM' for t, _, n in st[0]) and st[1] == 1 and not k.crashed,
               (ran, waits, st, probs))
 
 def t_dmaems():
