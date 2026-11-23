@@ -712,7 +712,11 @@ root_restart:
         mov     ds, ax
         mov     es, ax
         mov     byte [indos], 0
-        jmp     run_ui
+        mov     byte [tc_lock], 0       ; (the cache lent from the root's own
+        jmp     run_ui                  ;  context, F002h: a window's save-under,
+        db      90h                     ;  a capture's buffer, gone with it.  The
+                                        ;  pad, never run: what follows at its
+                                        ;  parity)
 
 ; ---------------------------------------------------------------------
 ;  the built-in GPIB driver: install on INT 60h if there is a uPD7210

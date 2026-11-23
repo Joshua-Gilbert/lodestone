@@ -150,57 +150,59 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
 ; stack, so a handler that returns runs it again, for ever.  As MS-DOS:
 ; "Divide overflow" on a line of its own, and the program ends with exit
 ; code 0 and the termination type 1, ^C's (AH of INT 21h 4Dh's), as
-; MS-DOS 3.30's; set before the message, so a fault in that call (a hook
-; under AH=09h) ends with the same type.  LCMD and the Executive read AL
-; alone; LCMD's WAIT counts a task that ended so as failed, as one ^C
-; ended.
-;   First whatever is in service at the PICs is ended: a fault in an
-; interrupt handler (a program's INT 08h or 1Ch hook) would leave its IRQ
-; in service for good, holding back that IRQ and every lower one.  Eight
-; non-specific EOIs to each PIC, the slave's first (IRQ 14 under IRQ 2):
+; MS-DOS 3.30's (which doesn't call the program's INT 23h either).  LCMD
+; and the Executive read AL alone; LCMD's WAIT counts a task that ended
+; so as failed, as one ^C ended.
+;   Outside the kernel (InDOS 0: the program's own code, or a hook that
+; interrupted it), with interrupts still off, whatever is in service at
+; the PICs is ended first: a fault in an interrupt handler (a program's
+; INT 08h or 1Ch hook) would leave its IRQ in service for good, holding
+; back that IRQ and every lower one.  Eight non-specific EOIs to each PIC:
 ; each ends the highest level in service, the faulting handler's, then any
 ; it had interrupted, all abandoned by the 4Ch; with nothing in service
-; they do nothing.  A screen capture under way (cap_req's bit 1: a fault
-; in SCREEN.PRN or a hook it reaches) is given up, else no capture could
-; start again; its files are the ended program's, closed by terminate.  A
-; press not yet taken (bit 0, also one made meanwhile) stays asked for.
-;   Then through INT 21h, with interrupts on: while a floppy owner is out,
-; multitasking's gate (KMT.INC's mt_gate) holds a fault in plain code
-; until the owner has run, then the 4Ch goes through (in a handler, its
-; IRQ ended now, the gate's "in service" no longer refuses it).  A call
-; the gate refuses is made again, but the gate refuses for reasons the
-; faulting context may hold itself (InDOS, mt_inb, mt_crit, mt_swing, the
-; mouse event handler's m33_busy): then every retry is refused and the
-; machine spins here with interrupts on.
-;   Inside the kernel (InDOS not 0) no message, only the 4Ch, which never
-; comes back to the interrupted call.  int21's
-; entry puts a call at InDOS 0 on kstack_top and a nested one on
-; astack_top, so from InDOS 2 up the message's call would take the stack
-; the fault is on.  At InDOS 1 it would not (the fault is on kstack, the
-; call goes to astack), but the message is left out there too: AH=09h
-; writes through handle 1, a file or device whose code, and the kernel's
-; one set of per-call state (rw_sft, the buffers), the interrupted call
-; may be in the middle of
-int00:  mov     al, 20h                 ; (IF clear: the CPU's, for the fault)
-        mov     cx, 8
+; they do nothing.  Then the message.
+;   Inside the kernel (InDOS not 0) neither.  No EOI: the call interrupted
+; may be half way through its buffers, its FAT or a floppy command, and
+; an IRQ ended there would let terminate's closes and flush write that;
+; left in service, the IRQ holds the disk back and nothing is written (the
+; level stays in service for good: the price).  No message: int21's entry
+; puts a call at InDOS 0 on kstack_top and a nested one on astack_top, so
+; from InDOS 2 up the message's call would take the stack the fault is
+; on; at InDOS 1 it would not, but AH=09h writes through handle 1, a file
+; or device whose code, and the kernel's one set of per-call state (rw_sft,
+; the buffers), the interrupted call may be in the middle of.  A screen
+; capture under way (cap_req: it runs inside INT 21h, at InDOS 1 and up)
+; is given up as its own end gives it up, a press made meanwhile too,
+; else no capture could start again.  (cap_req is the machine's, not a
+; task's: under MULTITASK=1 a fault inside another task's kernel call
+; gives up a capture that task's switch left under way.)
+;   Then the 4Ch, through INT 21h with interrupts on, and never back to the
+; interrupted context.  While a floppy owner is out, multitasking's gate
+; (KMT.INC's mt_gate) holds it, on the stack the fault was on, until the
+; owner has run; but the gate refuses for reasons the faulting context may
+; hold itself (InDOS, mt_inb, mt_crit, mt_swing, the mouse event handler's
+; m33_busy), and then every retry is refused and the machine spins here
+; with interrupts on.
+int00:  push    cs                      ; (IF clear: the CPU's, for the fault)
+        pop     ds
+        mov     byte [term_type], 1     ; (^C's type, as MS-DOS: AH of 4Dh's)
+        cmp     byte [indos], 0
+        jne     .k
+        mov     al, 20h                 ; outside the kernel: the PICs' levels
+        mov     cx, 8                   ;  in service ended, the message
 .eoi:   out     0A0h, al
         out     20h, al
         loop    .eoi
         sti
-        push    cs
-        pop     ds
-        mov     byte [term_type], 1     ; (^C's type, as MS-DOS: AH of 4Dh's)
-        and     byte [cap_req], 1       ; (a capture under way given up)
-        cmp     byte [indos], 0
-        jne     .q
         mov     dx, s_divov
         mov     ah, 9
         int     21h
+        jmp     short .q
+.k:     mov     byte [cap_req], 0       ; inside it: a capture under way given
+        sti                             ;  up, no EOI, no message
 .q:     mov     ax, 4C00h
         int     21h
         jmp     .q
-        db      90h                     ; (a pad, never run: what follows at
-                                        ;  its parity)
 s_divov db      13, 10, 'Divide overflow', 13, 10, '$'
 
 int25:  mov     ax, 0207h               ; absolute disk I/O: not supported

@@ -1630,14 +1630,19 @@ def t_divctx():
 def t_divirq():
     """A divide error in an interrupt handler (DIVT T's resident INT 1Ch hook, armed through its byte at CS:0103h)
     ends the program that was interrupted, here the Executive's prompt (then LCMD /P's inside one), not the hook's
-    owner, and int00 ends what is in service at the PICs first: with pcemu's 8259 model on (PIC_ISR), IRQ 0 is not
-    left in service, the timer's interrupt comes again (INT 08h delivered), and the prompt works.  (The keyboard's
-    IRQ 1 can't be had here: pcemu gives keys to INT 16h without one.)"""
+    owner.  Outside the kernel int00 ends what is in service at the PICs first: with pcemu's 8259 model on
+    (PIC_ISR), IRQ 0 is not left in service, the timer's interrupt comes again (INT 08h delivered), the prompt
+    works, and nested levels poked in at both PICs (IRQ 2 and 3, the slave's IRQ 14) are ended too.  Inside a
+    kernel call (the foreground in INT 21h 08h) there is no EOI: IRQ 0 stays in service and nothing is written (a
+    limit, pinned as it stands).  (The keyboard's IRQ 1 can't be had here: pcemu gives keys to INT 16h without one.)"""
     subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
     old = pcemu.PIC_ISR
     pcemu.PIC_ISR = True
     try:
-        k = ktest.KPC(image('divirq.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT)); k.start()
+        cc = os.path.join(OUT, 'CCWAIT.COM')        # CCWAIT 8: INT 21h 08h, then "AFTER" (as t_errexits')
+        open(cc, 'wb').write(bytes([0xB4, 0x01, 0x80, 0x3E, 0x82, 0x00, 0x38, 0x75, 0x02, 0xB4, 0x08, 0xCD, 0x21,
+                                    0xBA, 0x19, 0x01, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x05, 0x4C, 0xCD, 0x21]) + b'AFTER$')
+        k = ktest.KPC(image('divirq.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT, cc)); k.start()
         sh = Shell(k)
         sh.run('divt t')
         seg, top = k.pc.u16(0, 0x1C * 4 + 2), k.u16('cur_psp')
@@ -1674,34 +1679,79 @@ def t_divirq():
               'Lodestone version' in o and inner != k.u16('cur_psp') and 'Divide overflow' in scr
               and 'Lodestone version' in o2 and not k.pc.isr & 1 and not k.crashed,
               (o, hex(inner), hex(k.u16('cur_psp')), scr[-200:], o2, hex(k.pc.isr)))
+        # nested levels: IRQ 2 (the cascade) and 3 in service at the master, IRQ 14 at the slave, as if the tick
+        # had come inside their handlers: all ended
+        k.pc.isr |= 0x0C; k.pc.isr2 |= 0x40
+        k.pc.wr(seg, 0x103, b'\x01')
+        k.run_for(1.0)
+        check('... armed again with IRQ 2 and 3 in service under it and IRQ 14 at the slave: the prompt\'s LCMD ends, '
+              'every level ended at both PICs (master %02X, slave %02X)' % (k.pc.isr, k.pc.isr2),
+              k.pc.isr == 0 and k.pc.isr2 == 0 and k.u16('cur_psp') == k.u16('root_psp') and not k.crashed,
+              (hex(k.pc.isr), hex(k.pc.isr2), k.where()))
+        # inside the kernel: the hook's fault while the foreground program waits in INT 21h 08h (InDOS 1)
+        sh = Shell(k)
+        img0 = bytes(k.pc.drives[0].img)
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key('ccwait 8'); k.key(ktest.ENTER)
+        waiting = k.rd('indos', 1)[0]
+        k.pc.wr(seg, 0x103, b'\x01')
+        k.run_for(1.0)
+        n = [0]
+        k.hooks.append(h8)
+        k.run_for(1.0)
+        k.hooks.remove(h8)
+        scr = k.pc.text_screen().rstrip()
+        check('(a limit: a divide error in an interrupt handler that came inside a kernel call leaves the interrupt in '
+              'service) CCWAIT 8 waiting in INT 21h 08h (InDOS %d), the hook divides: no message, CCWAIT ends (no '
+              '"AFTER"), no EOI: IRQ 0 still in service, INT 08h not delivered again (%d), nothing written to the disk'
+              % (waiting, n[0]), waiting == 1 and k.pc.isr & 1 and n[0] == 0 and 'Divide overflow' not in scr
+              and 'AFTER' not in scr and bytes(k.pc.drives[0].img) == img0 and not k.crashed,
+              (waiting, hex(k.pc.isr), n[0], scr[-200:], k.where()))
     finally:
         pcemu.PIC_ISR = old
 
 def t_divcap():
-    """A divide error while a screen capture is under way (raised in SCREEN.PRN's code, cap_req 2, from the
-    Executive's prompt): no message (inside INT 21h), the prompt's LCMD ends, InDOS 0, its files closed, and the
-    capture given up (cap_req 0): the next Shift-PrtSc saves a picture again.  (cap_req had stayed 2, and no
+    """A divide error while a screen capture is under way, raised in SCREEN.PRN's code once it has its file open
+    (cap_req 2, InDOS 1): no message, the capture given up (cap_req 0, so the next Shift-PrtSc saves again), InDOS 0.
+    From the Executive's prompt the prompt's LCMD ends and terminate closes the file (left at 0 bytes).  From the
+    Executive itself, once the driver has borrowed the disk cache (F002h, tc_lock 1), the Executive starts over:
+    the cache is given back (tc_lock 0; it had stayed lent, the track cache off till a reboot), but the file stays
+    open in the root's handle table, as a .RUN's do (a limit, pinned as it stands).  (cap_req had stayed 2, and no
     capture started again.)"""
-    k = ktest.KPC(image('divcap.img', os.path.join(GOS, 'src', 'LCMD.COM'), SCR)); k.start()
-    refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0] for i in range(24)]
-    r0 = refs()                                     # (the Executive's)
-    sh = Shell(k)
-    sh.run('ver')
-    shots = lambda: sorted(n for n in fatcheck.read_files(k.pc.drives[0].img) if 'SCREEN0' in n)
-    k.pc.prtsc(); k.settle(6.0)
-    s1 = shots()
-    at = divide_at(k, lambda pc: k.rd('cap_req', 1)[0] == 2 and pc.r('cs') != 0x60 and pc.r('cs') < 0xA000)
-    k.pc.tty.clear()
-    k.pc.prtsc(); k.settle(6.0)
-    after = (k.rd('cap_req', 1)[0], k.rd('indos', 1)[0], k.u16('cur_psp') == k.u16('root_psp'), k.band()[:1], shots())
-    check('a divide error in SCREEN.PRN while it saves the screen (%s): no message, the prompt\'s LCMD ends ("LCMD.COM '
-          'ended"), InDOS 0, cap_req 0, no new file' % (at and '%04X:%04X' % at[0]),
-          s1 == ['A:\\SCREEN01.TXT'] and at and after == (0, 0, True, ['LCMD.COM ended'], s1)
-          and 'Divide overflow' not in ''.join(k.pc.tty) and not k.crashed, (s1, at, after))
-    k.pc.prtsc(); k.settle(6.0)
-    check('... the next Shift-PrtSc saves the screen again (SCREEN01.BMP, the Executive\'s), cap_req 0, the handles '
-          'as the Executive had them (none left open by the capture given up)', shots() == ['A:\\SCREEN01.BMP', 'A:\\SCREEN01.TXT'] and k.rd('cap_req', 1)[0] == 0
-          and refs() == r0 and not k.crashed, (shots(), k.rd('cap_req', 1), refs(), r0))
+    for where in ('prompt', 'Executive'):
+        k = ktest.KPC(image('divcap.img', os.path.join(GOS, 'src', 'LCMD.COM'), SCR)); k.start()
+        refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0] for i in range(24)]
+        jfree = lambda: list(k.pc.rd(k.u16('root_psp'), 0x18, 20)).count(0xFF)
+        r0, j0 = refs(), jfree()                    # (the Executive's)
+        if where == 'prompt': Shell(k).run('ver')
+        rb = refs()
+        files = lambda: {n: len(b) for n, b in fatcheck.read_files(k.pc.drives[0].img).items() if 'SCREEN0' in n}
+        cond = lambda pc: (k.rd('cap_req', 1)[0] == 2 and pc.r('cs') != 0x60 and pc.r('cs') < 0xA000
+                           and sum(refs()) > sum(rb) and (where == 'prompt' or k.rd('tc_lock', 1)[0] == 1))
+        at = divide_at(k, cond)
+        k.pc.tty.clear()
+        k.pc.prtsc(); k.settle(6.0)
+        f1, probs = files(), fatcheck.check(bytes(k.pc.drives[0].img))[0]
+        st = (k.rd('cap_req', 1)[0], k.rd('indos', 1)[0], k.rd('tc_lock', 1)[0], k.u16('cur_psp') == k.u16('root_psp'))
+        if where == 'prompt':
+            check('a divide error in SCREEN.PRN with its file open, from the Executive\'s prompt (%s): no message, the '
+                  'prompt\'s LCMD ends, InDOS 0, cap_req 0; terminate closed the file (SCREEN01.TXT, 0 bytes; the '
+                  'handles as the Executive had them), the disk consistent' % (at and '%04X:%04X' % at[0]),
+                  at and st == (0, 0, 0, True) and k.band()[:1] == ['LCMD.COM ended'] and f1 == {'A:\\SCREEN01.TXT': 0}
+                  and refs() == r0 and not probs and 'Divide overflow' not in ''.join(k.pc.tty) and not k.crashed,
+                  (at, st, k.band(), f1, refs(), r0, probs))
+        else:
+            check('... from the Executive, with the cache borrowed (%s): the Executive starts over, cap_req 0, tc_lock 0 '
+                  '(the cache given back)' % (at and '%04X:%04X' % at[0]),
+                  at and st == (0, 0, 0, True) and k.band()[:1] == ['Select a file and confirm'] and not k.crashed,
+                  (at, st, k.band()))
+            check('(a limit: a capture\'s file stays open when the root ends) ... its SCREEN01.BMP (0 bytes) still '
+                  'open in the root\'s handle table: %d free, %d before' % (jfree(), j0),
+                  f1 == {'A:\\SCREEN01.BMP': 0} and jfree() == j0 - 1 and not probs, (f1, jfree(), j0, probs))
+        k.pc.prtsc(); k.settle(6.0)
+        new = sorted(set(files()) - set(f1))
+        check('... the next Shift-PrtSc saves the screen again (%s), cap_req 0' % new,
+              len(new) == 1 and files()[new[0]] > 1000 and k.rd('cap_req', 1)[0] == 0 and not k.crashed, (files(), f1))
 
 def t_trunc():
     """CREATE onto a file there (here a redirection): truncated and stamped,
