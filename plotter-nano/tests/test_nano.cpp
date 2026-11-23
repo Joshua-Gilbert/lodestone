@@ -26,16 +26,20 @@ class __FlashStringHelper;
 static unsigned long fakeMs = 0;
 static void (*atMillis)() = 0;          // a test's bus, moved on at each millis() (the pacing waits call it)
 unsigned long millis() { if (atMillis) atMillis(); return fakeMs += 1; }
+static std::string console;             // the sketch's F() strings and characters on the USB console
 struct FakeSerial {
     void begin(long) {}
     int available() { return 0; }
     int read() { return -1; }
+    void print(const __FlashStringHelper* s) { console += (const char*)s; }
+    void println(const __FlashStringHelper* s) { console += (const char*)s; console += '\n'; }
+    void print(char c) { console += c; }
     template <class T> void print(T) {}
     template <class T> void print(T, int) {}
     template <class T> void println(T) {}
     template <class T> void println(T, int) {}
     void println() {}
-    void write(char) {}
+    void write(char c) { console += c; }
 } Serial;
 
 #include <avr/io.h>
@@ -303,7 +307,7 @@ static void testNative() {
     }
     expectCmds("two numbers", "\x1b" "AI100,150;", "AI100,150");
     expectCmds("no arguments: ends at its code", "\x1b" "AEPU1,1;", "AE");
-    expectCmds("a character argument", "\x1b" "ARZPU1,1;", "ARZ");
+    expectCmds("a character argument", "\x1b" "ASZPU1,1;", "ASZ");
     expectCmds("Option 31: two-letter codes", "\x1b" "ABP2;" "\x1b" "ABY100;", "ABP2 ABY100");
     expectCmds("a Style II escape (ESC FF)", "\x1b\x0c", "^L");
     expectCmds("an exponent", "\x1b" "AJ0.3E+02;", "AJ0.3E+02");
@@ -320,6 +324,39 @@ static void testNative() {
     expectCmds("ESC A V: the plotter at its defaults", "SI0.5,1;LBx\x03\x1b" "AV" "LBy\x03SI0.5,1;LBz\x03",
                "AI119,257 AV AI119,257");
     expectCmds("an ESC in a label is not a command", "LBa\x1b" "AEb\x03", "");
+}
+
+// The 4662 commands withheld at its own address, as they would stop the
+// status replies (R, U, G, F, BLOCK START): ESC A SUB goes in the code's
+// place (ignored, p. 3-4), the rest is read to its end but not sent, the
+// USB console has one line, and HP-GL goes on.
+static void testWithheld() {
+    struct Case { const char* name; const char* cmd; const char* note; };
+    Case cases[] = {
+        {"withheld: R and its character (SET PROMPT CHARACTER)", "\x1b" "AR?", "ESC A R"},
+        {"withheld: U and its character (SET BYPASS CANCEL CHARACTER)", "\x1b" "AU\r", "ESC A U"},
+        {"withheld: G and its numbers to ';' (SET TURNAROUND DELAY)", "\x1b" "AG1000;", "ESC A G"},
+        {"withheld: G's numbers to a letter, which is HP-GL", "\x1b" "AG1000", "ESC A G"},
+        {"withheld: F (PLOTTER OFF)", "\x1b" "AF", "ESC A F"},
+        {"withheld: ( (BLOCK START)", "\x1b" "A(", "ESC A ("},
+    };
+    for (const Case& c : cases) {
+        std::string h = std::string("PU100,100;") + c.cmd + "PD200,200;";
+        unsigned long passed = nNative;
+        console.clear();
+        Evs e = run(h.c_str());
+        std::string note = std::string("[4662] ") + c.note + " dropped: it would break the Nano's pacing\n";
+        Evs want = {U(100, 100), U(100, 100), D(200, 200)};
+        bool ok = cmds() == "A" && e == want && console == note && natState == 0 && !natDrop && nNative == passed;
+        check(c.name, ok);
+        if (!ok) printf("     cmds %s, got%s\n     console %s", cmds().c_str(), show(e).c_str(), console.c_str());
+    }
+    console.clear();
+    expectCmds("withheld: S still passed (SET SIGNATURE CHARACTER)", "\x1b" "AS!PU1,1;", "AS!");
+    expectCmds("withheld: none for another address",
+               "\x1b" "BR?" "\x1b" "CU\r" "\x1b" "DG5;" "\x1b" "BF" "\x1b" "B(", "BR? CU^M DG5 BF B(");
+    check("withheld: ... and no note for them", console.empty());
+    expectCmds("withheld: then the next command passed", "\x1b" "AR?" "\x1b" "AJ30;", "A AJ30");
 }
 
 // --- device clears: bytes through the ring and loop(), as from the bus ---
@@ -478,26 +515,20 @@ static void testClear() {
     checkCut("clear: cut before Option 31's second letter: SUB", "\x1b" "AB", SUB);
     checkCut("clear: cut in its numbers: SUB", "\x1b" "AJ3", SUB);
     checkCut("clear: cut before S's character: SUB", "\x1b" "AS", SUB);
-    checkCut("clear: cut before U's character: SUB, SUB, DEVICE RESET", "\x1b" "AU", SUB + SUB + RESET);
-    checkCut("clear: cut before R's character: SUB, DEVICE RESET", "\x1b" "AR", SUB + RESET);
-    check("clear: ... as the 4662 reads them", cmds() == "AR AN" && tk.mode != 4);
+    // a withheld command's ESC A SUB went at its code: the clear sends nothing for it
+    console.clear();
+    checkCut("clear: a withheld U cut before its character: nothing", "\x1b" "AU", "");
+    checkCut("clear: a withheld R cut before its character: nothing", "\x1b" "AR", "");
+    check("clear: ... as the 4662 reads them", cmds() == "A" && tk.mode != 4 && !natDrop);
     ringPut("PU100,100;"); loopQuiet();
     check("clear: ... then HP-GL draws", busOut == Evs({U(100, 100)}));
+    checkCut("clear: a withheld G cut in its numbers: nothing", "\x1b" "AG10", "");
+    check("clear: ... a note each", console == "[4662] ESC A U dropped: it would break the Nano's pacing\n"
+                                              "[4662] ESC A R dropped: it would break the Nano's pacing\n"
+                                              "[4662] ESC A G dropped: it would break the Nano's pacing\n");
     checkCut("clear: U for another address: SUB only", "\x1b" "BU", SUB);
 
-    // after DEVICE RESET the 4662 is at its alpha defaults: HP-GL's label
-    // settings, kept, go again before the next label; after S, not
-    clearReset();
-    busCmd(GPIB_MLA);
-    ringPut("SI0.5,1;DI0,1;LBx\x03\x1b" "AU"); loopQuiet();
-    busCmd(GPIB_SDC); loopQuiet();
-    ringPut("LBy\x03"); loopQuiet();
-    {
-        bool ok = cmds() == "AI119,257 AJ90 AU AN AI119,257 AJ90" && sizeKind == 1 &&
-                  busOut == Evs({L("x"), L("y")});
-        check("clear: after DEVICE RESET the label settings go again", ok);
-        if (!ok) printf("     got %s\n", cmds().c_str());
-    }
+    // the label settings, kept, stand after S (the 4662 still has them)
     clearReset();
     busCmd(GPIB_MLA);
     ringPut("SI0.5,1;DI0,1;LBx\x03\x1b" "AS"); loopQuiet();
@@ -505,17 +536,17 @@ static void testClear() {
     ringPut("LBy\x03"); loopQuiet();
     check("clear: ... after S they stand", cmds() == "AI119,257 AJ90 AS");
 
-    // DEVICE RESET clears the 4662's output buffer, so a reply to a request
-    // sent before it may never come: the request is given up and the next
-    // one goes behind the reset, not STATUS_TIMEOUT later
+    // DEVICE RESET (passed through) clears the 4662's output buffer, so a
+    // reply to a request sent before it may never come: the request is
+    // given up and the next one goes behind the reset, not STATUS_TIMEOUT later
     clearReset();
     busCmd(GPIB_MLA);
-    ringPut("\x1b" "AR"); loopQuiet();
     queryPending = true; querySentAt = fakeMs - 10;
-    limitCount = queuedCount + 4;       // a request out, and room for SUB and the reset only
-    busCmd(GPIB_SDC); loopQuiet();
-    check("clear: DEVICE RESET gives up the request pending", !queryPending);
+    limitCount = queuedCount + 40;      // a request out, and room for the reset
+    ringPut("\x1b" "AN"); loopQuiet();
+    check("DEVICE RESET passed: the request pending given up", !queryPending && cmds() == "AN");
     {
+        limitCount = queuedCount + 4;   // (the PU must wait for room)
         unsigned long t0 = fakeMs;
         replyAfter = t0; atMillis = answerNew;
         ringPut("PU100,100;"); loopQuiet();
@@ -523,9 +554,16 @@ static void testClear() {
         size_t r = busRaw.find(RESET), q = busRaw.find("\x1b" "AO1\x1a");
         bool ok = statusMode && fakeMs - t0 < 10000 && r != std::string::npos && q != std::string::npos &&
                   r < q && busOut == Evs({U(100, 100)});
-        check("clear: ... the next asked behind the reset and answered", ok);
+        check("DEVICE RESET passed: ... the next asked behind it and answered", ok);
         if (!ok) printf("     %lu ms, status mode %d, got %s\n", fakeMs - t0, (int)statusMode, show(busOut).c_str());
     }
+    // a DEVICE RESET for another address clears nothing of this 4662's
+    clearReset();
+    busCmd(GPIB_MLA);
+    queryPending = true; querySentAt = fakeMs - 10;
+    limitCount = queuedCount + 40;
+    ringPut("\x1b" "BN"); loopQuiet();
+    check("DEVICE RESET for another address: the request still pending", queryPending);
     // a clear with no DEVICE RESET leaves a pending request alone
     clearReset();
     busCmd(GPIB_MLA);
@@ -655,6 +693,7 @@ int main() {
     testPage();
     testAlpha();
     testNative();
+    testWithheld();
     testClear();
 
     printf(failures ? "%d FAILED\n" : "all passed\n", failures);

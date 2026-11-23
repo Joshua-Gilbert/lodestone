@@ -993,22 +993,51 @@ static void plotterUnknown() { needsMove = true; inAlpha = false; coordKnown = f
 // at its pen position before the next stroke, so HP-GL carries on where it
 // was even after a command that moves the pen. Native alpha commands
 // (I, J, T, V; N, DEVICE RESET) also set what labels use, as SI, DI and CS do.
+//
+// Withheld, at the 4662's own address: the commands that would stop the
+// status replies the Nano paces by, none of them of any use behind it:
+//   R  SET PROMPT CHARACTER: each reply held until that character comes, and
+//      after a READ STATUS nothing but PLOTTER ON/OFF, BLOCK START and DEVICE
+//      RESET obeyed until it does (p. 2-17, 4-10)
+//   U  SET BYPASS CANCEL CHARACTER: after each reply its input ignored up to
+//      that character (p. 2-19, 4-8)
+//   G  SET TURNAROUND DELAY: each reply held until the line has been quiet
+//      that long (p. 2-17, 4-6); the Nano counts what it sent since a reply
+//      from when the reply arrives, so a late one overstates the room
+//   F  PLOTTER OFF: nothing obeyed until PLOTTER ON (p. 4-3)
+//   (  BLOCK START: Block mode, where the Nano's own bytes spoil the block's
+//      checksum and, after the block, all but PLOTTER ON/OFF and BLOCK START
+//      is ignored (p. 2-12 to 2-14)
+// The ESC and the address have gone by the time the code comes: SUB goes in
+// the code's place (ESC A SUB is ignored, p. 3-4), and the rest of the
+// command is read to its end but not sent. The USB console says so.
 #define NAT_MAX 32                      // a longer command is cut (with SUB)
 uint8_t natState = 0;                   // 0 none, 1 after ESC, 2 the code next, 3 Option 31's second code, 4 a character, 5 numbers
+bool natDrop = false;                   // a withheld command: read, not sent
 char natBuf[NAT_MAX + 1]; uint8_t natLen = 0;
 unsigned long nNative = 0;
 
-void natPut(char c) { tekRaw((uint8_t)c); if (natLen < NAT_MAX) natBuf[natLen++] = c; }
+void natPut(char c) { if (!natDrop) tekRaw((uint8_t)c); if (natLen < NAT_MAX) natBuf[natLen++] = c; }
 
 void natEnd(bool sub) {
-    if (sub) tekRaw(0x1A);
-    natBuf[natLen] = 0; natState = 0; nNative++;
+    bool drop = natDrop;
+    if (sub && !drop) tekRaw(0x1A);
+    natBuf[natLen] = 0; natState = 0; natDrop = false;
     plotterUnknown();                   // (it may have moved the pen)
+    if (drop) {
+        Serial.print(F("[4662] ESC ")); Serial.write(natBuf[1]); Serial.write(' '); Serial.write(natBuf[2]);
+        Serial.println(F(" dropped: it would break the Nano's pacing"));
+        return;
+    }
+    nNative++;
     // the alpha state, as the plotter now has it
     if (natLen >= 3 && natBuf[1] >= 'A' && natBuf[1] <= 'D') {
         const char* a = natBuf + 3; float x, y; long n;
         switch (natBuf[2]) {
-        case 'N': case 'V':             // DEVICE RESET, RESET ALPHA PARAMETERS
+        case 'N':                       // DEVICE RESET clears its output buffer (p. 4-12): a reply
+            if (natBuf[1] == PLOTTER_ADDR) queryPending = false;   //  to a request may be lost: ask again
+            // fall through
+        case 'V':                       // RESET ALPHA PARAMETERS
             sizeKind = 0; alphaAngle = 0; stdFont = altFont = 0; useAlt = false; alphaForget(); break;
         case 'I': if (parseFloat(&a, &x) && parseFloat(&a, &y)) {
                       sizeKind = 3; sizeW = x; sizeH = y; sentCs = lround(x); sentLs = lround(y); } break;
@@ -1035,6 +1064,7 @@ bool natChar(char c) {
         if (c >= 'A' && c <= 'D') natState = 2; else natEnd(false);
         return true;
     case 2:                             // the command code
+        if (natBuf[1] == PLOTTER_ADDR && (c == 'R' || c == 'U' || c == 'G' || c == 'F' || c == '(')) { tekRaw(0x1A); natDrop = true; }
         natPut(c);
         if (c == 'B') natState = 3;
         else if (strchr("EF(NQVMKL", c)) natEnd(false);
@@ -1055,21 +1085,6 @@ bool natChar(char c) {
     return false;
 }
 
-// DEVICE RESET (ESC A N, p. 4-12; no terminator: p. 3-3) ends prompt mode,
-// the bypass and the signature, resets the alpha parameters, the pen speed
-// (Option 31) and the units (ADUs), and clears the 4662's output buffer. A
-// reply to a request sent before it may be lost there, so that request is
-// given up: plotterRoom asks again when it needs room (behind the reset)
-// instead of waiting STATUS_TIMEOUT. The 4662 is left in Alpha mode (p. 3-5;
-// plotterUnknown has the next stroke re-enter graph mode), and at its own
-// alpha defaults: HP-GL's label settings are kept and go again before the
-// next label.
-static void deviceReset() {
-    tekRaw(0x1B); tekRaw(PLOTTER_ADDR); tekRaw('N');
-    alphaForget();
-    queryPending = false;
-}
-
 // A device clear (SDC, DCL), from loop() only: whatever HP-GL was in hand is
 // dropped (a label never ended, a coordinate list cut, a pen left down by a
 // PD whose PU never came), so the next plot starts fresh. What is already
@@ -1084,28 +1099,16 @@ static void deviceReset() {
 //     nothing.
 //   state 4 (a character argument next: any character but NUL, SYN and
 //     DEL, p. 3-3): SUB is the character. S SUB has the 4662 put SUB before
-//     its replies, which pollRx takes as a block boundary. U and R can't be
-//     made harmless by their character: SET BYPASS CANCEL CHARACTER has the
-//     4662 ignore its input after each reply up to it (p. 2-19, 4-8), SET
-//     PROMPT CHARACTER holds each reply until it (p. 2-17, 4-10), and the
-//     Nano's status requests need neither. At the 4662's address they are
-//     followed by DEVICE RESET, which undoes them. After U a second SUB goes
-//     first: should a reply already on its way start the bypass, that SUB
-//     ends it before the reset; if none started, it is the terminator p. 3-4
-//     recommends, and ignored.
+//     its replies, which pollRx takes as a block boundary. (U and R at the
+//     4662's address are withheld: nothing of theirs is left to end.)
+//   a withheld command: nothing; its ESC A SUB went whole at its code.
 // Kept on purpose: the label settings (SI/SR, ES, DI/DR, CS/CA, SO/SI) and
-// what the 4662 was last sent for them (it still has them, unless a DEVICE
-// RESET went: then they go again), the page mode, the pen's position and
-// lift, the flow and pacing state, the ! settings.
+// what the 4662 was last sent for them (it still has them), the page mode,
+// the pen's position and lift, the flow and pacing state, the ! settings.
 // (charArg needs no reset: it is read only once cmdLen is 2, and set there.)
 void parserReset() {
     if (natState == 1) { natPut(TEK_GS); natEnd(false); }
-    else if (natState == 4 && natBuf[1] == PLOTTER_ADDR && (natBuf[2] == 'U' || natBuf[2] == 'R')) {
-        bool bypass = natBuf[2] == 'U';
-        natEnd(true);
-        if (bypass) tekRaw(0x1A);       // (a bypass started by a reply in flight ends here)
-        deviceReset();
-    } else if (natState) natEnd(true);
+    else if (natState) natEnd(true);    // (no SUB for a withheld one)
     commandDone();
     plotterUnknown();
     penDown = false;
