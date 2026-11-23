@@ -1500,13 +1500,27 @@ def t_saver_delay():
         k = ktest.KPC(image('svd6.img', 'LODE.INI=' + ini2)); k.start()
         check('%s: %s' % (line.decode(), '%d minutes' % mins if mins else 'never'), k.rd('saver_min', 1) == bytes([mins])
               and k.u16('saver_t') == (mins * 1092 if mins else 0xFFFF), (k.rd('saver_min', 1), hex(k.u16('saver_t'))))
-    # ... and the delay in effect: idle 10 s short of 30 minutes, no saver; at 30 minutes, the saver (idle
-    # counts only below 8000h ticks, 30 minutes and 8 ticks: past it, the clock went back)
+    # ... and the delay in effect: idle 10 s short of 30 minutes, no saver; at 30 minutes, the saver
     open(ini2, 'wb').write(b'SAVER=256\r\n')
     k = ktest.KPC(image('svd7.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
     early = idle(k, 30 * 1092 - 182)
     check('SAVER=256: not after 29 minutes 50 s idle, but after 30 minutes (DEFRAG\'s map)', not early and idle(k, 30 * 1092),
           (early, lines(k)[:2]))
+    # a poll late (polls 14 ticks apart, as under MULTITASK=1 beside busy tasks) past 30 minutes and 8 ticks:
+    # the saver all the same (idle counted only below 8000h ticks missed it, and 30 minutes more each time);
+    # a clock gone back between polls (midnight's B0h ticks) is no idle time: no saver
+    def late(k, back):
+        t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
+        k.wr('lastpoll', struct.pack('<H', (t + back if back else t - 14) & 0xFFFF))
+        return idle(k, 30 * 1092 + 10)
+    open(ini2, 'wb').write(b'SAVER=30\r\n')
+    k = ktest.KPC(image('svd8.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
+    gone_back = late(k, 0xB0)
+    check('SAVER=30: the clock back B0h ticks between two polls (midnight), 30 minutes and 10 ticks after the last key: '
+          'no saver', not gone_back and k.u16('saver_t') == 30 * 1092, (lines(k)[:2], hex(k.u16('saver_t'))))
+    k = ktest.KPC(image('svd8.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
+    check('SAVER=30: a poll 14 ticks after the last, 30 minutes and 10 ticks after the last key: the saver',
+          late(k, 0), lines(k)[:2])
     # past 511 bytes of other lines (System keeps a LODE.INI up to 1 KB and
     # puts its own lines last): font_boot read only the first 511
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'X1=1\r\n' * 160 + b'saver=2\r\nFONT=TERMBOLD.FNT\r\nTIDY=0\r\n')

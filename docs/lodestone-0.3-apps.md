@@ -294,6 +294,7 @@
   - At start-up the core reads `SAVER=` as well as `FONT=`, in either order.
   - A `SAVER=` line with no digit right after the `=` (`SAVER=`, `SAVER= 10`, `SAVER=x`) is ignored: the delay stays as it was, 5 minutes or what an earlier line set.
 - **The most is 30 minutes:** the core counts idle ticks under 8000h, which is how it copes with the clock going back at midnight. A larger value in LODE.INI is taken as 30.
+  - *Since 2026-11-23 the idle count goes up to F000h.* At 8000h a 30-minute delay (7FF8h ticks) started the saver only if a poll came in its last 8 ticks; under MULTITASK=1 beside busy tasks the Executive may look only every 10-14 ticks, so it could miss and wait 30 minutes more. A clock that goes back between two looks (midnight's B0h ticks, or the clock set) was already caught by the 36-tick rule, so the count is reset only if it reads F000h or more.
 - **The core:**
   - `saver_t` (ticks; FFFFh means never) replaces the constant;
   - a new call, `UI_SAVER` (entry 46, so UI API 3): AL = 0 gives the minutes, AL = 1 sets them from BL.

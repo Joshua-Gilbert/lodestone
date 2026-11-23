@@ -461,7 +461,7 @@ api_saver:
 saver_set:
         push    ax
         push    dx
-        cmp     bl, 30                  ; (the idle count stays under 8000h)
+        cmp     bl, 30                  ; (saver_t far under poll_once's F000h)
         jbe     .m
         mov     bl, 30
 .m:     mov     [saver_min], bl
@@ -678,8 +678,13 @@ poll_once:
         mov     [lastact], ax
 .idle:  mov     bx, ax                  ; idle [saver_t] ticks: the screen saver
         sub     bx, [lastact]
-        cmp     bx, 8000h               ; (the clock went back at midnight)
-        jb      .sv
+        cmp     bx, 0F000h              ; (F000h and up: lastact ahead of the
+        jb      .sv                     ;  clock.  A step back between polls,
+                                        ;  midnight's B0h ticks or the clock
+                                        ;  set, is caught by the 36 above; the
+                                        ;  most saver_t, 7FF8h, far below, so a
+                                        ;  poll a few ticks late still starts
+                                        ;  the saver)
         mov     [lastact], ax
         jmp     .ck
         times ($ - $$) & 1 db 90h       ; (hot: even)
