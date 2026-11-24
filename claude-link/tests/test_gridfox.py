@@ -709,6 +709,61 @@ def test_firefox_quits_cleanly():
     fx.proc = None; fx.stop(M(True))                                             # not ours: left alone
 
 
+def _main_says(argv):
+    """gridfox's main() -> (its code, what it wrote)."""
+    import contextlib, tempfile
+    import gridfox.__main__ as GM
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = GM.main(argv + ['--log', os.path.join(tempfile.mkdtemp(), 'gridfox.log'),
+                               '--profile', tempfile.mkdtemp()])
+    return code, out.getvalue()
+
+
+def test_foreign_firefox_answers_nothing():
+    """A Firefox already on the port that gridfox didn't start, hung (it
+    accepts and says nothing): gridfox names the port within about 10 s,
+    not after 30 s with the install hint (P17)."""
+    f = FakeFirefox(delay=60)
+    try:
+        t0 = time.time()
+        code, said = _main_says(['--port', str(f.port)])
+        assert code == 1 and time.time() - t0 < 20, (code, time.time() - t0)
+        assert 'port %d is open but gives no Marionette session' % f.port in said, said
+        assert "another --port ([web] command in gridlink's config)" in said, said
+        assert 'apt install' not in said, said
+    finally:
+        f.close()
+
+
+def test_own_firefox_gets_the_long_hello():
+    """A Firefox gridfox started itself may be slow to say hello (a Pi's
+    first start): the short HELLO_WAIT is only for one it found there (P17)."""
+    import gridfox.marionette as MA
+    f = FakeFirefox(delay=1.0); was = MA.HELLO_WAIT; MA.HELLO_WAIT = 0.3
+    try:
+        class Ours:                                     # (as if start() had launched it)
+            def poll(s): return None
+        fx = MA.Firefox(port=f.port); fx.proc = Ours()
+        t0 = time.time(); m = fx.start()
+        assert m.session and time.time() - t0 < 8, time.time() - t0
+        m.close()
+    finally:
+        MA.HELLO_WAIT = was; f.close()
+
+
+def test_no_firefox_gives_the_install_hint():
+    import socket
+    import gridfox.marionette as MA
+    s = socket.socket(); s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]; s.close()   # (nothing on it)
+    real = MA.find_firefox; MA.find_firefox = lambda path=None: None
+    try:
+        code, said = _main_says(['--port', str(port)])
+    finally:
+        MA.find_firefox = real
+    assert code == 1 and 'Firefox is not installed' in said and 'sudo apt install firefox' in said, said
+
+
 def test_web_exit_banner():
     from gridlink.term import TermSession
     from gridlink.config import Config
@@ -1273,7 +1328,7 @@ def test_app_plain_video():
 
 
 NO_BROWSER = ('test_wrap_and_clean', 'test_layout_kinds', 'test_keys_and_line', 'test_keys_timing',
-              'test_firefox_quits_cleanly', 'test_web_exit_banner',
+              'test_firefox_quits_cleanly', 'test_web_exit_banner', 'test_no_firefox_gives_the_install_hint',
               'test_video_find_and_page', 'test_video_relay')       # (these run without the stand-in)
 
 if __name__ == '__main__':

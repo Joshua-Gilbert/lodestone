@@ -1,8 +1,12 @@
 # gridlink settings.  Copy to ~/.config/gridlink/config.toml and edit.
 
 [bridge]
-port = "/dev/ttyUSB0"        # the Nano (CH340) on the Pi's USB
-baud = 115200                # must match AR_SERIAL_SPEED in the AR488 firmware
+kind = "pico"                # pico: the GPIB-Pico2 bridge; ar488: the AR488 Nano; serial or modem: SERLINK.COM
+port = "auto"                # pico: auto finds the Pico on USB (or /dev/gpib-bridge); a path to pin it.
+                             # ar488 and serial: auto is /dev/ttyUSB0 (the Nano's CH340, a USB serial
+                             # adapter); modem: /dev/ttyACM0
+# baud = 115200              # ar488: must match AR_SERIAL_SPEED in its firmware (115200); serial: SERLINK's
+                             # (19200); modem: the USB modem's (115200).  The Pico ignores it.
 address = 7                  # GPIB address of the bridge; CLAUDE /A:7 on the GRiD
 
 [claude]
@@ -32,7 +36,12 @@ dir = "~/grid"               # where it starts: put CLAUDE.md here; .mcp.json is
 #   add a start page, or --images, --search URL%s
 
 [permissions]
-mode = "ask"                 # ask, edits (accept file edits), auto (ask nothing)
+mode = "ask"                 # the chat's own (CLAUDE, not /T): ask, edits (accept file edits), auto (ask nothing)
+# measure = [16, 28]         # Term: addresses gpib_measure may query (a look-only tool: once allowed, not asked
+                             # each call; one '?' command a call); any other address is an error
+# auto_mode = ["grid_command"]   # Term: asking tools left to Claude Code's own permission mode (its auto
+                             # mode, not the chat's mode above): no question forced; some of gpib_send,
+                             # grid_command, grid_change_files, grid_type, grid_plotter
 
 [plotter]                    # grid_plotter: the Tek 4662, through the Nano that translates HP-GL
 address = 1                  # the Nano's GPIB address (GPIB_ADDRESS in gpib_hpgl_tek4662.ino, addressed mode)

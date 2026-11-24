@@ -174,6 +174,38 @@ def test_either_check():
     assert check_of(t.sent[-1]) == 'sum' and k.stats['rx_fletcher'] == 3, k.stats  # (HELLO, NAK, POLL)
 
 
+def test_naks_fail_the_link():
+    """CLAUDE 1.19's rule, as GridSim keeps it: a Pi that NAKs every frame fails the link at the 8th NAK in a
+    row (the frame and seven resends), where the resends restarted the 2 s wait for ever; any answer that is
+    not a NAK starts the count again, so seven NAKs and a good answer, over and over, keep the link up."""
+    from gridlink import glp
+    h = Harness([reply(('text', 'Back after the NAKs.'))])
+    assert h.connect()
+    real = h.link.feed
+    parser = glp.StreamParser()
+    every = [0]                                 # NAK all but every `every`th frame (0: all)
+    seen = [0]
+    def naks(data):
+        for f in parser.feed(data):
+            seen[0] += 1
+            if every[0] and seen[0] % every[0] == 0:
+                real(glp.encode(f.kind, f.seq, f.ack, f.payload, fl=f.fl))
+            else:
+                h.transport.answer(glp.encode(glp.P_NAK, h.link.pi_seq, f.seq, fl=f.fl))
+    h.link.feed = naks
+    every[0] = 8                                # seven NAKs, then the Pi's answer: never 8 in a row
+    assert h.run_until(lambda: h.grid.stats['fail'] or (seen[0] >= 24 and seen[0] % 8 == 0), wall=10), seen
+    assert not h.grid.stats['fail'] and h.grid.stats['resend'] >= 21, (seen, h.grid.stats)
+    every[0] = 0; seen[0] = 0; resends = h.grid.stats['resend']   # (the 24th frame's answer was the Pi's)
+    assert h.run_until(lambda: h.grid.stats['fail'] == 1, wall=10), h.grid.stats
+    assert seen[0] == 8 and h.grid.stats['resend'] - resends == 7, (seen, h.grid.stats)
+    h.link.feed = real
+    assert h.connect(), h.grid.stats
+    h.turn('hi')
+    assert 'Back after the NAKs.' in h.text(), h.text()
+    check(h)
+
+
 def test_slash_commands():
     h = Harness([])
     h.connect()

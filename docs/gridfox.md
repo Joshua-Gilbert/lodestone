@@ -204,8 +204,14 @@ view stays the default: it is the fast one.
 - **Only with a GRiD that can:** gridlink tells gridfox (`GRIDLINK_PICTURES`)
   when the GRiD's HELLO says it takes pictures; otherwise V says CLAUDE.COM
   1.2 is needed.
-- **Not yet:** a `<select>`'s choices open in a window of Firefox's own,
-  which a viewport screenshot doesn't show: use the text view for lists.
+- **Dropdowns** (2026-11-04): Firefox opens a `<select>`'s choices in a
+  window of its own, which a viewport screenshot never has. So the picture
+  view draws the list itself, under the dropdown as Firefox would (or over
+  it, where there is more room), and sets the choice in the page as a
+  person's choice does (`input`, `change`).
+- **Frames** (2026-11-04): a click on an `<iframe>` (an embedded video
+  player's, say) goes into it, at the same point in its own page, through
+  up to four frames inside frames.
 
 ## YouTube without its player: Y (2026-10-23)
 YouTube's player shows gridfox's Firefox a bot check, because Firefox is
@@ -358,7 +364,7 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
 
 ## Tests
 
-- `claude-link/tests/test_gridfox.py` (34 tests now, about 45 s: one
+- `claude-link/tests/test_gridfox.py` (34 tests on 2026-11-04, about 45 s: one
   stand-in Firefox for the whole run):
   - layout and wrapping, the key parser and line editor;
   - the real `extract.js` and `act.js` against a stand-in Firefox;
@@ -384,7 +390,7 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
   - It can keep the old page up while a slow one loads.
   - It wants scripts in gridfox's sandbox, kept between calls.
   - It follows a `#fragment` link in the same document, as a browser does.
-- `os/tests/test_claude_mouse.py` (22 checks): the real CLAUDE.COM `/W` on
+- `os/tests/test_claude_mouse.py` (22 checks on 2026-10-17): the real CLAUDE.COM `/W` on
   the Lodestone kernel in pcemu, with its serial mouse and the kernel's
   INT 33h, the real gridlink, and gridfox on the stand-in Firefox.
   - A click on a link follows it, and a click on the address opens Go.
@@ -404,7 +410,8 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
 - `test_emu_term.py` `test_web_gridfox`: the real CLAUDE.COM `/W` in the
   emulator. The GRiD's screen matches the Pi's cell for cell after a page,
   a link followed and a PgDn.
-- Unchanged and passing:
+- Unchanged and passing on 2026-10-16 (the counts then; each suite prints
+  its own total):
 
   | Suite | Checks |
   |---|---|
@@ -534,7 +541,8 @@ between calls. Also fixed:
   stays up beside Claude Code, which matters for a 4 GB Pi.
 - **Not handled yet:**
   - PDFs (Firefox shows them in its own viewer);
-  - frames (shown as `[frame]`);
+  - frames in the text view (shown as `[frame]`; the picture view, V, shows
+    them as Firefox draws them, and a click there goes into them);
   - pop-up windows (opened in the one tab);
   - an action that unloads the page without loading another (some downloads)
     waits up to 20 s.

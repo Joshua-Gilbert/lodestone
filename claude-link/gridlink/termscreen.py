@@ -5,7 +5,7 @@ the GRiD shows and turns the difference into CELLS frames: runs of cells,
 fills and scrolls, always for the latest screen, never a backlog.
 
 CELLS (Pi -> GRiD 4Bh), one frame, never MORE:
-    flags (1)       bit 0: clear rows 0-23 first; bit 1: cursor hidden
+    flags (1)       bit 0: clear rows 0-23 first; bit 1: cursor hidden; bit 2: a picture's frame
     cursor row (1), cursor column (1)
     then operations until the end of the payload:
       run    row, col, len, [attr], len glyphs
@@ -13,7 +13,8 @@ CELLS (Pi -> GRiD 4Bh), one frame, never MORE:
       scroll FEh, top, bottom, n                      (rows top..bottom up by n,
                                                        blank rows come in below)
     len bit 7: an attribute byte follows (bit 0 inverse, bit 1 underline);
-    without it the cells are plain.  Glyphs are GRiD codes 20h-A0h.
+    without it the cells are plain.  Glyphs are GRiD codes 20h-7Eh and 80h-A0h, and A1h-AEh (the 2x2
+    blocks) for a GRiD whose HELLO says GF_QUAD.  picture.py adds the pixels operation, FDh.
 """
 import re, time, unicodedata
 import pyte
@@ -241,7 +242,7 @@ class PreFilter:
             k = j + 2
             while k < n and 0x30 <= d[k] <= 0x3F: k += 1
             params = d[j + 2:k]
-            while k < n and 0x20 <= d[k] <= 0x2F: k += 1
+            while k < n and 0x20 <= d[k] <= 0x2F and d[k] != 0x27: k += 1   # (pyte reads ' as HPA's final)
             if k >= n: return None, False, None
             inter = d[j + 2 + len(params):k]; final = d[k]; end = k + 1
             if params[:1] in (b'<', b'=', b'>'): return end, False, None
@@ -251,6 +252,9 @@ class PreFilter:
             if final == 0x74: return end, False, None                         # window ops
             if final == 0x6D and b':' in params:                              # SGR with sub-parameters
                 return end, b'\x1b[' + _sgr_colons(params) + b'm', None
+            arity = CSI_ARITY.get(final)
+            if arity is not None:                                             # more than pyte's handler takes
+                return end, _csi_fit(params, inter, final, arity), None
             return end, True, None
         if c == 0x5D:                                 # OSC ... BEL or ST
             k = j + 2
@@ -281,6 +285,29 @@ class PreFilter:
         known = {1, 7, 25, 47, 1047, 1049, 2004, 2026}
         st = 0 if mode not in known else (1 if (mode << 5) in s.modes() else 2)
         return b'\x1b[?%d;%d$y' % (mode, st)
+
+
+# pyte 0.8.2 calls a CSI's handler with every parameter, and with
+# private=True after a '?': a handler that takes fewer raises TypeError in
+# the middle of feed(), and the rest of that read is lost.  For each final
+# with a fixed-arity handler: (the parameters it takes, whether it takes the
+# '?').  Measured on TermScreen (test_term's test_csi_arity checks it).
+# The finals not here (J h l m and the ones pyte ignores) take any number.
+CSI_ARITY = {f: (1, False) for f in b"@ABCDEFGLMPXadeg'n"}
+CSI_ARITY.update({f: (2, False) for f in b'Hfr'})
+CSI_ARITY.update({f: (1, True) for f in b'cK'})     # (K's 2nd parameter would be read as the '?')
+
+
+def _csi_fit(params, inter, final, arity):
+    """A CSI cut to what its pyte handler takes: ESC[1;2A -> ESC[1A, and the
+    '?' dropped where the handler takes none (ESC[?6n -> ESC[6n, which pyte
+    answers as a cursor report).  True: as it is."""
+    most, private = arity
+    if params.translate(None, b'0123456789;?'): return True     # (not one pyte reads as numbers)
+    q = b'?' in params
+    nums = params.replace(b'?', b'').split(b';')
+    if len(nums) <= most and (private or not q): return True
+    return b'\x1b[' + (b'?' if q and private else b'') + b';'.join(nums[:most]) + inter + bytes([final])
 
 
 def _sgr_colons(params):

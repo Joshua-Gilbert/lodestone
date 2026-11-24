@@ -9,7 +9,7 @@ only ever ones inside ~/grid.
 
     python3 -I -c '...from gridlink.mcp import main; main()'   (what .mcp.json runs)
 """
-import collections, json, os, re, socket, stat, sys, tempfile, threading, time
+import collections, json, os, re, socket, stat, sys, tempfile, threading, time, traceback
 from . import glp, keys as K, screen
 from .grid import READ_CHUNK, GridError, is_device, is_grid_path, is_plain_query, norm
 
@@ -37,7 +37,8 @@ MAX_COPY = 1024 * 1024          # bytes in one copy or write (5 minutes at stock
 MAX_READ = 48 * 1024            # bytes of a file or program output into the conversation
 MAX_LINE = 8 * 1024 * 1024      # one request on the socket (1 MB of text, JSON-escaped)
 MAX_PATH = 79                   # characters in a GRiD path
-MAX_CMD = 100                   # a DOS command line: the tail holds 126, ' /C ' + the line (1.17 added ' >A:\\CLAUDE.OUT' too)
+MAX_CMD = 100                   # a DOS command line: the tail holds 125 after its count, ' /C ' + the line (121
+                                #  from CLAUDE 1.18; 1.17 added ' >' and the output file's path too)
 MAX_RUN = 3600                  # seconds the Pi waits for a program (the GRiD itself never stops it)
 MAX_GPIB = 4000                 # bytes sent to an instrument (CLAUDE.COM takes 4,700 per request)
 MAX_TYPE = 2048                 # a key script for the paused program (resident Claude's console takes 2 KB)
@@ -56,6 +57,18 @@ PLOT_POLL_WAIT = 5              # s a background plot's serial poll waits for th
 PLOT_STALL = 200                # s with no progress before a background plot gives up: past the Nano's own
                                 #  STATUS_TIMEOUT (180 s), so a lost status reply falls back to timed pacing
                                 #  in the Nano and the plot goes on, not ends here at the same moment
+PLOT_STUCK = 60                 # s a Nano that isn't idle at a plot's start may poll 3Ch unchanged (its
+                                #  buffer empty, room 60, yet not idle) before it is taken as stuck in a label
+                                #  left open, which sits so for ever, and cleared.  A Nano drawing sits so too
+                                #  once its buffer is empty: its last command waits in plotterRoom() or
+                                #  settle() for the 4662's status reply, which comes when the pen reaches the
+                                #  request (up to its 180 s STATUS_TIMEOUT), behind what the 4662's 2 KB
+                                #  buffer holds.  60 s, a third of that, covers the usual buffer of strokes;
+                                #  a slower reply (a buffer of long moves, or of label text at 150 ms a
+                                #  character, or a !a/!w settle) is the risk left, and it costs little: with
+                                #  its buffer empty a clear drops at most the rest of its command in hand, not its
+                                #  queue to the plotter or the 4662's own buffer.  Any other status unchanged
+                                #  holds bytes a clear would drop: never cleared, it fails after PLOT_STALL.
 PICTURE_TOOLS = ('grid_plot', 'grid_image', 'grid_pick')     # no GRiD request: not one at a time
 
 GPIB_PROPS = {
@@ -164,7 +177,7 @@ TOOLS = [
          "link can't leave half a file), delete, rename (to = new name), mkdir, rmdir, copy_from_grid "
          "(path = the GRiD file, to = a file in the Pi's ~/grid directory, default its own name there), "
          "copy_to_grid (path = a file in ~/grid on the Pi, to = the GRiD file). Pi files must be inside "
-         "~/grid. Copies and writes are at most 1 MB; the link moves roughly 30-40 KB/s through the Pico bridge. To edit a GRiD "
+         "~/grid. Copies and writes are at most 1 MB; the link moves about 100 KB/s through the Pico bridge. To edit a GRiD "
          "file with your own editing tools: copy_from_grid, edit the copy, copy_to_grid."),
      'inputSchema': {'type': 'object', 'properties': {
          'action': {'type': 'string', 'enum': ['write', 'delete', 'rename', 'mkdir', 'rmdir',
@@ -203,10 +216,19 @@ TOOLS = [
          "degrees), \\x1bABP2; (pen 2, Option 31). Native alpha commands (I, J, T, V) set what the next "
          "labels use; after any, HP-GL carries on from its own pen position. Start a drawing with "
          "IN;SP1; and end it with PU;. action draw (the default) checks that the Nano answers, then plots in the background and "
-         "returns at once: it serial-polls the Nano and sends only what its buffer has room for, so the "
+         "returns at once. If the Nano is still drawing what an earlier plot left it, the plot waits for that "
+         "to finish (status says so), with no limit while its status changes and up to %d s while it stays "
+         "the same; then it stops, nothing sent, the Nano not cleared. A Nano whose status stays 3Ch (its "
+         "buffer empty, yet not idle: a label left open) for %d s is cleared first, then the plot goes. A "
+         "poll that asks for service (RQS) is not the Nano: the plot is refused, nothing sent. A cancel "
+         "while it waits sends nothing. It serial-polls the Nano and sends only what its buffer has room "
+         "for, so the " % (PLOT_STALL, PLOT_STUCK) +
          "GRiD and your other tools stay free while the pen draws (a long plot takes minutes). action "
-         "status says how far a plot has got; cancel stops sending (what the Nano and the plotter hold "
-         "still draws). One plot at a time. Paper and pens are the user's: say what you will draw before "
+         "status says how far a plot has got; cancel while sending stops sending and clears the Nano too "
+         "(what it holds is dropped), then lifts the pen (with an ETX first if it stopped inside a label; "
+         "not inside a coordinate list), and a cancel once everything is sent lets the pen finish what the "
+         "Nano holds. A plot that fails part way (a write, or no room for minutes) clears the Nano too, as "
+         "far as it can. One plot at a time. Paper and pens are the user's: say what you will draw before "
          "you draw it."),
      'inputSchema': {'type': 'object', 'properties': {
          'action': {'type': 'string', 'enum': ['draw', 'status', 'cancel']},
@@ -439,8 +461,8 @@ class GridTools:
     """The tools, on gridlink's side of the socket (a Grid to call).  Pi
     paths are kept inside root, the Term directory."""
     def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}, viewer=None, away=lambda: False,
-                 available=lambda tool: None):
-        s.G = grid; s.cfg = cfg; s.bridge = bridge
+                 available=lambda tool: None, log=lambda m: None):
+        s.G = grid; s.cfg = cfg; s.bridge = bridge; s.log = log
         s.away = away                       # the user is back in the program (resident Claude's background)
         s.available = available             # why a tool can't run now (TermSession.why_not), for a background plot
         s.root = root or getattr(cfg, 'term_dir', None) or '~/grid'
@@ -724,10 +746,14 @@ class GridTools:
             return [text('GRiD: %s. The plotter\'s Nano at %d does not answer a serial poll: is it powered, '
                          'and running firmware v4 or later? Nothing was sent.' % (e, addr))], True
         if not st: return [text('The Nano at %d gave an empty serial poll. Nothing was sent.' % addr)], True
-        s.plot = PlotJob(s, addr, data, tmo); s.plot.start()
-        return [text('Plotting %d bytes of HP-GL on the 4662 (GPIB %d) in the background. The Nano is '
+        if st[0] & 0x40:                    # (the Nano never asks for service: refused before a plot starts)
+            return [text('GPIB %d asks for service: it is not the Nano. Nothing was sent.' % addr)], True
+        s.plot = PlotJob(s, addr, data, tmo, first=st[0]); s.plot.start()
+        busy = '' if st[0] & 0x80 else (' The Nano is still busy (status %02Xh): the plot first waits for it '
+                                        'to finish the last drawing.' % st[0])
+        return [text('Plotting %d bytes of HP-GL on the 4662 (GPIB %d) in the background.%s The Nano is '
                      'sent what its buffer has room for, and the GRiD is free between parts. '
-                     'grid_plotter action status shows how far it has got.' % (len(data), addr))], False
+                     'grid_plotter action status shows how far it has got.' % (len(data), addr, busy))], False
 
     # ---- pictures on the GRiD's screen: no GRiD request, not one at a time --
     def picture_args(s, a):
@@ -897,29 +923,127 @@ class PlotJob(threading.Thread):
     """A plot sent in the background: poll the Nano, send what fits (whole
     commands), wait on the Pi when it's full. Each GRiD request takes the
     tools' lock, so Claude's other calls go between them."""
-    def __init__(s, tools, addr, data, tmo):
+    def __init__(s, tools, addr, data, tmo, first=0):
         threading.Thread.__init__(s, daemon=True, name='grid-plotter')
         s.tools, s.addr, s.data, s.tmo = tools, addr, data, tmo
+        s.first = first                 # the start's serial poll (t_grid_plotter's)
         s.ends = hpgl_ends(data)
         s.sent = 0; s.writes = 0; s.polls = 0
+        s.pairs = None                  # (cut(): a list's start, the last cut in it, the numbers before it)
+        s.cmd = None                    # (command(): the last command asked)
         s.state = 'sending'; s.error = None; s.cancel = False
+        s.note = None                   # how the start went, if the Nano wasn't idle
+        s.clock, s.sleep = time.monotonic, time.sleep   # (settle's: a test's own clock)
         s.t0 = time.monotonic(); s.t1 = None
 
-    def running(s): return s.is_alive() and s.state in ('sending', 'drawing')
+    def running(s): return s.is_alive() and s.state in ('waiting', 'sending', 'drawing')
 
     def report(s):
         n = len(s.data); t = (s.t1 or time.monotonic()) - s.t0
-        head = {'sending': 'sending', 'drawing': 'all sent; the pen is finishing',
+        head = {'waiting': 'waiting for the Nano to finish the last drawing', 'sending': 'sending',
+                'drawing': 'all sent; the pen is finishing',
                 'done': 'done', 'failed': 'stopped', 'cancelled': 'cancelled'}[s.state]
-        if s.cancel and s.state in ('sending', 'drawing'):
+        if s.cancel and s.state in ('waiting', 'sending', 'drawing'):
             head = 'cancelling (the request out to the GRiD ends first)'
         r = 'Plot at GPIB %d: %s. %d of %d bytes sent (%d%%) in %d writes, %d polls, %d s.' % (
             s.addr, head, s.sent, n, 100 * s.sent // max(n, 1), s.writes, s.polls, t)
+        if s.note: r += ' ' + s.note
         if s.error: r += ' ' + s.error
         return r
 
-    def gpib(s, op, data=b'', flags=0):
+    def failed(s, why, clear=True):
+        """A failure that ends the plot, said; first, with clear, the Nano cleared as far as it can be (the
+        drawing is broken anyway, and a Nano that knows SDC is left with its parser clean for the next).
+        Not when the GRiD has stopped answering: there is nothing to send it through.  why goes after any
+        note already said (the start's "not cleared"), and to the log, with how the clear went."""
+        how = ''
+        if clear:
+            e = s.clear()               # (a failed clear changes nothing: the plot has failed)
+            how = ' (the clear failed: %s)' % e if e else ' (cleared)'
+        s.error = why if not s.error else s.error + ' ' + why
+        s.state = 'failed'
+        s.tools.log('plot: stopped after %d of %d bytes: %s%s' % (s.sent, len(s.data), why, how))
+
+    def refuse(s):
+        """A poll that asks for service (RQS, bit 6) while settle() waits is something else at the address:
+        the Nano never asks.  Nothing sent, nothing cleared.  (One at the first poll, t_grid_plotter's, is
+        refused there, before a plot is started.)"""
+        s.failed('GPIB %d asks for service: it is not the Nano. Nothing was sent.' % s.addr, clear=False)
+
+    def settle(s):
+        """The start.  A clear drops whatever the Nano's ring holds (its SDC sets ringTail = ringHead), so it
+        would cut off a drawing an earlier plot, or PLOT.COM, left the Nano to finish: the only Nano ever
+        cleared here is one whose ring is empty and that still isn't idle, 3Ch.  A Nano idle at the start's
+        poll (bit 7: its buffer and its queue to the plotter empty, no command begun, so not inside a label)
+        is not cleared; a poll that asks for service (RQS) while it waits is refused (refuse).  Any other
+        is still drawing what it holds, or is stuck in a label left open: it is polled once a second, with
+        no limit while its status byte changes (its room as the pen works), and once it is idle the plot
+        starts, not cleared.  Unchanged:
+        - 3Ch (its buffer empty, not idle: what a label left open polls) for PLOT_STUCK s: cleared (an empty
+          ring loses at most the rest of its command in hand), then the plot.
+        - Anything else for PLOT_STALL s: bytes it holds are not going to the plotter; the plot fails,
+          nothing sent and nothing cleared (what it holds is the earlier drawing's, which a clear would
+          drop).  00h all along is said as an address that may not be the Nano's (an instrument that isn't
+          polls 0).
+        A GRiD that stops answering, or polls that come back empty, clear nothing, and after PLOT_STALL s
+        of them the plot fails.  A cancel, seen before and after each poll and again inside the tools' lock
+        just before the clear (which may wait there behind another tool call), ends it with nothing sent.
+        PLOT.COM's start follows the same rule; its user's Esc while it waits also clears and plots at once.
+        -> False if it ended meanwhile (cancelled, failed or refused): run() sends nothing then."""
+        st = s.first
+        if st & 0x40: s.refuse(); return False
+        if st & 0x80: return True
+        s.state = 'waiting'
+        last = answered = s.clock(); changed = False
+        while True:
+            if s.cancel: s.state = 'cancelled'; return False
+            s.sleep(1)
+            try:
+                got = s.poll(); why = None
+            except GridError as e:          # (busy with a program, or the link is down: no clear)
+                got = None; why = str(e)
+            if s.cancel: s.state = 'cancelled'; return False
+            now = s.clock()
+            if got is None:                 # no answer, or an empty one: no news, and not an answer
+                if now - answered > PLOT_STALL:
+                    s.failed('The GRiD stopped answering: %s.' % why if why else
+                             'The Nano\'s serial polls came back empty for %d s.' % PLOT_STALL, clear=False)
+                    return False
+                continue
+            answered = now
+            if got & 0x40: s.refuse(); return False
+            if got & 0x80:
+                s.note = 'Waited for the Nano to finish the last drawing.'
+                s.state = 'sending'; return True
+            if got != st: st, last, changed = got, now, True; continue
+            if st == 0x3C and now - last >= PLOT_STUCK: break
+            if now - last >= PLOT_STALL:
+                if st == 0 and not changed:
+                    why = ('GPIB %d polled 00h, unchanged, for %d s: is [plotter] address in gridlink\'s config '
+                           'the Nano\'s? (An instrument that isn\'t polls 0.) Nothing was sent; it was not '
+                           'cleared.' % (s.addr, PLOT_STALL))
+                else:
+                    why = ('The Nano stayed busy for %d s, its status %02Xh unchanged: what it holds is not '
+                           'going to the plotter (is the 4662 on and online?). Nothing was sent; it was not '
+                           'cleared, since what it holds is the last drawing\'s.' % (PLOT_STALL, st))
+                s.failed(why, clear=False); return False
+        why = s.clear(cancellable=True)
+        if why is s.CANCELLED: s.state = 'cancelled'; return False
+        if why:
+            s.error = 'The Nano was not cleared: %s; a label left open may eat the start.' % why
+            s.tools.log('plot: the Nano was not cleared: %s' % why)
+        else:
+            s.note = ('The Nano was stuck (its status 3Ch, its buffer empty but not idle, unchanged for %d s: '
+                      'a label left open?): cleared.' % PLOT_STUCK)
+            s.tools.log('plot: the Nano\'s status stayed 3Ch for %d s: cleared' % PLOT_STUCK)
+        s.state = 'sending'
+        return True
+
+    CANCELLED = object()                # (gpib and clear, cancellable: a cancel found inside the lock; nothing asked)
+
+    def gpib(s, op, data=b'', flags=0, cancellable=False):
         with s.tools.lock:
+            if cancellable and s.cancel: return s.CANCELLED   # (it came while this waited for the lock)
             # (asked inside the lock, as ToolServer does: a RUN holding it keeps the GRiD from polling, and
             #  that is not "not connected")
             why = s.tools.available('grid_plotter')
@@ -934,17 +1058,116 @@ class PlotJob(threading.Thread):
         r = s.gpib(glp.GP_SPOLL)
         return r[0] if r else None
 
+    def clear(s, cancellable=False):
+        """SDC to the Nano (CLAUDE's gp_clear, driver function 06h): a Nano
+        that knows it drops what it holds and ends a label left open.  An
+        older one ignores it, and a failed clear is not fatal.  With
+        cancellable (settle's), a cancel seen inside the lock, just before
+        the SDC, sends nothing. -> an error, CANCELLED, or None (cleared)"""
+        try: return s.CANCELLED if s.gpib(glp.GP_CLEAR, cancellable=cancellable) is s.CANCELLED else None
+        except GridError as e: return str(e)
+
+    def whole(s):
+        """The last write ended on a whole command (none cut in parts)."""
+        import bisect
+        i = bisect.bisect_left(s.ends, s.sent)
+        return s.sent == 0 or (i < len(s.ends) and s.ends[i] == s.sent)
+
+    def command(s, at):
+        """The command that index at is inside: (its start, past the
+        separators before it; its label's mnemonic (start, after), as
+        hpgl_ends reads it, or (-1, -1)).  Kept for the last command asked:
+        a long one is asked once a part."""
+        import bisect
+        k = bisect.bisect_right(s.ends, at) - 1
+        j = s.ends[k] if k >= 0 else 0
+        if s.cmd is not None and s.cmd[0] == j: return s.cmd[1:]
+        i, n = j, len(s.data)
+        while i < n and s.data[i] in b' \r\n\t;': i += 1
+        e = s.data.find(b';', i)
+        s.cmd = (j, i, hpgl_label(s.data, i, n if e < 0 else e))
+        return s.cmd[1:]
+
+    def in_label(s):
+        """The last write ended in a label's text: after its mnemonic,
+        before its ETX."""
+        if s.whole(): return False
+        j, (st, after) = s.command(s.sent)
+        return 0 <= after <= s.sent and s.data.find(b'\x03', after) >= s.sent
+
+    LISTS = (b'PA', b'PD', b'PR', b'PU')    # the commands whose numbers are x,y pairs
+    NUM = re.compile(rb'[A-Za-z]{1,2}|[^,\sA-Za-z;]+([,\s]?)')   # a mnemonic, or a number and the separator after it
+
+    def cut(s, end):
+        """Where a part that ends inside one command (bigger than the Nano's
+        room) may end: never between a label mnemonic's two letters (the
+        part ends before the first); in a PA, PD, PR or PU list only just
+        after the separator after a y, so neither a number nor an x,y pair
+        is split (a clear between the parts would end "PA100,2" at 2, or
+        leave an x that the next part's first number pairs with).  A
+        mnemonic with no ';' before it ("PU0,0PD1,2") starts the count
+        again, or, if not one of those four, ends the pairing.  Anywhere
+        else (a label's text, other commands): at end."""
+        j, (st, after) = s.command(end)
+        if 0 <= st < end:
+            if end < after and st > s.sent: return st      # (between the letters: before them)
+            return end
+        if s.data[j:j + 2].upper() not in s.LISTS: return end
+        # the numbers counted so far in this list (the last cut's), else from its start
+        at, n = s.pairs[1:] if s.pairs and s.pairs[0] == j else (j + 2, 0)
+        best = None
+        for m in s.NUM.finditer(s.data, at, end):
+            if m.group(1) is None:                          # a mnemonic (its letters read whole, past end too)
+                if s.data[m.start():m.start() + 2].upper() not in s.LISTS: s.pairs = None; return end
+                n = 0; continue
+            n += 1
+            if m.group(1) and n % 2 == 0 and m.end() > s.sent: best = (m.end(), n)
+        if best is None: s.pairs = None; return end   # (no pair ends in the room: numbers too long)
+        s.pairs = (j, best[0], best[1])
+        return best[0]
+
+    def halt(s):
+        """Cancelled while sending, as PLOT.COM does: clear the Nano first (a
+        Nano that knows SDC drops what it holds, so the pen-up bytes go after
+        the clear), then "PU;" after a whole command, ETX and "PU;" in a
+        label's text, and nothing inside any other command cut in parts (in
+        a PA or PD list "PU;" would end it early).  An older Nano, which
+        ignores SDC, draws what it holds and keeps the pen down after a list
+        cut in parts until the next plot."""
+        why = cl = s.clear(); stuck = False; wrote = None
+        pu = None if s.sent == 0 else b'PU;' if s.whole() else b'\x03PU;' if s.in_label() else None
+        if pu:
+            try: s.gpib(glp.GP_WRITE, pu, flags=1)
+            except GridError as e: why = why or str(e); stuck = pu[0] == 3; wrote = str(e)
+        if why:
+            s.error = 'The plotter may not have stopped cleanly: %s.' % why
+            if stuck:                       # (the ETX didn't go: only the clear ended the label)
+                s.error += (' A Nano whose firmware ignores a clear is still inside the label and will take '
+                            'the next drawing as its text: switch it off and on.')
+        s.state = 'cancelled'
+        s.tools.log('plot: cancelled after %d of %d bytes: %s%s' % (
+            s.sent, len(s.data), 'the clear failed: %s' % cl if cl else 'cleared',
+            '' if not pu else '; %r %s' % (pu, 'failed: %s' % wrote if wrote else 'sent')))
+
     def run(s):
         import bisect
-        n = len(s.data); last = time.monotonic()
+        n = len(s.data)
         try:
+            # a drawing the Nano still holds from before is waited for; a label left open, which would eat
+            # this one, is cleared (settle)
+            if not s.settle(): return
+            if s.cancel and s.sent == 0:    # (since settle's last look: nothing sent, so nothing to halt or
+                s.state = 'cancelled'       #  clear; an idle or just-cleared Nano is left as it is)
+                s.error = s.error + ' Nothing was sent.' if s.error else 'Nothing was sent.'
+                return
+            last = time.monotonic()
             while s.sent < n:
-                if s.cancel: s.state = 'cancelled'; return
+                if s.cancel: s.halt(); return
                 try:
                     st = s.poll()
                 except GridError as e:          # (busy with a program, or the link is down: try again)
                     if time.monotonic() - last > PLOT_STALL:
-                        s.state = 'failed'; s.error = 'The GRiD stopped answering: %s.' % e; return
+                        s.failed('The GRiD stopped answering: %s.' % e, clear=False); return
                     time.sleep(1); continue
                 room = ((st or 0) & 0x3F) * 4
                 left = n - s.sent
@@ -954,17 +1177,15 @@ class PlotJob(threading.Thread):
                     j = bisect.bisect_right(s.ends, end)  # the command after the ones that fit (short
                     nxt = s.ends[j] if j < len(s.ends) else n   #  ones before a long one: not the first's end)
                     if room >= 200 and nxt - s.sent > room:  # one command bigger than the Nano's room
-                        end = s.sent + room
+                        end = s.cut(s.sent + room)
                     elif end - s.sent < left:           # wait for room (the GRiD is free meanwhile)
                         if time.monotonic() - last > PLOT_STALL:
-                            s.state = 'failed'; s.error = 'The Nano had no room for %d s.' % PLOT_STALL; return
+                            s.failed('The Nano had no room for %d s.' % PLOT_STALL); return
                         time.sleep(PLOT_WAIT); continue
                 try:
                     s.gpib(glp.GP_WRITE, s.data[s.sent:end], flags=1)
                 except GridError as e:
-                    s.state = 'failed'
-                    s.error = 'A write failed (%s): part of the drawing may be on the paper.' % e
-                    return
+                    s.failed('A write failed (%s): part of the drawing may be on the paper.' % e); return
                 s.sent = end; s.writes += 1; last = time.monotonic()
             s.state = 'drawing'
             while not s.cancel and time.monotonic() - last < PLOT_STALL:
@@ -973,6 +1194,11 @@ class PlotJob(threading.Thread):
                 except GridError: pass
                 time.sleep(1)
             s.state = 'cancelled' if s.cancel else 'done'
+        except Exception as e:              # (a bug: said and logged, never left 'sending' or 'waiting')
+            s.tools.log('plot: %s' % traceback.format_exc().rstrip())
+            s.failed('gridlink\'s plot failed (%s: %s); %s' % (
+                type(e).__name__, e, 'part of the drawing may be on the paper.' if s.sent else 'nothing was sent.'),
+                clear=False)
         finally:
             s.t1 = time.monotonic()
 
@@ -1039,8 +1265,10 @@ class ToolServer:
                 c.settimeout(None)                # the answer takes what the GRiD takes
                 res = s.request(line)
                 f.write(json.dumps({'content': res[0], 'isError': bool(res[1])}).encode() + b'\n'); f.flush()
-            except Exception as e:                # the client went away
+            except OSError as e:                  # the client went away
                 s.log('mcp: %r' % e)
+            except Exception:
+                s.log('mcp: %s' % traceback.format_exc().rstrip())
 
     def request(s, line):
         try:
@@ -1061,7 +1289,7 @@ class ToolServer:
                 if tool not in PICTURE_TOOLS: return s.tools.call(tool, args)
             return s.tools.call(tool, args)       # (grid_pick waits for the user, not the GRiD)
         except Exception as e:
-            s.log('mcp: %r' % e); return [text('gridlink: %s' % e)], True
+            s.log('mcp: %s' % traceback.format_exc().rstrip()); return [text('gridlink: %s' % e)], True
 
     def link_request(s, args):
         """Not a tool (Claude Code never sees it): gridlink.bench reads the link's
@@ -1088,9 +1316,10 @@ class ToolServer:
                 if proto is not None: proto.trace = L.trace
             elif args['trace'] == 'stop':
                 from .pico import retime          # (the bridge's events on its own clock, when it stamps them)
-                tr = [[round(t, 6), e] for t, e in retime(list(L.trace or ()))]
-                L.trace = None
-                if proto is not None: proto.trace = None
+                kept = L.trace if isinstance(L.trace, collections.deque) else ()   # (no 'start': none, and
+                tr = [[round(t, 6), e] for t, e in retime(list(kept))]             #  -v's DebugTrace is no list)
+                L.trace = getattr(L, 'trace_sink', None)      # (gridlink -v's debug lines again, if on)
+                if proto is not None: proto.trace = L.trace
             else:
                 return [text("gridlink: trace is 'start' or 'stop'")], True
         if 'usb' in args:                     # [count, size]: PINGs through the bridge's USB (PicoBridge only)

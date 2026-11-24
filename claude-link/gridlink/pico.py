@@ -20,6 +20,7 @@ The bridge takes no part in the bus until we put it online, and drops off again 
 import collections, glob, os, struct, threading, time
 
 from . import glp
+from .link import PortLog
 
 PICO_VID = 0x2E8A
 PROTO_VERSION = 1
@@ -73,7 +74,7 @@ class PicoProto:
 
     def __init__(s, write, addr=7, log=print):
         s.write, s.addr, s.log = write, addr, log
-        s.buf = bytearray(); s.firmware = ''; s.early = False; s.holds = s.holds_glp = False
+        s.buf = bytearray(); s.skip = False; s.firmware = ''; s.early = False; s.holds = s.holds_glp = False
         s.can_quiet = False; s.quiet = False    # (CONFIG bit 2: SRQ never driven, the status byte as ever)
         s.can_ring = False                      # (WAKE: the GRiD's screen saver ended by a ring, CLAUDE 1.14)
         s.sdcs = 0                             # SDCs from the GRiD (resident Claude's background: it stopped)
@@ -94,20 +95,46 @@ class PicoProto:
         with s.lock: return s._feed(data)
 
     def _feed(s, data):
+        # By runs between 0x00s, not bytes (pico-bridge's Deframer.feed, protocol.py): each run but the last
+        # ends a frame; the last waits in buf for the rest.  A frame past 4096 bytes is dropped up to its 0x00.
         out = bytearray()
-        for b in data:
-            if b:
-                s.buf.append(b)
-                if len(s.buf) > 4096: s.buf.clear(); s.stats['bad_frames'] += 1
+        runs = bytes(data).split(b'\0')
+        last = len(runs) - 1
+        for i, run in enumerate(runs):
+            if s.skip:
+                if i == last: break
+                s.skip = False; continue
+            if s.buf or i == last:
+                s.buf += run; run = s.buf
+            if len(run) > 4096:                 # no frame is this long: resynchronise at the next 0x00
+                s.buf.clear(); s.stats['bad_frames'] += 1
+                s.skip = i == last
                 continue
-            if not s.buf: continue
+            if i == last: break
+            if not run: continue
             try:
-                f = cobs_decode(bytes(s.buf))
+                f = cobs_decode(bytes(run))
             except ValueError:
-                s.stats['bad_frames'] += 1; s.buf.clear(); continue
+                f = None; s.stats['bad_frames'] += 1
             s.buf.clear()
-            if f: out += s._frame(f)
+            if not f: continue
+            try:
+                out += s._frame(f)
+            except (struct.error, IndexError):  # shorter than its type's fields: the frame is ignored.  Each
+                s.stats['bad_frames'] += 1      #  parser reads its fields before it changes anything, but for
+                #  PONG's, which first takes what a short one still says (last_pong, its flags, a CONFIG if
+                #  offline) and only then reads the rest
+                s.once('bridge: a frame shorter than its fields ignored (type %02Xh, %d bytes; counted in '
+                       'bad_frames)' % (f[0], len(f)), key='short')
         return bytes(out)
+
+    def once(s, msg, key=None):
+        """Something worth one line (PicoBridge's _once: once until the bridge is next up)."""
+        s.log(msg)
+
+    def resync(s):
+        """A new port: no bytes from the old one's last frame."""
+        s.buf.clear(); s.skip = False
 
     def _frame(s, f):
         t = f[0]
@@ -148,22 +175,35 @@ class PicoProto:
                                (time.monotonic(), name, struct.unpack_from('<I', f, 9)[0]))
             if name == 'TX_DONE': s.tx_done_at = s.clock()
             elif name == 'SDC': s.sdcs += 1
+            elif name == 'TALK_WAIT': s._credit(arg, live=False)   # (arg: the consumed count, CREDIT's scale)
             if name == 'ONLINE': s.online = True
             elif name == 'OFFLINE':
                 s.online = False
                 s._config()                   # we still want it
             return b''
         if t == F_CREDIT:
-            s.consumed = struct.unpack_from('<I', f, 1)[0]; s._pump(); return b''
+            s._credit(struct.unpack_from('<I', f, 1)[0]); return b''
         if t == F_PONG:
-            s.last_pong = time.monotonic(); s.pongs += 1
+            s.last_pong = time.monotonic(); s.pongs += 1   # (first: any PONG says the bridge is there)
             s.pong = dict(zip(('online', 'address', 'listener', 'talker', 'ren', 'llo', 'spms', 'rsv'), f[1:9]))
             if not f[1]:
                 s._config()
-            return b''
+            s._credit(struct.unpack_from('<I', f, 11)[0])  # (u16 gen at 9, then the consumed count: a lost
+            return b''                                      #  CREDIT is made good within a second)
         if t == F_LOG:
             s.log('bridge: ' + f[1:].decode('ascii', 'replace'))
         return b''
+
+    def _credit(s, c, live=True):
+        """The bridge's consumed count, and the queue pumped into the room it makes.  CREDIT and PONG are live
+        reads of consumed_total(), sent in order by core 0, so they are taken as they come, even one lower:
+        a stand-in EOI that ann_flush puts in the ring takes the count down by one until core 1 pops it, and
+        that slot is not free (as the daemon's credit handling).  TALK_WAIT's arg (live=False) is core 1's
+        tx_consumed from when it waited, plus core 0's tx_dropped0 when core 0 sent the event on (host_link.c),
+        so it may be older than a CREDIT already here: taken only if it isn't behind (by the wrap-safe
+        difference)."""
+        if live or ((c - s.consumed) & 0xFFFFFFFF) < 0x80000000:
+            s.consumed = c; s._pump()
 
     def _gen(s, g):
         if g != s.gen:
@@ -358,18 +398,21 @@ class PicoLink:
         return s.proto.tx_done_at
 
 
-class PicoBridge(PicoLink):
-    """gridlink transport: frame_limit, open(), configure(), answer(frame), read()."""
+class PicoBridge(PicoLink, PortLog):
+    """gridlink transport: frame_limit, open(), configure(), answer(frame), read().  `opener` (port) -> a
+    pyserial-like port: the tests' (else pyserial)."""
     frame_limit = FRAME_MAX
     patched = True
 
-    def __init__(s, port='auto', addr=7, log=print):
+    def __init__(s, port='auto', addr=7, log=print, opener=None):
         s.spec, s.addr, s.log = port, addr, log
-        s.ser = None; s.port = None; s.wlock = threading.Lock()
+        s.opener = opener
+        s.ser = None; s.port = None; s.wlock = threading.Lock(); s.opened_at = -10.0
         s.proto = PicoProto(s._write, addr=addr, log=log)
+        s.proto.once = lambda msg, key=None: s._once(msg, key, tail='')
         s.inq = collections.deque(); s.cv = threading.Condition()
         s.stop = threading.Event()
-        s.said = set()                      # what _open_once has logged since the bridge was last up
+        s.said = set()                      # what _once has logged since the bridge was last up
 
     @property
     def version(s):
@@ -381,41 +424,39 @@ class PicoBridge(PicoLink):
         try:
             with s.wlock: ser.write(data)
         except Exception as e:
-            s.log('bridge: write failed (%r): reopening' % e); s._drop()
+            s._once('bridge: write failed (%r): reopening' % e, key='write', tail=''); s._drop()
 
     def _drop(s):
-        try:
-            if s.ser: s.ser.close()
-        except Exception:
-            pass
-        s.ser = None; s.proto.connected = False
+        PortLog._drop(s); s.proto.connected = False
 
-    def _once(s, msg):
-        """A failure to find or open the bridge, logged once until it is up again: the retries every 2 s
-        would otherwise log it every 2 s, or not at all."""
-        if msg not in s.said:
-            s.said.add(msg); s.log(msg + '; retrying every 2 s')
+    def _serial(s, p):
+        if s.opener is not None: return s.opener(p)
+        import serial
+        return serial.Serial(p, 115200, timeout=0.02, write_timeout=2)
 
     def _open_once(s):
-        import serial
         ports = find_port(s.spec)
         if not ports:
             s._once('bridge: no GPIB-Pico2 bridge found (port %s)' % s.spec)
         for p in ports:
             try:
-                ser = serial.Serial(p, 115200, timeout=0.02, write_timeout=2)
+                ser = s._serial(p)
                 try: ser.dtr = True
                 except Exception: pass
             except Exception as e:
                 s._once('bridge: cannot open %s (%s)' % (p, e)); continue
             s.ser, s.port = ser, p
-            s.proto.buf.clear()
+            s.opened_at = time.monotonic()
+            s.proto.resync()
             s.proto.hello()
             t_end = time.monotonic() + 3
-            while time.monotonic() < t_end and not s.proto.connected:
-                d = ser.read(256)
-                if d: s._push(s.proto.feed(d))
-            if s.proto.connected:
+            try:
+                while time.monotonic() < t_end and not s.proto.connected and s.ser is ser:
+                    d = ser.read(256)
+                    if d: s._push(s.proto.feed(d))
+            except Exception as e:           # (a port that opens and fails at once: tried again in 2 s)
+                s._once('bridge: %s failed as it opened (%s)' % (p, e), key='failed ' + p); s._drop(); continue
+            if s.proto.connected and s.ser is ser:
                 s.log('bridge on %s' % p); s.said.clear()
                 return True
             s._once('bridge: %s did not answer (not the bridge firmware? bench firmware?)' % p)
@@ -442,6 +483,8 @@ class PicoBridge(PicoLink):
     def _reader(s):
         while not s.stop.is_set():
             if s.ser is None:
+                left = s.opened_at + 2 - time.monotonic()   # (a port that opens and fails at once: no
+                if left > 0: time.sleep(left); continue     #  sooner than every 2 s)
                 if not s._open_once(): time.sleep(2)
                 continue
             ser = s.ser
@@ -455,7 +498,7 @@ class PicoBridge(PicoLink):
                     if n: d += ser.read(n)
             except Exception as e:
                 if s.ser is ser:              # else the pinger already dropped it: just reopen, quietly
-                    s.log('bridge: read failed (%r): reopening' % e); s._drop()
+                    s._once('bridge: read failed (%r): reopening' % e, key='read', tail=''); s._drop()
                 continue
             if d: s._push(s.proto.feed(d))
 

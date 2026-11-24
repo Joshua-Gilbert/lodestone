@@ -15,8 +15,8 @@ GRiD 1520 (controller, addr 21) ==GPIB== AR488 Nano (device, addr 7) --USB seria
 
 Since 2026-10-16 the bridge can also be the GPIB-Pico2 board (`gridlink/pico.py`, `[bridge] kind = "pico"`,
 the default). GLP is unchanged on the GPIB side: the Pico bridge behaves as the patched AR488 below (status
-60h raised by itself when a whole answer is in, kept until it is read, a frame up to 254 bytes, the GRiD's
-frames forwarded whole), and as for SDC, it also drops an answer a newer GRiD frame has made stale. On the USB
+60h raised by itself when a whole answer is in, kept until it is read, the GRiD's frames forwarded whole), but
+its frames to the GRiD are as big as the GRiD's HELLO says it reads (`rx=`, section 3), not 254 bytes, and as for SDC, it also drops an answer a newer GRiD frame has made stale. On the USB
 side it needs no escaping and no `++` commands: its own framed protocol (the bridge firmware's PROTOCOL.md)
 carries each GRiD frame and each answer whole. Section 1 is about the AR488.
 
@@ -51,13 +51,26 @@ Hence the rules:
 1. **Strict alternation.** The GRiD writes one frame; the Pi answers with
    exactly one frame; repeat. The Pi never writes to the Nano except right
    after it has received a complete GRiD frame, and the GRiD never writes
-   again until it has read that answer.
+   again until it has read that answer. One exception (gridlink from
+   2026-11-20): until the GRiD's HELLO has connected gridlink, a frame that
+   is neither HELLO nor NAK gets no answer. That is a gridlink started (a
+   restart, a crash) under a CLAUDE that is mid-session: a NOP would pass
+   for "nothing new" and leave CLAUDE waiting as long as it ran, so it is
+   left unanswered, its link wait fails and it starts over with HELLO
+   (rule 3). An idle CLAUDE POLLs once a second, so after `systemctl
+   restart gridlink` it is back about 3-4 s after gridlink is ready: up to
+   a second to its next POLL, `link_wait` failing at 41 ticks (about
+   2.25 s), and `link_reset`'s 18 ticks before the HELLO. The message it
+   was sending is lost.
 2. **Read only a complete answer.** The GRiD serial-polls the Nano and reads
    only when the status byte says the answer is complete (patched firmware,
    bit 5) or after waiting the number of milliseconds the Pi put in bits 0-4
    (stock firmware).
-3. **Recovery belongs to the GRiD.** On any error it waits 50 ms, sends SDC
-   to the Nano (clears its buffer and status) and starts over with HELLO.
+3. **Recovery belongs to the GRiD.** On any error it waits 18 ticks (about
+   a second; `link_reset`), sends SDC to the Nano (clears its buffer and
+   status) and starts over with HELLO. A frame with no answer fails after
+   41 ticks (about 2.25 s; `link_wait`), and from CLAUDE 1.19 so does the
+   8th NAK in a row (section 3, Sequencing).
 
 ## 2. Status byte (serial poll of the Nano)
 
@@ -67,10 +80,12 @@ Hence the rules:
 | 5 (20h) | READY: the whole answer is in the Nano's buffer, read now (patched firmware sets 60h itself) |
 | 0-4 | stock firmware: milliseconds to wait after this poll before reading (the Pi sends `++status 64+ms` immediately before the frame, so the frame is still arriving) |
 
-The GRiD acts only on bit 6. It checks SRQ (`INT 6x AH=0Bh`) every pass of
-its main loop and also serial-polls the Nano at least every 20 ms while an
-answer is due (instruments that hold SRQ themselves would otherwise hide the
-Nano's request).
+The GRiD acts only on bit 6. While an answer is due it checks SRQ
+(`INT 6x AH=0Bh`) each pass of its wait and serial-polls the Nano every
+2-4 ms by the PIT (`pit_due`), as instruments that hold SRQ themselves
+would otherwise hide the Nano's request. With a driver that takes SRQ on
+IRQ 5 it polls at the interrupt instead, and once a tick in case one went
+astray (section 3, Waking an idle GRiD).
 
 ## 3. Frames
 
@@ -90,14 +105,17 @@ Same format both ways:
   ≤ 119) and 254 with the patched firmware (payload ≤ 246), one byte under
   the line buffer so the terminating LF always ends the line. Through the
   Pico bridge they are as big as the GRiD's HELLO says it reads (`rx=`:
-  2048 for CLAUDE 1.3 and its resident console; a HELLO without `rx=` means
-  246, as every CLAUDE before 1.3 reads). The Pi sends a big frame as TX
+  3340 since CLAUDE 1.6, 2048 for CLAUDE 1.3-1.5 and for resident Claude's
+  console; a HELLO without `rx=` means 246, as every CLAUDE before 1.3
+  reads). The Pi sends a big frame as TX
   frames of 512 bytes, EOI only on the last, so it fits the firmware's input
   buffer and the bridge raises SRQ only once the frame is whole. The GRiD
   reads up to its buffer and scans for the sync byte, so leading garbage is
   tolerated.
-* GRiD → Pi frames carry up to 1024 payload bytes (the GRiD announces its
-  limit in HELLO). The GRiD writes them with EOI on the last byte.
+* GRiD → Pi frames carry up to 3300 payload bytes (`TXMAX`, CLAUDE 1.7
+  and resident Claude's console; 2048 for CLAUDE 1.3-1.6, 1024 before).
+  The GRiD announces its limit in HELLO's max payload, and writes each
+  frame with EOI on the last byte.
 * On the serial side the Pi escapes CR, LF, ESC and `+` with ESC and ends
   the frame with LF. In stock mode it sends `++status <64+ms>\n` first,
   in the same write.
@@ -142,7 +160,11 @@ later the Pi takes the GRiD to be gone, until its next frame.
   good seq it received into ack.
 * **The Fletcher sum** (CLAUDE 1.3): A = 1 plus the bytes, B = the sum of
   the A after each byte, both mod 256; the check is B × 256 + A (A first on
-  the wire). It costs the 286 about 8.5 clocks a byte against the CRC's 34.
+  the wire). By the 286's tables CLAUDE's loop (`fcs`, four bytes a pass)
+  costs about 8.5 clocks a byte against the table CRC's 34; measured on the
+  1520 (CLAUDEP) a 2 KB frame's pass took about 1.3 µs a byte. Since the
+  GPIB driver 1.23 the driver keeps the sum as it moves the bytes, and
+  CLAUDE checks a frame from that.
   Since 2026-10-29 (CLAUDE 1.15, console 1.13) CLAUDE.COM and resident
   Claude's console check every frame with it, HELLO and its answer too, and
   have no CRC at all: **CLAUDE 1.15 / console 1.13 need gridlink from
@@ -158,6 +180,16 @@ later the Pi takes the GRiD to be gone, until its next frame.
   that one.
 * Bad check: the receiver answers with a NAK (GRiD → Pi type 06h, Pi → GRiD
   48h); the sender then retransmits its last frame unchanged.
+* **Eight NAKs** (CLAUDE 1.19 and resident Claude's console 1.14): each
+  resend starts the GRiD's 2 s wait again, so a Pi that NAKs every frame
+  (the GRiD's frames damaged on the way, the Pi's intact) kept the link up
+  for ever. Now the GRiD fails the link at the 8th P_NAK in a row (its frame
+  and seven resends). Any answer that isn't a NAK, a duplicate's included,
+  and any link reset set the count to 0. A NAK doesn't count as the bridge
+  answering, so with a Pi that NAKs every frame the first failed run says
+  "Link to the Pi lost, reconnecting", and from the third failed run in a
+  row it says "No answer from the bridge at GPIB address n (is the Pi
+  running?)", as for a dead link.
 * A frame whose seq equals the last one accepted is a duplicate (its answer
   was lost): don't process it again, just resend the last answer.
 
@@ -170,7 +202,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum (from CLAUDE 1.15 and console 1.13, 2026-10-29: it checks every frame with it, this HELLO too); bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3; bit 4 = it draws the 2x2 block elements `▘▝▖▗▌▐▀▄▛▜▙▟▚▞` as codes A1h-AEh, CLAUDE 1.8, and resident Claude's console from 1.12; without it they are blanks and inverse blanks), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the Fletcher sum of its Term screen (section 6; a CRC-16 before console 1.13). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9), and `bgscreen`: SCREEN in the background too (CLAUDE 1.11). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum (from CLAUDE 1.15 and console 1.13, 2026-10-29: it checks every frame with it, this HELLO too); bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3; bit 4 = it draws the 2x2 block elements `▘▝▖▗▌▐▀▄▛▜▙▟▚▞` as codes A1h-AEh, CLAUDE 1.8, and resident Claude's console from 1.12; without it they are blanks and inverse blanks), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid` (the program and its version, `CLAUDE 1.n`), and `app=term`, `app=web` or `app=chat` when CLAUDE was started with `/T`, `/W` or `/C`. From CLAUDE 1.3 also `rx=` (the Pi → GRiD payload it reads: 2048, 3340 from 1.6), from 1.5 `req=` (the biggest REQUEST it takes: 8700, 16700 from 1.6; 4,700 without it) and from 1.7 `rd=` (the biggest READ it answers whole, 16384; without it a READ is at most 16,382 bytes). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the Fletcher sum of its Term screen (section 6; a CRC-16 before console 1.13). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9), and `bgscreen`: SCREEN in the background too (CLAUDE 1.11). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 07h saver (CLAUDE 1.14, to a Pi whose HELLO answer, 41h, has bit 4: the Executive's screen saver comes on if the answer is a NOP, and the GRiD sends nothing more until it ends; the Pi counts it as there until its next frame, and rings it for anything it has, which ends the saver; section 3, Waking an idle GRiD); 08h size (Term, CLAUDE 1.16 in a Lodestone terminal window, to a Pi whose HELLO answer has bit 5): rows (1), 4-24, how many the window shows; the Pi's terminal is then that tall (section 6), and every HELLO makes it 24 again |
@@ -286,6 +318,18 @@ MULTITASK=1, its key wait and its INT 24h prompt; or the program is
 DEFRAG, which writes the disk itself; under MS-DOS, every DOS key wait,
 whose code is in IO.SYS, not the kernel's segment; GPIB requests still
 run), FFh unknown request.
+
+Requests are checked against what they carry (CLAUDE 1.19, and resident
+Claude's console 1.14 for the ones it answers): a WRITE whose path has no
+NUL inside the request answers F0h; a GPIB request shorter than its 9-byte
+fixed part (id and op counted) answers 4 (bad function), while a 9-byte
+one with no data (GP_CLEAR, trigger, local, remote, read, poll, scan) goes
+through; a SETTIME shorter than its 9 bytes (id and op counted) answers 4,
+as a short GPIB request does; one whose time is out of range (hour over 23,
+minute or second over 59) or whose date DOS refuses (outside 1980-2099, or
+no such day) sets nothing, neither DOS's clock nor the real-time clock, and
+answers 0Dh (the console answers SETTIME F6h, as before). Older
+CLAUDEs trusted those fields. gridlink sends none of these.
 
 Resident Claude's console (`app=resident`) answers SCREEN with the paused
 program's screen as it keeps it (`which` doesn't matter: there is one; in
@@ -441,6 +485,7 @@ CELLS payload:
 | run | row, col, len, [attr], len glyphs | cells (row, col) .. (row, col+len-1) |
 | fill | row \| 80h, col, len, [attr], glyph | the same glyph len times |
 | scroll | FEh, top, bottom, n | rows top..bottom up by n; n blank rows come in at the bottom |
+| pixels | FDh, y (2, 0-383), x (bytes), w (bytes), h (lines), then each line's w bytes as PackBits | a picture's rectangle, x + w ≤ 80 and y + h ≤ 384, bit 7 of a byte the leftmost pixel, 1 lit; only to a GRiD whose HELLO says flags bit 1 (CLAUDE.COM from 1.2, `gridlink/picture.py`). PackBits: a byte n below 80h, then n + 1 bytes as they are; else one byte, 257 - n times |
 
 `len` bit 7 means an attribute byte follows (bit 0 inverse, bit 1
 underline); without it the cells are plain. Glyphs are the GRiD's codes

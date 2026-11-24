@@ -17,10 +17,10 @@ third use of it: `CLAUDE /W`, Firefox on the Pi as text, below):
 ## Term: Claude Code on the GRiD
 
 ```
-GRiD 1520 ── GPIB ── AR488 Nano ── USB ── Raspberry Pi 5 ── internet ── Claude (your plan)
- CLAUDE /T            (device, addr 7)      gridlink + the real `claude` in a pty
- screen, keys,                              pyte screen -> changed cells -> the GRiD
- GRiD tools                                 GRiD tools -> MCP server -> REQUESTs
+GRiD 1520 ── GPIB ── Pico 2 bridge ── USB ── Raspberry Pi 5 ── internet ── Claude (your plan)
+ CLAUDE /T            (device, addr 7)         gridlink + the real `claude` in a pty
+ screen, keys,                                 pyte screen -> changed cells -> the GRiD
+ GRiD tools                                    GRiD tools -> MCP server -> REQUESTs
 ```
 
 Your subscription may only be used through the real Claude Code program,
@@ -41,11 +41,13 @@ the GRiD. The emulator measures 48 ms of GRiD time from a key to its echo on
 the screen, plus the Pi's own (about 20-25 ms on the simulated link, and
 Claude Code's rendering).
 
-The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`). Eight only look,
-and you can allow them for good ("Yes, and don't ask again"). Five change
-something, and Claude Code asks before every call: they carry
-`anthropic/requiresUserInteraction`, so it offers no "don't ask again" for
-them, no allow rule skips the question, and not even bypassPermissions does.
+The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`), fourteen of
+them. Nine only look, and you can allow them for good ("Yes, and don't ask
+again"). Five change something, and Claude Code asks before every call:
+they carry `anthropic/requiresUserInteraction`, so it offers no "don't ask
+again" for them, no allow rule skips the question, and not even
+bypassPermissions does, unless you name them in `auto_mode` (below):
+under bypassPermissions a tool named there runs with no question at all.
 
 | Tool | Asks | What |
 |---|---|---|
@@ -53,10 +55,11 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_files` | until allowed | list, info, read (up to 48 KB), free |
 | `grid_screen` | until allowed | the last screenshot (text, or an image of a graphics screen) |
 | `gpib_read` | until allowed | scan, serial poll, read (sends nothing; a poll clears the instrument's service request) |
+| `gpib_measure` | until allowed | one query (a command ending in `?`, no `;`, no line breaks: `READ?`, `*IDN?`) to an address in `[permissions] measure`, for series of readings; any other address is an error naming the ones allowed |
 | `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
 | `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
 | `gpib_send` | every time | query, write, clear, trigger, local/remote; a query's reply can go to a new Pi file (`save_to`) |
-| `grid_plotter` | every time | HP-GL (text, or a Pi file) to the Tek 4662 pen plotter through its Nano at `[plotter] address` (1), in the background: only what the Nano has room for, the GRiD free in between; `status`, `cancel` |
+| `grid_plotter` | every time | HP-GL (text, or a Pi file) to the Tek 4662 pen plotter through its Nano at `[plotter] address` (1), in the background: first waits for a drawing the Nano still holds, then only what it has room for, the GRiD free in between; `status`, `cancel` (below) |
 | `grid_plot` | until allowed | a line or scatter plot on the GRiD's screen, from data or a Pi file (a trace saved with `save_to`); drawn in one bit with the GRiD's own font |
 | `grid_image` | until allowed | a picture file from `~/grid` (a matplotlib PNG), dithered to the GRiD's screen |
 | `grid_pick` | until allowed | asks the user to click points on the plot or picture, and returns them (data coordinates, the nearest point) |
@@ -79,6 +82,22 @@ console is up again.
 
 GPIB queries ask too: a query is a command, and some (`MEAS?` and `READ?`
 on a Keithley source-meter) switch a source's output on.
+
+Two settings in `[permissions]` take questions away, and both are off
+unless you set them. `measure = [16, 28]` lists the instruments
+`gpib_measure` may query (it only looks: once allowed, it is not asked
+again; any other address is an error); leave out any whose query can
+change it, such as that source-meter. `auto_mode = ["grid_command", ...]`
+names asking tools (`gpib_send`, `grid_command`, `grid_change_files`,
+`grid_type`, `grid_plotter`) that lose `requiresUserInteraction`: Claude
+Code's own permission mode then decides on them. In its auto mode the
+classifier lets through calls that fit what you asked for; in the default
+mode it still asks, now with "don't ask again"; under bypassPermissions it
+runs them with no question at all. (`auto_mode` is about Claude Code's
+modes in Term; `mode` in the same section is the chat's own, CLAUDE
+without /T.) gridlink hands the list to the MCP
+server as `GRIDLINK_AUTO_MODE` (comma-separated) in the server's `env` in
+`.mcp.json`, which it writes again each time Term starts.
 
 **Plots and pictures** (CLAUDE.COM 1.2, any Term): the picture replaces
 Claude Code's screen until Esc, and Claude Code goes on underneath. Your own
@@ -129,6 +148,23 @@ numbers, ended by `;` or SUB (`plotter-nano/README.md`).
   while the pen draws. `action: status` shows how far it is, `cancel` stops
   sending. A Nano that doesn't answer a serial poll (firmware before v4) is an
   error before anything is sent.
+- **The start:** a Nano idle at the first poll is not cleared. One still busy
+  with what an earlier plot (or PLOT.COM, left to finish) gave it is waited
+  for, polled once a second: with no limit while its status changes, up to
+  200 s while it stays the same; then the plot stops, nothing sent and the
+  Nano not cleared (what it holds is the earlier drawing's). A status of 3Ch
+  (its buffer empty, yet not idle: a label left open) unchanged for 60 s is
+  taken as stuck: the Nano is cleared and the plot goes on. 00h unchanged
+  all along stops it with a question: is `[plotter] address` the Nano's?
+  A poll that asks for service (RQS) is something else, not the Nano: the
+  plot is refused and nothing is sent. A cancel while it waits sends
+  nothing.
+- **When it stops:** a cancel while sending clears the Nano, then lifts the
+  pen ("PU;", with ETX first inside a label; nothing inside a coordinate
+  list). A plot that fails part way (a
+  write fails, or no room for 200 s) clears the Nano too, best effort, so a
+  Nano that knows SDC starts the next plot clean; a GRiD that stopped
+  answering gets nothing more.
 - The HP-GL is checked first: printable ASCII, line ends, ETX, BS, SO and SI
   (in labels), and ESC and SUB (the 4662's own commands); nothing else.
 - The Nano must run addressed (`LISTEN_ONLY false`, `GPIB_ADDRESS 1`): in
@@ -176,9 +212,9 @@ tree.
 ## Chat: gridlink's own agent
 
 ```
-GRiD 1520 ── GPIB ── AR488 Nano (device, addr 7) ── USB ── Raspberry Pi ── internet ── Claude API
- CLAUDE.COM                                                  gridlink
- screen, keyboard, GRiD tools                                agent loop, Pi tools
+GRiD 1520 ── GPIB ── Pico 2 bridge (device, addr 7) ── USB ── Raspberry Pi ── internet ── Claude API
+ CLAUDE.COM                                                     gridlink
+ screen, keyboard, GRiD tools                                   agent loop, Pi tools
 ```
 
 The GRiD stays the GPIB controller (address 21); your instruments share the
@@ -215,9 +251,19 @@ like Claude Code's CLAUDE.md; `/init` has Claude write one.
 
 ## Setting up
 
-### 1. The bridge (Arduino Nano + AR488)
+### 1. The bridge
 
-Flash AR488 to the Nano. Two choices:
+**The GPIB-Pico2 bridge** (a Raspberry Pi Pico 2 with SN75160B/SN75161B
+transceivers, `pico-bridge/` in the Lodestone tree) is the default:
+`kind = "pico"` and `port = "auto"` in `[bridge]`, as config.example.toml
+has them. Flash its firmware (`pico-bridge/firmware/bridge`) and plug it
+into the Pi's USB: gridlink finds it, puts it on the bus at the config's
+address (7), and logs `bridge on /dev/...` with the firmware's tag. It
+needs no settings of its own.
+
+**The AR488 Nano** is the alternative: `kind = "ar488"`, and `port` the
+Nano's serial port (auto: `/dev/ttyUSB0`). Flash AR488 to the Nano. Two
+choices:
 
 - **Patched (recommended):** apply `AR488-gridlink.patch` to AR488
   0.53.46 (`src/AR488/AR488.ino` and `AR488_Config.h`). It makes the Nano
@@ -229,6 +275,10 @@ Flash AR488 to the Nano. Two choices:
 - **Stock AR488** also works: the Pi tells the GRiD how long to wait
   before reading each reply. It's slower (127-byte replies).
 
+Either Nano is far slower than the Pico 2: about 3-7 KB/s in the emulator,
+against the Pico's 109 KB/s into the GRiD and 91 out of it on the 1520
+(Speed, below).
+
 `gridlink` configures the rest itself (`++mode 0`, `++addr 7`, `++eos 3`,
 `++eoi 1`, `++eot_enable 0`); `--save-bridge` stores it in the Nano's
 EEPROM. Pick a free GPIB address; 7 is free on your bus.
@@ -239,6 +289,7 @@ EEPROM. Pick a free GPIB address; 7 is free on your bus.
 bash install.sh
 nano ~/.config/gridlink/config.toml        # port, address, model, your bus
 echo 'sk-ant-...' > ~/.config/gridlink/api_key; chmod 600 ~/.config/gridlink/api_key   # chat only
+cd ~/gridlink                              # where install.sh put gridlink and its venv
 venv/bin/python -m gridlink --console      # chat in the terminal, no GRiD needed
 sudo systemctl enable --now gridlink        # then leave it running
 ```
@@ -247,17 +298,21 @@ The API key (chat only) comes from the Claude Console
 (console.anthropic.com); usage is billed per token. `/cost` shows the
 session's running total. Term needs no key (see above).
 
-CLAUDE 1.15 and resident Claude's console 1.13 need gridlink from
-2026-10-22 on: they check frames only with the Fletcher sum.
-With an older gridlink the GRiD keeps resetting the link, saying "No
-answer from the bridge at GPIB address 7".
+#### Which gridlink a GRiD program needs
 
-CLAUDE 1.16 in a Lodestone terminal window (CODE-A with multitasking on)
-tells gridlink how many rows the window shows, and gridlink makes Claude
-Code's terminal that tall (PROTOCOL.md, EVENT 08h): Claude Code 2.1 pins
-its prompt box to the foot and its logo to the top, and a window showing
-19 of 24 rows lost the logo. An older gridlink keeps 24 rows, as before.
-The same goes for `CLAUDE /W` in a window: gridfox lays out for the pty's
+gridlink's version is the date it was released: `~/gridlink/venv/bin/python
+-m gridlink --version` prints it, and it is the first line gridlink logs. The
+GRiD program's version is in its banner and its HELLO (`grid=CLAUDE 1.18`).
+
+| On the GRiD | gridlink | Bridge firmware | With older ones |
+|---|---|---|---|
+| Resident Claude's console 1.10 on: files and GPIB in the background once the user is back in the program (1.11: `grid_program` there too) | 2026-10-24 on (bit 3) | Pico 2, 2026-10-24 on (quiet) | the tools say the user has gone back, until the console is up again |
+| CLAUDE 1.14, the screen saver inside CLAUDE full screen (EVENT 07h) | 2026-10-27 on (bit 4) | Pico 2, 2026-10-22b on (WAKE) | no saver inside CLAUDE |
+| CLAUDE 1.15 on, resident Claude's console 1.13 on (2026-10-29): frames checked only with the Fletcher sum | 2026-10-22 on | any | the GRiD keeps resetting the link, saying "No answer from the bridge at GPIB address 7" |
+| CLAUDE 1.16 in a Lodestone terminal window: it says how many rows the window shows (EVENT 08h), and Claude Code's terminal is made that tall | 2026-11-04 on (its HELLO answer's bit 5) | any | the terminal stays 24 rows, and Claude Code 2.1, which pins its logo to the top and its prompt box to the foot, loses the logo in a window showing 19 |
+| CLAUDE 1.19, console 1.14: the 8th NAK in a row fails the link; requests checked against what they carry (PROTOCOL.md) | as 1.15 and 1.13: nothing new | any | (nothing breaks: gridlink never NAKs every frame or sends such requests) |
+
+`CLAUDE /W` in a window works as Term does: gridfox lays out for the pty's
 rows (the address at the top, the status line at the foot) and follows
 each resize (docs/gridfox.md, "In a Lodestone window").
 
@@ -271,8 +326,7 @@ CLAUDE          chat (CLAUDE /T: Term; CLAUDE /W: Firefox; CLAUDE /A:nn if the b
 ```
 
 It connects, sets the GRiD's clock from the Pi, and shows the welcome.
-It needs gridlink from 2026-10-22 on; with an older one it keeps
-resetting, saying "No answer from the bridge at GPIB address 7".
+Which gridlink it needs: the table under "2. The Pi".
 
 ### Without the GPIB cartridge: the modem or a serial cable
 
@@ -308,8 +362,9 @@ every byte checked.
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
   for the GRiD's 1 s idle POLL. The bridge read USB a byte at a time
-  (106 KB/s; now 510 KB/s). The table CRC cost the 286 about 34 clocks a
-  byte; the Fletcher sum costs 8.5. Since CLAUDE 1.15 (and the console's 1.13,
+  (106 KB/s; now 510 KB/s). By the 286's tables the table CRC cost about 34
+  clocks a byte and the Fletcher sum costs 8.5 (about 1.3 µs a byte measured
+  on the 1520, below). Since CLAUDE 1.15 (and the console's 1.13,
   2026-10-29) the GRiD has no CRC at all, its HELLO too goes with the sum:
   they need gridlink from 2026-10-22 on.
 - **The first call after idle:** CLAUDE POLLs once a second between
@@ -404,7 +459,7 @@ every byte checked.
 
 ## Files
 
-- `gridlink/` - the Pi service (Python 3.9+, `pyserial`, `pyte`, `pillow`; `anthropic` for chat).
+- `gridlink/` - the Pi service (Python 3.11+, for `tomllib` to read the config; `pyserial`, `pyte`, `pillow`; `anthropic` for chat).
   `serline.py`: the serial and modem transports for SERLINK.COM.
   Term: `term.py` (the pty), `termscreen.py` (pyte, the cell diff), `router.py`
   (chat, Term or web), `mcp.py` (the MCP server and its socket). Pictures:
@@ -441,10 +496,13 @@ every byte checked.
 
 ## Status
 
-CLAUDE 1.15 and resident Claude's console 1.13 (2026-10-29: no CRC on the
-GRiD) need gridlink from 2026-10-22 on. An
-older gridlink shows up as CLAUDE resetting the link with "No answer from
-the bridge at GPIB address 7".
+Which gridlink and bridge firmware each CLAUDE and console needs is the
+table under "2. The Pi", and its last column says what an older one
+looks like: only with CLAUDE 1.15 and console 1.13 on does the GRiD keep
+resetting the link ("No answer from the bridge at GPIB address 7"); with
+the others a feature is missing (no saver inside CLAUDE, a 24-row
+terminal in a window, the background tools saying the user has gone
+back).
 
 The emulator suites in `tests/` run the real CLAUDE.COM under an emulated
 DOS 3.30 with the real GRIDGPIB driver, talking through the 7210 and AR488

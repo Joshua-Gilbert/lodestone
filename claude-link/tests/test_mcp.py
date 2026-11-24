@@ -444,6 +444,19 @@ def plot_to_end(h, c, wall=30):
     raise AssertionError('the plot did not finish: %s' % r)
 
 
+def assert_pairs(data, parts):
+    """Each part that ends inside data's one PA/PD list ends just after a
+    y: an even count of numbers in the list so far."""
+    import re
+    data = data.encode(); i = data.index(b'PA') if b'PA' in data else data.index(b'PD')
+    e = data.index(b';', i); at = 0
+    for p in parts[:-1]:
+        at += len(p)
+        if i < at < e:
+            n = len(re.findall(rb'[^,\s;]+', data[i + 2:at]))
+            assert n % 2 == 0 and data[at - 1:at] in b', ', (at, n, data[at - 20:at + 5])
+
+
 def test_plotter():
     h, c = start()
     try:
@@ -453,6 +466,7 @@ def test_plotter():
         r = plot_to_end(h, c)
         assert ': done' in r and '%d of %d bytes' % (len(square), len(square)) in r, r
         assert h.grid.plot_parts == [square.encode()], h.grid.plot_parts
+        assert getattr(h.grid, 'plot_clears', []) == [], h.grid.plot_clears   # the Nano idle at the start: no SDC
         assert not getattr(h.grid, 'plot_overrun', False)
         # no ';' at the end: one is added, so the Nano ends the last command
         h.grid.plot_parts = []
@@ -471,6 +485,45 @@ def test_plotter():
         r = plot_to_end(h, c)
         assert ': done' in r and b''.join(h.grid.plot_parts) == long.encode(), (r, h.grid.plot_parts)
         assert not getattr(h.grid, 'plot_overrun', False), 'sent more than the Nano had room for'
+        # (cut in its list only just after the ',' after a y: never inside a number or an x,y pair)
+        assert h.grid.plot_parts[0].endswith(b',') and len(h.grid.plot_parts[0]) > 200, h.grid.plot_parts
+        assert all(p.endswith((b';', b',')) for p in h.grid.plot_parts), h.grid.plot_parts
+        assert_pairs(long, h.grid.plot_parts)
+        # the same with ", " and " " between the numbers
+        for sep in (', ', ' '):
+            lst = 'IN;PA' + sep.join('%d%s%d' % (i * 37 % 10000, sep, i * 53 % 7000) for i in range(150)) + ';PU;'
+            h.grid.plot_parts = []; h.grid.plot_held = 0
+            c.call('grid_plotter', hpgl=lst)
+            r = plot_to_end(h, c)
+            assert ': done' in r and b''.join(h.grid.plot_parts) == lst.encode(), (r, h.grid.plot_parts)
+            assert len(h.grid.plot_parts) > 2, h.grid.plot_parts
+            assert_pairs(lst, h.grid.plot_parts)
+        # a second mnemonic with no ';' before it: its list counted from its own start ("0PD0," is no number)
+        two = 'IN;PU0,0PD' + ','.join('%d,%d' % (i, 1000 + i) for i in range(200)) + ';PU;'
+        h.grid.plot_parts = []; h.grid.plot_held = 0
+        c.call('grid_plotter', hpgl=two)
+        r = plot_to_end(h, c)
+        assert ': done' in r and b''.join(h.grid.plot_parts) == two.encode(), (r, h.grid.plot_parts)
+        assert len(h.grid.plot_parts) > 2, h.grid.plot_parts
+        assert_pairs(two, h.grid.plot_parts)
+        # ... and one that isn't PA PD PR PU ends the pairing: cut where the room ends
+        oth = 'IN;PA0,0XX' + '12,' * 100 + ';PU;'
+        h.grid.plot_parts = []; h.grid.plot_held = 0
+        c.call('grid_plotter', hpgl=oth)
+        r = plot_to_end(h, c)
+        assert ': done' in r and h.grid.plot_parts[0] == oth.encode()[:240], (r, h.grid.plot_parts)
+        # any other command bigger than the room is cut where the room ends (only PA PD PR PU lists are numbers)
+        lab = 'IN;LB' + 'a,b ' * 100 + '\x03;'
+        h.grid.plot_parts = []; h.grid.plot_held = 0
+        c.call('grid_plotter', hpgl=lab)
+        r = plot_to_end(h, c)
+        assert ': done' in r and b''.join(h.grid.plot_parts) == lab.encode(), (r, h.grid.plot_parts)
+        assert h.grid.plot_parts[0] == lab.encode()[:240], h.grid.plot_parts
+        other = 'IN;XX' + '12,' * 100 + ';PU;'                         # (numbers, but not a PA PD PR PU list)
+        h.grid.plot_parts = []; h.grid.plot_held = 0
+        c.call('grid_plotter', hpgl=other)
+        r = plot_to_end(h, c)
+        assert ': done' in r and h.grid.plot_parts[0] == other.encode()[:240], (r, h.grid.plot_parts)
         h.grid.plot_parts = []; h.grid.plot_held = 0
         r = c.call('grid_plotter', file='big.plt')
         assert not r['isError'], r
@@ -486,26 +539,69 @@ def test_plotter():
         assert not getattr(h.grid, 'plot_overrun', False), 'sent more than the Nano had room for'
         assert sum(1 for op, a, d in h.grid.gpib_log if a == 1 and op == mcp.glp.GP_SPOLL) > len(h.grid.plot_parts)
         # the Nano stops taking bytes part way
-        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_fail_after = 2
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0; h.grid.plot_fail_after = 2
         c.call('grid_plotter', file='big.plt')
         r = plot_to_end(h, c)
         assert ': stopped' in r and 'part of the drawing may be on the paper' in r, r
+        assert h.grid.plot_clears == [2], h.grid.plot_clears         # (cleared as it failed)
         h.grid.plot_fail_after = None
-        # cancel
-        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 1    # a slow pen
+        # cancel: SDC, then the pen up after the whole commands sent
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0; h.grid.plot_drain = 1  # a slow pen
         c.call('grid_plotter', file='big.plt')
         h.run_for(0.5)
         r = body(c.call('grid_plotter', action='cancel'))
+        assert 'cancelled' in r and 'not have stopped' not in r, r
+        parts = h.grid.plot_parts
+        assert len(parts) >= 2 and parts[-1] == b'PU;' and h.grid.plot_clears == [len(parts) - 1],             (parts, h.grid.plot_clears)
+        # cancelled inside one command sent in parts: SDC, no "PU;" (it would end the list early)
+        one = 'PD' + ','.join('%d,%d' % (i, i) for i in range(300)) + ';'
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0
+        c.call('grid_plotter', hpgl=one)
+        end = time.time() + 20
+        while not h.grid.plot_parts:
+            assert time.time() < end; h.run_for(0.2)
+        r = body(c.call('grid_plotter', action='cancel'))
         assert 'cancelled' in r, r
+        parts = h.grid.plot_parts
+        assert len(parts) == 1 and parts[0].endswith(b',') and h.grid.plot_clears == [1], (parts, h.grid.plot_clears)
         h.grid.plot_drain = 60
+        # a clear the GRiD fails is not fatal, but said (a Nano stuck at the start: a label left open)
+        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_clear_fail = True; h.grid.plot_open = True
+        stuck = mcp.PLOT_STUCK; mcp.PLOT_STUCK = 1
+        try:
+            c.call('grid_plotter', hpgl='IN;PU1,2;')
+            end = time.time() + 20
+            while not h.grid.plot_parts:
+                assert time.time() < end; h.run_for(0.2)
+        finally:
+            mcp.PLOT_STUCK = stuck
+        h.grid.plot_open = False                        # (its label ended after all: the plot can finish)
+        r = plot_to_end(h, c)
+        assert ': done' in r and h.grid.plot_parts == [b'IN;PU1,2;'], (r, h.grid.plot_parts)
+        assert 'The Nano was not cleared' in r and 'a label left open may eat the start' in r, r
+        assert any('plot: the Nano was not cleared' in str(l) for l in h.log), h.log
+        h.grid.plot_clear_fail = False
+        # a clear that fails on cancel: said
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0; h.grid.plot_drain = 1
+        c.call('grid_plotter', file='big.plt')
+        end = time.time() + 20
+        while not h.grid.plot_parts:
+            assert time.time() < end; h.run_for(0.2)
+        h.grid.plot_clear_fail = True
+        r = body(c.call('grid_plotter', action='cancel'))
+        assert ': cancelled' in r and 'The plotter may not have stopped cleanly' in r, r
+        assert h.grid.plot_clears == [], h.grid.plot_clears
+        h.grid.plot_clear_fail = False; h.grid.plot_drain = 60
         # cancelled while the pen finishes is "cancelled", not "done"
-        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0      # a pen that never finishes
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0; h.grid.plot_drain = 0  # never finishes
         c.call('grid_plotter', hpgl='IN;PU1,2;')
         end = time.time() + 20
         while 'the pen is finishing' not in body(c.call('grid_plotter', action='status')):
             assert time.time() < end; h.run_for(0.2)
         r = body(c.call('grid_plotter', action='cancel'))
         assert ': cancelled' in r, r
+        # (no clear: what the Nano holds is drawn)
+        assert h.grid.plot_clears == [] and h.grid.plot_parts == [b'IN;PU1,2;'], (h.grid.plot_clears, h.grid.plot_parts)
         h.grid.plot_drain = 60
         # a GRiD that doesn't answer the plot's polls holds the other tools for one short wait, not 31 s
         h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0
@@ -529,6 +625,350 @@ def test_plotter():
         assert '1, 6, 16, 29' in body(r), r
     finally:
         c.close(); h.close()
+
+
+def test_plotter_labels_as_plot_com():
+    """As PLOT.COM: a cut never falls between a label mnemonic's letters
+    (with or without what the Nano drops between them); a cancel clears
+    first, then sends ETX and "PU;" inside a label's text, "PU;" after a
+    whole command, nothing inside a list; a start whose poll asks for
+    service is refused (X78)."""
+    h, c = start()
+    try:
+        def plot(hpgl):
+            h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0
+            r = c.call('grid_plotter', hpgl=hpgl)
+            assert not r['isError'], r
+            r = plot_to_end(h, c)
+            assert ': done' in r and b''.join(h.grid.plot_parts) == hpgl.encode(), (r, h.grid.plot_parts)
+            return h.grid.plot_parts
+        # the room is 240: the mnemonic's letters at 238/241 (CR LF between), 239/240, 237/240 (SO SI
+        # between), 239/242 (SUB BS between)
+        for at, mn in ((238, 'L\r\nB'), (239, 'LB'), (237, 'B\x0e\x0fL'), (239, 'w\x1a\x08d')):
+            head = 'IN;PA' + '1,2,' * 58
+            data = head + ' ' * (at - len(head)) + mn + 'x' * 300 + '\x03;PU;'
+            assert data.find(mn) == at
+            parts = plot(data)
+            assert parts[0] == data[:at].encode(), (mn, parts[0][-12:])
+        # no cut at all inside a mnemonic that the room's end doesn't split
+        parts = plot('IN;SP1;LB' + 'y' * 500 + '\x03;PU;')
+        assert len(parts[0]) == 240, parts
+        # cancels, the pen slow: inside a label's text
+        h.grid.plot_drain = 1
+        def cancel(hpgl):
+            h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0
+            c.call('grid_plotter', hpgl=hpgl)
+            end = time.time() + 20
+            while not h.grid.plot_parts:
+                assert time.time() < end; h.run_for(0.2)
+            r = body(c.call('grid_plotter', action='cancel'))
+            assert ': cancelled' in r and 'not have stopped' not in r, r
+            return h.grid.plot_parts, h.grid.plot_clears
+        for lab in ('LB', 'BL', 'WD', 'L\nB'):
+            parts, clears = cancel('IN;SP1;PA10,20' + lab + 'ab;c' * 200 + '\x03;PU;')
+            assert len(parts) == 2 and parts[1] == b'\x03PU;' and clears == [1], (lab, parts, clears)
+        # after whole commands
+        parts, clears = cancel(''.join('PD%d,%d;' % (i, i) for i in range(200)))
+        assert parts[-1] == b'PU;' and clears == [len(parts) - 1], (parts, clears)
+        # inside a list: the clear alone
+        parts, clears = cancel('PD' + ','.join('%d,%d' % (i, i) for i in range(300)) + ';')
+        assert len(parts) == 1 and clears == [1], (parts, clears)
+        h.grid.plot_drain = 60
+        # a poll at the start that asks for service (RQS): not the Nano: refused at once, an error, no plot
+        # started, nothing sent, no clear
+        h.grid.plot_rqs = True
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0
+        r = c.call('grid_plotter', hpgl='IN;PU1,2;')
+        h.run_for(0.5)
+        h.grid.plot_rqs = False
+        assert r['isError'] and body(r) == 'GPIB 1 asks for service: it is not the Nano. Nothing was sent.', r
+        st = body(c.call('grid_plotter', action='status'))
+        assert 'asks for service' not in st and ': cancelled' in st, st     # (status: still the last plot's)
+        assert h.grid.plot_clears == [] and h.grid.plot_parts == [], (r, h.grid.plot_clears)
+    finally:
+        c.close(); h.close()
+
+
+def test_plotter_start_and_failures():
+    """The start (X78): a Nano still drawing what an earlier plot left it is waited for, not
+    cleared (a clear would drop what it holds); one that gets nowhere for PLOT_STUCK s (a label left open:
+    not idle, its buffer empty) is cleared; a cancel meanwhile clears nothing.  A plot that fails (a write,
+    a Nano with no room for PLOT_STALL s) clears the Nano, so its parser is clean for the next.  And the
+    other session's fuzzed cases: a cancel inside a label that holds a ';', and a label straight after a
+    list that fills the room."""
+    h, c = start()
+    stuck, stall = mcp.PLOT_STUCK, mcp.PLOT_STALL
+    mcp.PLOT_STUCK = 1.5
+    def until_parts(k):
+        end = time.time() + 20
+        while len(h.grid.plot_parts) < k:
+            assert time.time() < end, h.grid.plot_parts
+            h.run_for(0.2)
+    def fresh(**kw):
+        h.grid.plot_parts = []; h.grid.plot_clears = []; h.grid.plot_held = 0; h.grid.plot_drain = 60
+        h.grid.plot_open = False; h.grid.plot_frozen_until = 0; h.grid.plot_empty = False; h.grid.plot_poll_fail = 0
+        for k, v in kw.items(): setattr(h.grid, k, v)
+    try:
+        # draining: 75 bytes held, 25 drawn a poll (its status changes each time): waited for, then
+        # plotted, no clear
+        fresh(plot_held=100, plot_drain=25)
+        r = c.call('grid_plotter', hpgl='IN;PU1,2;')
+        assert not r['isError'] and 'The Nano is still busy (status ' in body(r) and \
+            'the plot first waits for it to finish the last drawing.' in body(r), r
+        end = time.time() + 5
+        while 'waiting for the Nano to finish the last drawing' not in body(c.call('grid_plotter', action='status')):
+            assert time.time() < end, 'not waiting'; time.sleep(0.05)
+        r = plot_to_end(h, c)
+        assert ': done' in r and 'Waited for the Nano to finish the last drawing' in r, r
+        assert h.grid.plot_clears == [] and h.grid.plot_parts == [b'IN;PU1,2;'], (h.grid.plot_clears, r)
+        # stuck (a label left open): its status unchanged for PLOT_STUCK s, then cleared and plotted
+        fresh(plot_open=True)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        r = plot_to_end(h, c)
+        assert ': done' in r and 'The Nano was stuck (its status 3Ch, its buffer empty but not idle, unchanged ' \
+            'for 1 s' in r, r
+        assert 'a label left open?): cleared.' in r, r
+        assert h.grid.plot_clears == [0] and h.grid.plot_parts == [b'IN;PU1,2;'], (h.grid.plot_clears, r)
+        assert any('status stayed 3Ch' in str(l) for l in h.log), h.log
+        # cancelled while it waits: nothing sent, nothing cleared (what the Nano holds is the last drawing's)
+        mcp.PLOT_STUCK = 60
+        fresh(plot_held=200, plot_drain=0)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        h.run_for(0.5)
+        r = body(c.call('grid_plotter', action='cancel'))
+        assert ': cancelled' in r and h.grid.plot_clears == [] and h.grid.plot_parts == [], (r, h.grid.plot_clears)
+        # busy, its buffer frozen (not 3Ch) past PLOT_STUCK, then drawing again: waited for, never cleared
+        mcp.PLOT_STUCK, mcp.PLOT_STALL = 1.5, 6
+        fresh(plot_held=100, plot_drain=25, plot_frozen_until=time.time() + 3.5)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        r = plot_to_end(h, c)
+        assert ': done' in r and 'Waited for the Nano' in r and h.grid.plot_clears == [], (r, h.grid.plot_clears)
+        h.grid.plot_frozen_until = 0
+        mcp.PLOT_STALL = 1.5
+        # ... frozen for good: failed after PLOT_STALL, nothing sent, not cleared
+        fresh(plot_held=100, plot_drain=0)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        r = plot_to_end(h, c)
+        assert ': stopped' in r and 'its status 23h unchanged' in r and 'Nothing was sent; it was not cleared' in r, r
+        assert h.grid.plot_clears == [] and h.grid.plot_parts == [], (r, h.grid.plot_clears)
+        assert any('plot: stopped after 0 of 9 bytes: The Nano stayed busy' in str(l) for l in h.log), h.log
+        # 00h all along (full, or not the Nano): the address asked about, not cleared
+        fresh(plot_held=240, plot_drain=0)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        r = plot_to_end(h, c)
+        assert ': stopped' in r and 'GPIB 1 polled 00h, unchanged' in r and '[plotter] address' in r, r
+        assert h.grid.plot_clears == [] and h.grid.plot_parts == [], (r, h.grid.plot_clears)
+        # RQS while it waits: refused, nothing sent, not cleared
+        mcp.PLOT_STALL = 60
+        fresh(plot_held=200, plot_drain=0)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        h.run_for(0.5); h.grid.plot_rqs = True
+        r = plot_to_end(h, c)
+        h.grid.plot_rqs = False
+        assert ': stopped' in r and 'asks for service: it is not the Nano' in r, r
+        assert h.grid.plot_clears == [] and h.grid.plot_parts == [], (r, h.grid.plot_clears)
+        # empty polls while it waits count as no answer: failed after PLOT_STALL, not cleared
+        mcp.PLOT_STALL = 1.5
+        fresh(plot_held=200, plot_drain=0)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        h.run_for(0.3); h.grid.plot_empty = True
+        r = plot_to_end(h, c)
+        h.grid.plot_empty = False
+        assert ': stopped' in r and 'serial polls came back empty' in r and h.grid.plot_clears == [], r
+        # a label left open, every other poll failing: still cleared after PLOT_STUCK, then plotted
+        mcp.PLOT_STALL = 60
+        fresh(plot_open=True, plot_poll_fail=2)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        r = plot_to_end(h, c)
+        h.grid.plot_poll_fail = 0
+        assert ': done' in r and 'The Nano was stuck' in r and h.grid.plot_clears == [0], (r, h.grid.plot_clears)
+        # the GRiD stops answering while it waits: no clear; failed after PLOT_STALL s
+        mcp.PLOT_STALL = 1.5
+        fresh(plot_held=200, plot_drain=0)
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        h.grid.plot_mute = True
+        r = plot_to_end(h, c)
+        h.grid.plot_mute = False
+        assert ': stopped' in r and 'The GRiD stopped answering' in r and h.grid.plot_clears == [], (r, h.grid.plot_clears)
+        mcp.PLOT_STUCK = 1.5
+        # ... and while it sends: no clear either
+        fresh(plot_drain=0)
+        c.call('grid_plotter', hpgl=''.join('PD%d,%d;' % (i, i) for i in range(100)))
+        until_parts(1)
+        h.grid.plot_mute = True
+        r = plot_to_end(h, c)
+        h.grid.plot_mute = False
+        assert ': stopped' in r and 'The GRiD stopped answering' in r and h.grid.plot_clears == [], (r, h.grid.plot_clears)
+        mcp.PLOT_STALL = stall
+        # a stall (no room for PLOT_STALL s): cleared as it fails
+        mcp.PLOT_STALL = 1.5
+        fresh(plot_drain=0)
+        c.call('grid_plotter', hpgl=''.join('PD%d,%d;' % (i, i) for i in range(100)))
+        r = plot_to_end(h, c)
+        assert ': stopped' in r and 'no room' in r, r
+        assert h.grid.plot_clears == [len(h.grid.plot_parts)] and h.grid.plot_parts, (h.grid.plot_clears, r)
+        mcp.PLOT_STALL = stall
+        # a cancel inside a label that holds a ';', after the first write and after the second: the clear,
+        # then ETX and "PU;"; then a plot with no label goes as ever
+        lab = 'IN;PU0,0;LB' + 'a' * 300 + ';' + 'b' * 300 + '\x03;PU;PA10,10;'
+        for k in (1, 2):
+            fresh(plot_drain=0)                         # (the pen still: no room after each part)
+            c.call('grid_plotter', hpgl=lab)
+            until_parts(1)
+            if k == 2:
+                h.grid.plot_held = 0; until_parts(2)    # (room for one more part)
+            r = body(c.call('grid_plotter', action='cancel'))
+            parts = h.grid.plot_parts
+            assert ': cancelled' in r and 'not have stopped' not in r, r
+            assert len(parts) == k + 1 and parts[-1] == b'\x03PU;' and h.grid.plot_clears == [k], (k, parts)
+            assert b''.join(parts[:k]) == lab.encode()[:240 * k], (k, parts)
+            fresh()
+            c.call('grid_plotter', hpgl='IN;PU1,2;PD3,4;PU;')
+            r = plot_to_end(h, c)
+            assert ': done' in r and h.grid.plot_parts == [b'IN;PU1,2;PD3,4;PU;'] and h.grid.plot_clears == [], r
+        # the pen-up can't be sent after a cut inside a label: said, with what an older Nano does next
+        fresh(plot_drain=0)
+        c.call('grid_plotter', hpgl=lab)
+        until_parts(1)
+        h.grid.plot_fail_after = 1
+        r = body(c.call('grid_plotter', action='cancel'))
+        h.grid.plot_fail_after = None
+        assert ': cancelled' in r and 'may not have stopped cleanly' in r and h.grid.plot_clears == [1], r
+        assert 'still inside the label and will take the next drawing as its text: switch it off and on' in r, r
+        # a 239-byte PA list, then a label at once: no part ends between its L and B
+        lst = 'PA' + '1,2,' * 59 + '1'
+        assert len(lst) == 239
+        data = lst + 'LBab;cd\x03;PU;'
+        fresh()
+        c.call('grid_plotter', hpgl=data)
+        r = plot_to_end(h, c)
+        parts = h.grid.plot_parts
+        assert ': done' in r and b''.join(parts) == data.encode() and parts[0] == lst.encode(), (r, parts)
+        at = 0
+        for p in parts[:-1]:
+            at += len(p); assert at != 240, parts
+    finally:
+        mcp.PLOT_STUCK, mcp.PLOT_STALL = stuck, stall
+        c.close(); h.close()
+
+
+def test_plotter_start_on_a_clock():
+    """settle()'s limits as they ship (PLOT_STUCK 60 s, PLOT_STALL 200 s), on a clock of the test's own: a
+    poll script by the time, a GridError for a failed poll, the clears recorded."""
+    class Tools:
+        def __init__(t): t.lines = []
+        def log(t, m): t.lines.append(m)
+    def job(first, at, data=b'IN;PU1,2;', clear_fails=None):
+        """at(t, j) -> a status byte, None (an empty poll), or an exception to raise"""
+        j = mcp.PlotJob(Tools(), 1, data, 1000, first=first)
+        now = [0.0]; j.clears = []; j.writes_ = []
+        def sleep(d):
+            now[0] += d
+            assert now[0] < 10000, 'never ends'
+        def poll():
+            j.polls += 1; got = at(now[0], j)
+            if isinstance(got, Exception): raise got
+            return got
+        def clear(cancellable=False):
+            j.clears.append(now[0]); return clear_fails
+        def gpib(op, data=b'', flags=0, cancellable=False):
+            j.writes_.append(bytes(data)); return b''
+        j.clock, j.sleep, j.poll, j.clear, j.gpib = (lambda: now[0]), sleep, poll, clear, gpib
+        j.now = now
+        return j
+    assert mcp.PLOT_STUCK == 60 and mcp.PLOT_STALL == 200
+    E = mcp.GridError('busy')
+    # a frozen buffer (not 3Ch): no clear before PLOT_STALL, then failed, nothing sent, not cleared
+    j = job(0x23, lambda t, j: 0x23)
+    assert not j.settle() and j.state == 'failed' and j.clears == [], (j.state, j.clears)
+    assert 200 <= j.now[0] <= 202 and 'stayed busy for 200 s, its status 23h unchanged' in j.error, (j.now, j.error)
+    assert any('plot: stopped after 0 of 9 bytes' in l for l in j.tools.lines), j.tools.lines
+    # ... frozen for 190 s, then drawing again and idle: waited for, not cleared
+    j = job(0x23, lambda t, j: 0x23 if t < 190 else 0x30 if t < 195 else 0x80 | 0x3C)
+    assert j.settle() and j.state == 'sending' and j.clears == [] and 'Waited' in j.note, (j.state, j.clears)
+    # 3Ch unchanged: cleared at PLOT_STUCK, not before
+    j = job(0x3C, lambda t, j: 0x3C)
+    assert j.settle() and len(j.clears) == 1 and 60 <= j.clears[0] <= 62, j.clears
+    assert 'its status 3Ch, its buffer empty but not idle, unchanged for 60 s' in j.note, j.note
+    # ... reached after a change: counted from the change
+    j = job(0x10, lambda t, j: 0x10 if t < 30 else 0x3C)
+    assert j.settle() and len(j.clears) == 1 and 90 <= j.clears[0] <= 92, j.clears
+    # 00h all along: the address asked about, not cleared
+    j = job(0x00, lambda t, j: 0x00)
+    assert not j.settle() and j.clears == [] and 'GPIB 1 polled 00h, unchanged, for 200 s' in j.error, j.error
+    # ... 00h after a change: the busy Nano's message
+    j = job(0x08, lambda t, j: 0x08 if t < 10 else 0x00)
+    assert not j.settle() and j.clears == [] and 'its status 00h unchanged' in j.error, j.error
+    # RQS at the start: refused, no poll, no clear; and during the wait
+    j = job(0x40 | 0x3C, lambda t, j: 0x3C)
+    assert not j.settle() and j.state == 'failed' and j.polls == 0 and j.clears == [], (j.state, j.polls)
+    assert j.error == 'GPIB 1 asks for service: it is not the Nano. Nothing was sent.', j.error
+    j = job(0x23, lambda t, j: 0x23 if t < 5 else 0x40 | 0x23)
+    assert not j.settle() and j.clears == [] and 'asks for service' in j.error and j.now[0] < 7, (j.now, j.error)
+    # poll errors mixed with unchanged answers: the busy stall (not "stopped answering"), not cleared
+    j = job(0x23, lambda t, j: E if j.polls % 2 else 0x23)
+    assert not j.settle() and j.clears == [] and 'stayed busy' in j.error and j.now[0] <= 202, (j.now, j.error)
+    # ... with 3Ch: cleared at PLOT_STUCK as ever
+    j = job(0x3C, lambda t, j: E if j.polls % 2 else 0x3C)
+    assert j.settle() and len(j.clears) == 1 and j.clears[0] <= 62, j.clears
+    # errors only: the GRiD stopped answering, after PLOT_STALL
+    j = job(0x23, lambda t, j: E)
+    assert not j.settle() and j.clears == [] and 'The GRiD stopped answering: busy.' in j.error, j.error
+    assert 200 <= j.now[0] <= 202, j.now
+    # empty polls count as no answer, alone and mixed with errors
+    j = job(0x23, lambda t, j: None)
+    assert not j.settle() and j.clears == [] and 'came back empty for 200 s' in j.error and j.now[0] <= 202, j.now
+    j = job(0x23, lambda t, j: E if j.polls % 2 else None)
+    assert not j.settle() and j.clears == [] and j.now[0] <= 202, (j.now, j.error)
+    # a cancel during the poll that would have cleared (3Ch at PLOT_STUCK): nothing cleared, nothing sent;
+    # run() sends nothing after it either (no halt: no clear, no "PU;")
+    def cancel_at_60(t, j):
+        if t >= 60: j.cancel = True
+        return 0x3C
+    j = job(0x3C, cancel_at_60)
+    j.run()
+    assert j.state == 'cancelled' and j.clears == [] and j.writes_ == [] and j.sent == 0, (j.state, j.clears)
+    # a cancel that comes while the stuck clear waits for the tools' lock (another tool call holds it): the
+    # clear is not sent, and run() sends nothing after it
+    class CancelOnLock:
+        def __init__(t, j): t.j = j; t.lk = threading.Lock()
+        def __enter__(t): t.j.cancel = True; t.lk.acquire()
+        def __exit__(t, *e): t.lk.release()
+    class G:
+        def __init__(t): t.ops = []
+        def gpib(t, op, *a, **k): t.ops.append(op); return b''
+    j = job(0x3C, lambda t, j: 0x3C)
+    del j.clear, j.gpib                     # (the job's own: the lock, then the GRiD)
+    j.tools.lock = CancelOnLock(j); j.tools.G = G()
+    j.tools.available = lambda tool: None; j.tools.away = lambda: False
+    j.run()
+    assert j.state == 'cancelled' and j.tools.G.ops == [] and j.sent == 0, (j.state, j.tools.G.ops, j.error)
+    # ... and a cancel already set when settle() hands over (an idle Nano: no poll, no look): no halt, so
+    # no clear and no "PU;"; said as nothing sent
+    j = job(0x80 | 0x3C, lambda t, j: 0x3C)
+    j.cancel = True
+    j.run()
+    assert j.state == 'cancelled' and j.clears == [] and j.writes_ == [] and j.sent == 0, (j.state, j.clears)
+    assert j.error == 'Nothing was sent.' and ': cancelled. 0 of 9 bytes sent' in j.report(), j.report()
+    # failed() keeps the start's note: the stuck clear failed, then a write fails
+    def write_fails(op, data=b'', flags=0): raise mcp.GridError('no listener')
+    j = job(0x3C, lambda t, j: 0x3C, clear_fails='timeout')
+    j.gpib = write_fails
+    j.run()
+    assert j.state == 'failed' and j.error.startswith('The Nano was not cleared: timeout;'), j.error
+    assert 'A write failed (no listener)' in j.error, j.error
+    assert any('stopped after 0 of 9 bytes: A write failed' in l and '(the clear failed: timeout)' in l
+               for l in j.tools.lines), j.tools.lines
+    # a bug inside run(): failed and logged, never left 'sending'
+    j = job(0x80 | 0x3C, lambda t, j: ValueError('a bug'))
+    j.run()
+    assert j.state == 'failed' and "gridlink's plot failed (ValueError: a bug); nothing was sent." in j.error, j.error
+    assert any('Traceback' in l for l in j.tools.lines), j.tools.lines
+    # a cancel's outcome is logged
+    j = job(0x80 | 0x3C, lambda t, j: 0x3C)
+    j.sent = 3; j.ends = [3, 9]
+    j.halt()
+    assert any("plot: cancelled after 3 of 9 bytes: cleared; b'PU;' sent" in l for l in j.tools.lines), j.tools.lines
 
 
 def test_hpgl_ends():

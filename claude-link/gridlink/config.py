@@ -26,6 +26,17 @@ PRICES = {'claude-fable-5-1': (10, 50), 'claude-opus-5-5': (4, 20), 'claude-sonn
 CACHE_READ = {'claude-fable-5-1': 0.025, 'claude-opus-5-5': 0.05}
 
 
+GPIB_ADDR = (0, 30)
+BAUDS = (50, 4000000)
+
+
+def int_in(name, v, lo, hi, exclude=(), what=None):
+    """v, if it is a whole number from lo to hi (not a bool, nor one of `exclude`); else SystemExit naming the
+    setting (`name`: '[section] key' or '--option'), so a bad value says where it is, not a traceback."""
+    if isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi and v not in exclude: return v
+    raise SystemExit('%s must be %s, not %r' % (name, what or 'a whole number from %d to %d' % (lo, hi), v))
+
+
 class Config:
     def __init__(s):
         s.bridge = 'pico'                   # pico (the GPIB-Pico2 bridge) or ar488 (the Nano)
@@ -54,6 +65,7 @@ class Config:
         s.web_command = '%s -m gridfox' % shlex.quote(sys.executable)
         s.web_dir = os.path.expanduser('~/.cache/gridfox')   # where it runs (not ~/grid)
         s.source = None
+        s.warnings = []                         # what main() logs at the start (a key file not there...)
 
     def load(s, path=None):
         cands = [path] if path else PATHS
@@ -72,15 +84,36 @@ class Config:
         if s.bridge not in ('pico', 'ar488', 'serial', 'modem'):
             raise SystemExit('[bridge] kind must be pico, ar488, serial or modem, not %r' % b.get('kind'))
         s.baud_set = 'baud' in b
-        s.port = b.get('port', s.port); s.baud = int(b.get('baud', s.baud)); s.address = int(b.get('address', s.address))
+        s.port = b.get('port', s.port)
+        s.baud = int_in('[bridge] baud', b.get('baud', s.baud), *BAUDS)
+        s.address = int_in('[bridge] address', b.get('address', s.address), *GPIB_ADDR, exclude=(21,),
+                           what='a GPIB address (0-30), not 21 (the GRiD)')
         s.model = MODELS.get(c.get('model', ''), c.get('model', s.model))
-        s.max_tokens = int(c.get('max_tokens', s.max_tokens)); s.web = bool(c.get('web', s.web))
-        s.compact_at = int(c.get('compact_at', s.compact_at))
+        s.max_tokens = int_in('[claude] max_tokens', c.get('max_tokens', s.max_tokens), 1, 1000000)
+        s.web = bool(c.get('web', s.web))
+        s.compact_at = int_in('[claude] compact_at', c.get('compact_at', s.compact_at), 1000, 100000000)
         s.extra_prompt = c.get('extra_prompt', s.extra_prompt)
         key = c.get('api_key'); keyfile = c.get('api_key_file')
         if key: s.api_key = key
-        elif keyfile and os.path.exists(os.path.expanduser(keyfile)):
-            s.api_key = open(os.path.expanduser(keyfile)).read().strip()
+        elif keyfile:
+            # A key file that isn't there, or can't be read, is said at the start, not an exit: the shipped
+            # config names one, and an install for Term alone never makes it (an exit would crash-loop it).
+            # Chat is off then only if ANTHROPIC_API_KEY isn't set either: main() says so
+            p = os.path.expanduser(keyfile)
+            if not os.path.exists(p):
+                s.warnings.append('[claude] api_key_file %s is not there (chat needs it or ANTHROPIC_API_KEY; '
+                                  'Term needs no key)' % p)
+            else:
+                try:
+                    mode = os.stat(p).st_mode
+                    s.api_key = open(p).read().strip()
+                except OSError as e:                # (one the service user can't read, say)
+                    s.warnings.append('[claude] api_key_file %s cannot be read (%s): chat needs it or '
+                                      'ANTHROPIC_API_KEY' % (p, e.strerror or e))
+                else:
+                    if mode & 0o077:
+                        s.warnings.append('[claude] api_key_file %s can be read by others (mode %03o): chmod '
+                                          '600 it' % (p, mode & 0o777))
         s.set_clock = bool(g.get('set_clock', s.set_clock)); s.user = g.get('user', s.user)
         s.app = str(g.get('app', s.app)).lower()
         t = d.get('term', {})
@@ -93,14 +126,13 @@ class Config:
         if 'dir' in w: s.web_dir = os.path.expanduser(w['dir'])
         for k in ('workdir', 'memory_dir', 'sessions_dir'):
             if k in g: setattr(s, k, os.path.expanduser(g[k]))
-        s.bash_timeout = int(g.get('bash_timeout', s.bash_timeout))
+        s.bash_timeout = int_in('[grid] bash_timeout', g.get('bash_timeout', s.bash_timeout), 1, 86400)
         s.mode = pm.get('mode', s.mode)
         if 'measure' in pm:
             m = pm['measure']
-            if not isinstance(m, list) or not all(isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= 30
-                                                  for a in m):
-                raise SystemExit('[permissions] measure must be a list of GPIB addresses (0-30)')
-            s.measure = sorted(set(m))
+            what = 'a list of GPIB addresses (0-30)'
+            if not isinstance(m, list): raise SystemExit('[permissions] measure must be %s, not %r' % (what, m))
+            s.measure = sorted(set(int_in('[permissions] measure', a, *GPIB_ADDR, what=what) for a in m))
         if 'auto_mode' in pm:
             m = pm['auto_mode']; ok = ('gpib_send', 'grid_command', 'grid_change_files', 'grid_type', 'grid_plotter')
             if not isinstance(m, list) or not all(x in ok for x in m):
@@ -109,11 +141,8 @@ class Config:
         if 'bus' in d:
             s.bus = {int(k): str(v) for k, v in d['bus'].items()}
         if 'address' in d.get('plotter', {}):
-            a = d['plotter']['address']
-            if not isinstance(a, int) or isinstance(a, bool) or not 0 <= a <= 30 or a in (21, s.address):
-                raise SystemExit('[plotter] address must be a GPIB address (0-30), not 21 (the GRiD) or '
-                                 'the bridge\'s (%d)' % s.address)
-            s.plotter = a
+            s.plotter = int_in('[plotter] address', d['plotter']['address'], *GPIB_ADDR, exclude=(21, s.address),
+                               what='a GPIB address (0-30), not 21 (the GRiD) or the bridge\'s (%d)' % s.address)
 
     def env_key(s):
         return bool(os.environ.get('ANTHROPIC_API_KEY'))

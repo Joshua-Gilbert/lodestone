@@ -8,12 +8,12 @@ The GRiD picks chat (CLAUDE, gridlink's own agent on an API key) or Term
 (CLAUDE /T: the real Claude Code on this Pi, on your Claude subscription).
 """
 import argparse, collections, logging, os, signal, sys, threading, time
-from . import glp
-from .config import Config, MODELS
-from .link import AR488Serial, Link, serve
+from . import glp, __version__
+from .config import BAUDS, GPIB_ADDR, Config, MODELS, int_in
+from .link import AR488Serial, DebugTrace, serve
 from .pico import PicoBridge
 from .serline import SerialLink, ModemLink
-from .router import Router
+from .router import build_link
 
 GLYPHS = glp.GLYPH_TEXT
 
@@ -105,12 +105,15 @@ def main(argv=None):
     ap.add_argument('--term-command', help='Term: the program to run (default: claude)')
     ap.add_argument('--save-bridge', action='store_true', help='store bridge settings in its EEPROM')
     ap.add_argument('-v', '--verbose', action='store_true')
+    ap.add_argument('--version', action='version', version='gridlink ' + __version__)
     a = ap.parse_args(argv)
 
     cfg = Config().load(a.config)
     if a.port: cfg.port = a.port
-    if a.baud: cfg.baud = a.baud
-    if a.address: cfg.address = a.address
+    if a.baud is not None: cfg.baud = int_in('--baud', a.baud, *BAUDS)    # (0 was taken for "not given")
+    if a.address is not None:
+        cfg.address = int_in('--address', a.address, *GPIB_ADDR, exclude=(21,),
+                             what='a GPIB address (0-30), not 21 (the GRiD)')
     if a.bridge: cfg.bridge = a.bridge
     if a.model: cfg.model = MODELS.get(a.model, a.model)
     if a.mode: cfg.mode = a.mode
@@ -120,6 +123,8 @@ def main(argv=None):
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format='%(asctime)s %(message)s', datefmt='%H:%M:%S')
     log = logging.getLogger('gridlink').info
+    log('gridlink %s' % __version__)
+    for w in cfg.warnings: log(w)
 
     key = cfg.api_key or os.environ.get('ANTHROPIC_API_KEY')
 
@@ -135,28 +140,25 @@ def main(argv=None):
 
     if cfg.bridge == 'serial':              # a null-modem cable to the GRiD's COM2 (SERLINK /P:2)
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
-        baud = a.baud or (cfg.baud if cfg.baud_set else 19200)
+        baud = a.baud if a.baud is not None else (cfg.baud if cfg.baud_set else 19200)
         t = SerialLink(port, baud, log=log)
-        log('opening %s at %d baud' % (port, baud))
+        how = 'a serial line on %s at %d baud' % (port, baud)
     elif cfg.bridge == 'modem':             # a USB modem the GRiD dials (SERLINK /D:)
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyACM0'
-        t = ModemLink(port, a.baud or (cfg.baud if cfg.baud_set else 115200), log=log)
-        log('opening the modem on %s' % port)
+        t = ModemLink(port, a.baud if a.baud is not None else (cfg.baud if cfg.baud_set else 115200), log=log)
+        how = 'a modem on %s' % port
     elif cfg.bridge == 'ar488':
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
         t = AR488Serial(port, cfg.baud, cfg.address, log=log)
-        log('opening %s at %d baud' % (port, cfg.baud))
+        how = 'the AR488 Nano on %s at %d baud' % (port, cfg.baud)
     else:
         t = PicoBridge(cfg.port, cfg.address, log=log)
-        log('looking for the GPIB-Pico2 bridge (%s)' % cfg.port)
+        how = 'the GPIB-Pico2 bridge on %s' % ('any Pico port' if cfg.port in ('auto', 'pico') else cfg.port)
+    log('bridge = %s: %s (%s)' % (cfg.bridge, how, cfg.source or 'no config file: the defaults'))
     t.open()
     t.configure()
     if a.save_bridge:
         t.save(); log('bridge settings saved in its EEPROM')
-    R = Router(cfg, log=log)
-    link = Link(t, R.on_message, log=log)
-    R.attach(link)
-
     def make_agent(port):
         if not key: return None
         from .agent import Session
@@ -164,7 +166,10 @@ def main(argv=None):
         S.attach(port)
         threading.Thread(target=S.run, daemon=True, name='agent').start()
         return S
-    R.make_agent = make_agent
+    R, link = build_link(cfg, t, make_agent, log)
+    if a.verbose:                       # every frame, ring and bridge event as a debug line
+        link.trace = link.trace_sink = DebugTrace(logging.getLogger('gridlink').debug)
+        if getattr(t, 'proto', None) is not None: t.proto.trace = link.trace
     if key:             # import it now: in the link thread it could outlast the GRiD's wait
         threading.Thread(target=lambda: __import__('anthropic'), daemon=True).start()
     stop = threading.Event()

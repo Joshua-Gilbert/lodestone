@@ -66,6 +66,7 @@ class Router:
         s.link = None
         s.term = term; s.agent = None; s.active = None; s.app = None
         s.web = None                       # gridfox's own pty session, kept apart from Claude Code's
+        s.dropped = False                  # a message dropped for want of an app has been logged
 
     def attach(s, link):
         s.link = link
@@ -90,6 +91,10 @@ class Router:
             s.switch(s.choose(body))
         if s.active is not None:
             s.active.on_message(t, body)
+        elif t != glp.G_POLL and not s.dropped:
+            s.dropped = True                    # (once: Link answers nothing before a HELLO, so not expected)
+            s.log('gridlink: a %s from the GRiD before any app was chosen: dropped'
+                  % glp.NAMES.get(t, '%02Xh message' % t))
 
     def switch(s, app):
         if app == s.app: return
@@ -106,7 +111,7 @@ class Router:
             s.term.attach(s.link)
             s.active = s.term
         else:
-            s.link.hold = Link.HOLD
+            s.link.hold = getattr(s.link, 'base_hold', Link.HOLD)
             if s.agent is None:
                 gate = Gate(s.link, lambda: s.active is s.agent)
                 why = None
@@ -129,3 +134,13 @@ class Router:
             with app.ask_cv: app.ask_cv.notify_all()
         g = getattr(app, 'grid', None)
         if g is not None: g.on_restart()
+
+
+def build_link(cfg, transport, make_agent, log, hold=Link.HOLD):
+    """gridlink's Pi end on a transport, as main() runs it: the Router, the Link that feeds it, and the agent
+    maker for chat ((link) -> attached Session, or None).  -> (router, link).  (The emulator tests wire theirs
+    with this too, so a restarted gridlink in a test is the one a restart on the Pi makes.)"""
+    R = Router(cfg, log=log, make_agent=make_agent)
+    link = Link(transport, R.on_message, log=log, hold=hold)
+    R.attach(link)
+    return R, link

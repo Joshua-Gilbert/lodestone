@@ -8,7 +8,7 @@ ModemCall   the GRiD's internal modem and the Pi's USB modem, through the HT802:
             (the GRiD's echoes till ATE0), ATDT rings the Pi's modem, which answers by itself (ATS0=1), CONNECT
             2400 on both; then the bytes at 2400 baud; DTR down on either end hangs up (NO CARRIER, DCD down).
 Times are the emulator's microseconds (Machine.us)."""
-import collections
+import collections, time
 
 
 def ctime(baud):
@@ -94,6 +94,9 @@ class PiPort:
         s.on_write = None; s.on_dtr = None
         s.cd = True; s._dtr = True; s.rts = True
         s.written = bytearray()
+        # a port that fails (gridlink's reopening, test_transports): the next read, or write, raises this once;
+        # a closed port raises as pyserial's does; timeout: a read with nothing waits this long (wall time)
+        s.fail = None; s.fail_write = None; s.closed = False; s.timeout = 0
 
     def arrive(s, b, t):
         s.inq.append((t, b)); s.schedule(t)
@@ -105,17 +108,29 @@ class PiPort:
             n += 1
         return n
 
+    def _check(s, what):
+        e = getattr(s, what)
+        if e is not None:
+            setattr(s, what, None); raise e
+        if s.closed: raise OSError(9, 'Attempting to use a port that is not open')
+
     @property
     def in_waiting(s): return s._ready()
 
     def read(s, n=1):
+        s._check('fail')
         k = min(n, s._ready())
+        if not k and s.timeout: time.sleep(s.timeout)
         return bytes(s.inq.popleft()[1] for _ in range(k))
 
     def write(s, data):
+        s._check('fail_write')
         s.written += data
         if s.on_write: s.on_write(bytes(data))
         return len(data)
+
+    def close(s):
+        s.closed = True
 
     def reset_input_buffer(s):
         k = s._ready()

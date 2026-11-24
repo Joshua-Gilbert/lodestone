@@ -64,6 +64,9 @@ class Grid:
         s.after_run = None                     # called when a RUN ends (Term: a picture is gone)
         s.typing = 0                           # TYPEs waiting: resident Claude's console is down meanwhile
         s.n_replies = 0                        # REPLYs from the GRiD, counted
+        s.late = 0                             # and those for a call that had ended
+        s.since = {}                           # id -> when its call began
+        s.note_for = None; s.note_at = 60.0    # _note_waiting: the oldest call, and its age when it speaks next
         s.type_out = False                     # one given up on (timed out): the console may be down still,
                                                #  until we hear from it (a REPLY: TYPE's own comes first)
 
@@ -75,6 +78,29 @@ class Grid:
             if body[0] in s.waiting and body[0] not in s.dead:
                 s.replies[body[0]] = (body[1], bytes(body[2:]))
                 s.cv.notify_all()
+                return
+            s.late += 1                         # (its call timed out or was ended: RUN's late answer, say)
+        s._log('grid: a late REPLY (id %d, status %02Xh, %d bytes): its call had ended; %d so far'
+               % (body[0], body[1], len(body) - 2, s.late))
+
+    def _log(s, msg):
+        log = getattr(s.link, 'log', None)
+        if log is not None: log(msg)
+
+    def _note_waiting(s, now):
+        """Under s.cv, from a call that waits: when the oldest call has waited 1, 2, 4, 8 ... minutes, how many
+        wait and for what (which side stopped: a GRiD that answers nothing shows here; a 30-minute RUN says so
+        five times, not thirty)."""
+        if not s.since: return
+        rid = min(s.since, key=s.since.get)
+        if s.note_for != (rid, s.since[rid]):          # (a new oldest call: from a minute again)
+            s.note_for = (rid, s.since[rid]); s.note_at = 60.0
+        oldest = now - s.since[rid]
+        if oldest < s.note_at: return
+        while s.note_at <= oldest: s.note_at *= 2
+        s._log('grid: %d call%s waiting for the GRiD, the oldest for %d s (ops %s)'
+               % (len(s.since), '' if len(s.since) == 1 else 's', oldest,
+                  ', '.join('%02Xh' % op for op in sorted(set(s.waiting.values())))))
 
     def on_restart(s):
         s.end_calls('the GRiD restarted the link', restart=True)
@@ -94,6 +120,7 @@ class Grid:
         with s.cv:
             rid = s.next_id; s.next_id = s.next_id % 250 + 1
             s.waiting[rid] = op; s.replies.pop(rid, None); s.dead.pop(rid, None)
+            s.since[rid] = time.monotonic()
         msg = bytes([rid, op]) + bytes(args)
         s.link.send(glp.P_REQUEST, msg)
         deadline = time.monotonic() + timeout
@@ -112,9 +139,10 @@ class Grid:
                                             'nothing was done)' % timeout)
                         raise GridError('the GRiD did not answer in %d s' % timeout)
                     s.cv.wait(min(left, 0.5))
+                    s._note_waiting(time.monotonic())
                 return s.replies.pop(rid)
             finally:
-                s.waiting.pop(rid, None); s.dead.pop(rid, None)
+                s.waiting.pop(rid, None); s.dead.pop(rid, None); s.since.pop(rid, None)
 
     def ok(s, op, args=b'', timeout=60.0):
         st, data = s.call(op, args, timeout)

@@ -89,6 +89,7 @@ class FakeFirefox:
             threading.Thread(target=s._conn, args=(c,), daemon=True).start()
 
     def _conn(s, c):
+        if s.delay: __import__('time').sleep(s.delay)      # (a hung Firefox is late with its hello too)
         hello = json.dumps({'applicationType': 'gecko', 'marionetteProtocol': 3}).encode()
         c.sendall(b'%d:' % len(hello) + hello)
         buf = b''
