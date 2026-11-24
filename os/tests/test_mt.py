@@ -150,6 +150,26 @@ OFF_MAP ={'image_end': 0x4810, 'bss_end': 0x7C70, 'ui_keep_end': 0x6854}  # (the
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
 
+# With the 1520's drive timing (disk_model 'real': seeks, rotation) a copy's time depends on where its files are on
+# the disk, and so on the system files' sizes in front of them: LODEMT.SYS a sector shorter moved t_dwait's copy
+# from 8.4% to 10.6% over its time with MT's INT 15h off.  So on such a floppy what follows LODE.SYS and LODEMT.SYS
+# starts at a fixed cluster, PIN_AT, a filler (PIN.BIN) between, with 17 sectors of room for the two to grow
+# (LODE.SYS 101 sectors and LODEMT.SYS 42 now, clusters 2-144; PIN.BIN 145-161).  There t_dwait's figures, 2026-11-21:
+# the copy alone 21.31 s, MT's INT 15h off or on; with MTSPIN behind 23.26 s off, 24.46 s on (5.2% more)
+PIN_AT = 162
+
+def pin_fill(mt, kw):
+    if kw.get('disk_model') != 'real': return []
+    used = 2 + sum((os.path.getsize(f) + 511) // 512 for f in [A.SYS] + ([] if mt is None else [mt]))
+    n = PIN_AT - used
+    if n < 0:
+        check('LODE.SYS and LODEMT.SYS (to cluster %d) end before PIN_AT, cluster %d, where the timed floppies\' files '
+              'start: move PIN_AT on and measure again' % (used - 1, PIN_AT), False)
+        return []
+    if n == 0: return []
+    p = os.path.join(A.OUT, 'PIN.BIN'); open(p, 'wb').write(bytes(n * 512))
+    return ['PIN.BIN=' + p]
+
 def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chip=None, irq_exact=True, **kw):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
     MTPROBE, `more`, and LODE.INI holding `text`.  nofpu: INT 11h says no
@@ -157,7 +177,8 @@ def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chi
     traps (INT 7, counted in pc.ints).  mouse: a serial mouse on COM1.  irq_exact: pcemu's (an IRQ held
     under CLI taken when IF is set again, as the 1520's PIC gives it; on by default).  kw: pcemu's
     (fd_wait: a floppy's transfer waits for its IRQ 6; disk_model)."""
-    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
+    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + pin_fill(mt, kw) \
+        + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
         + ([ini(text)] if text is not None else [])
     k = ktest.KPC(A.image(name, *files), ems_pages=ems, chip=chip, irq_exact=irq_exact, **kw)
     k.pc.mouse = mouse
@@ -358,6 +379,8 @@ def tstate(k):
     """MT's own table: ([(task, TS_* state, name)], front, running)."""
     seg, Y = mt_seg(k), k.Y
     out = []
+    if seg is None:                     # (the checks fail, not the run: 9 entries, more than MT_TASKS, so no count
+        return [(-1, 0, 'no MT block: the arena broken')] * 9, None, None   #  of tasks a check asks for)
     for i in range(8):
         b = Y['mt_tab'] + i * MT_ENT
         st = k.pc.rd(seg, b, 1)[0]
@@ -4207,7 +4230,14 @@ def t_windows():
     # started from a window while its question waits: the Executive's band, not a pointer into the starter's slot
     bkey(k, A.CODE['T'], t=0.5)
     bkey(k, A.CODE['D'], t=0.3)
+    sg, bd = mt_seg(k) or 0, [0, 0]             # (band_redraw's calls inside mw_start: in it, its count)
+    def bdh(a):
+        if a == sg * 16 + k.Y['mw_start']: bd[0] = 1
+        elif a == sg * 16 + k.Y['mw_start.nq']: bd[0] = 0
+        elif bd[0]: bd[1] += 1
+    code_hooks(k, [sg * 16 + k.Y['mw_start'], sg * 16 + k.Y['mw_start.nq'], k.useg * 16 + k.Y['band_redraw']], bdh)
     bkey(k, A.CODE['K'], t=0.5)
+    bd[0] = 0
     bk, ck = k.band(), mb('mw_cur')
     k.wr('saver_t', struct.pack('<H', 36))
     for _ in range(40):
@@ -4219,10 +4249,12 @@ def t_windows():
     bkey(k, ktest.ESC, t=0.5)
     bt3 = k.band()
     bkey(k, ktest.ESC, t=0.3); bkey(k, ktest.ESC, t=0.5); k.run_for(0.5)
-    check('CODE-D in the tasks, then CODE-K while it asks: the calculator\'s band the Executive\'s (%s), after the saver '
+    check('CODE-D in the tasks, then CODE-K while it asks: the calculator\'s band the Executive\'s (%s, drawn %d time(s) '
+          'as it started), after the saver '
           'too (%s), not the tasks\' question; ESC: the tasks\' question again (%s); ESC, ESC: none left'
-          % (bk[:1], bk2[:1], bt3[:1]), ck == 2 and bk[:1] == bk2[:1] == ['Select a file and confirm'] and bt3[:1] == [q]
-          and mb('mw_n') == 0 and A.has(k, 'Select a file and confirm'), (ck, bk, bk2, bt3, mb('mw_n')))
+          % (bk[:1], bd[1], bk2[:1], bt3[:1]), ck == 2 and bd[1] == 1
+          and bk[:1] == bk2[:1] == ['Select a file and confirm'] and bt3[:1] == [q]
+          and mb('mw_n') == 0 and A.has(k, 'Select a file and confirm'), (ck, bd, bk, bt3, mb('mw_n')))
     k = boot('mt_win2.img', b'MULTITASK=1\r\n', 88, TR)
     seg = mt_seg(k)
     k.key(A.CODE['T']); k.run_for(0.5)
@@ -4259,6 +4291,14 @@ def t_windows():
           any(b.startswith("Can't run") for b in be) and re0 == b'\x00' and n0 == 0 and f1 == f0
           and bt[:1] == ["CALC.RUN can't start"] and n1 == 1 and up and A.free_paras(k) == f0 and not k.crashed,
           (be, re0, n0, f0, f1, bt, n1, up, A.free_paras(k)))
+    # a damaged header (its image and BSS paragraphs 4000h or more): from the tasks, not a .RUN (11), not "no room" (8)
+    big = os.path.join(A.OUT, 'CALCBIG.RUN'); open(big, 'wb').write(cr[:10] + struct.pack('<H', 0x4000) + cr[12:])
+    k = boot('mt_win4.img', b'MULTITASK=1\r\n', 88, TR, 'CALC.RUN=' + big)
+    k.key(A.CODE['T']); k.run_for(0.5)
+    k.key(A.CODE['K']); k.run_for(0.5)
+    bt = k.band()
+    check('a CALC.RUN whose header asks for 4000h paragraphs or more: CODE-K in the tasks says "CALC.RUN can\'t start" '
+          '(%s), not that it doesn\'t fit' % bt[:1], bt[:1] == ["CALC.RUN can't start"] and not k.crashed, bt)
 
 def t_base():
     print('== the Executive live under the windows: in front by a click or CODE-F6, its drawing clipped')
@@ -5580,6 +5620,56 @@ def t_rpoll():
     m2 = hot16(k)
     check('KEYPK through MTKEY H\'s hook (loaded after CLAUDE /R), CODE-\\ at 16 moments, alone and with MTSPIN behind: '
           'the console every time', 'resident' in o and not m1 and not m2, (o[-160:], m1, m2))
+
+def t_tsrd():
+    """MT_TSR's answer to Resident Claude: CL = 4, DX:AX at mt_front, and there the front task, the running one, the
+    pop-up's wait, the task out on a disk (FFh: none) and its device (1 the floppy, 0 the hard disk): what the stub
+    reads before it writes an EMS page register."""
+    print('== MT_TSR: CL = 4, and its fourth byte the task out on a disk')
+    import test_resident as R
+    cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
+    pad = dw_pad()
+    def resident(k):                    # CLAUDE /R at the prompt: MT_TSR's CL (at the kernel's ok after mt_tsrc), DX:AX
+        seg, Y, got, on = mt_seg(k), k.Y, [], [0, 0]
+        def h(a):
+            pc = k.pc; ss, bp = pc.r('ss'), pc.r('bp')
+            if a == seg * 16 + Y['mt_tsrc']: on[:] = [1, pc.rd(ss, bp + equ('F_CX') + 1, 1)[0]]    # (CH as it came)
+            elif on[0]:
+                on[0] = 0
+                got.append((pc.rd(ss, bp + equ('F_CX'), 1)[0], pc.u16(ss, bp + equ('F_AX')), pc.u16(ss, bp + equ('F_DX')),
+                            on[1], pc.rd(ss, bp + equ('F_CX') + 1, 1)[0]))
+        code_hooks(k, [seg * 16 + Y['mt_tsrc'], 0x600 + Y['ok']], h)
+        o = Shell(k).run('claude /r')
+        stub = R.stub_seg(k)
+        rmt = (k.pc.u16(stub, R.csym('r_mt')), k.pc.u16(stub, R.csym('r_mt') + 2))
+        return o, got, rmt
+    def out_bytes(k, rmt, sim):         # (the bytes at the stub's DX:AX once a task is out: +3, +4; and the one waiting)
+        rd = lambda i: k.pc.rd(rmt[1], rmt[0] + i, 1)[0]
+        k.pc.run_until(lambda: rd(3) != 0xFF or k.pc.crash, sim)
+        w = [t for t, s, n in tstate(k)[0] if s == 6]
+        return rd(3), rd(4), w
+    k = boot('mt_tsd.img', b'MULTITASK=1\r\n', 88, cl, 'PAD.BIN=' + pad, fd_wait=True, disk_model='real')
+    Shell(k).run('ver')
+    o, got, rmt = resident(k)
+    seg, Y = mt_seg(k), k.Y
+    b0 = bytes(k.pc.rd(rmt[1], rmt[0], 5))
+    typ(k, 'mtlaunch lcmd.com /c copy pad.bin p.bin', 0.2); typ(k, '', 0.0)
+    d, dev, w = out_bytes(k, rmt, 20)
+    check('CLAUDE /R: MT_TSR answers CL = 4 (%s), CH as it came (%s), DX:AX mt_front (%04X:%04X); its bytes with nobody '
+          'out: front %d, running %d, pop-up %d, %02Xh none out; a copy behind out on the floppy: %02Xh, the task waiting '
+          'there %s, device %d' % ([g[0] for g in got], [g[3:] for g in got], rmt[1], rmt[0], b0[0], b0[1], b0[2], b0[3],
+                                   d, w, dev),
+          'resident' in o and [g[0] for g in got] == [4] and got[0][1:3] == (Y['mt_front'], seg) and got[0][3] == got[0][4]
+          and rmt == (Y['mt_front'], seg) and b0[3] == 0xFF and d in w and dev == 1 and not k.crashed,
+          (o[-120:], got, rmt, b0.hex(), d, dev, w))
+    data = hw_data()
+    ata = hw_ata(data)
+    k, hw = hw_boot('mt_tsh.img', ata, b'MULTITASK=1\r\n', cl)
+    o, got, rmt = resident(k)
+    typ(k, r'mtlaunch lcmd.com /c copy c:\big.bin c:\b2.bin', 0.2); typ(k, '', 0.0)
+    d, dev, w = out_bytes(k, rmt, 20)
+    check('... a copy behind out on the hard disk: the fourth byte %02Xh, the task waiting there %s, device %d'
+          % (d, w, dev), [g[0] for g in got] == [4] and d in w and dev == 0 and not k.crashed, (got, d, dev, w))
 
 TERMRUN = os.path.join(GOS, 'apps', 'TERM.RUN')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERM.FNT')
@@ -7315,6 +7405,23 @@ def t_image():
     check('kbd_get.k in LODE.SYS is MOV AH,1 / INT 16h / JNZ .have (B4 01 CD 16 75 xx: what mt_boot patches)',
           kw[:5] == bytes([0xB4, 1, 0xCD, 0x16, 0x75]) and Y['kbd_get.k'] + 6 + kw[5] == Y['kbd_get.have'], kw.hex())
     check('task 0\'s TX in MT\'s BSS: on the paragraph after the image', Y['mt_tx0'] == (len(mtb) + 15) // 16 * 16, hex(Y['mt_tx0']))
+    check('the variables that start as zeros (mt_zv to mt_zve, %04Xh-%04Xh) in the part mt_boot clears: past the image '
+          '(MT_LEN %04Xh), inside MT\'s block (MT_PARAS %04Xh paragraphs)' % (Y['mt_zv'], Y['mt_zve'], equ('MT_LEN'),
+                                                                               equ('MT_PARAS')),
+          equ('MT_LEN') <= Y['mt_zv'] < Y['mt_zve'] <= equ('MT_PARAS') * 16, (Y['mt_zv'], Y['mt_zve']))
+    mtb_at = 0x10000 + [r for r, v, n in secs['boot'] if n == 'mt_boot'][0]     # (the load image at 1000:0)
+    def zv(fill):                       # (fill: MT's block, where a start puts it, 5Ah as mt_boot begins)
+        k = ktest.KPC(A.image('mt_zv.img', 'LODEMT.SYS=' + MTSYS, A.LCMD, ini(b'MULTITASK=1\r\n')), ems_pages=88)
+        if fill: code_hooks(k, [mtb_at], lambda a: k.pc.wr(fill, 0, bytes([0x5A]) * (equ('MT_PARAS') * 16)))
+        k.start(10); k.mcb0 = k.u16('first_mcb')
+        s = mt_seg(k)                   # (the whole BSS: past the image to the block's end; none: MT off)
+        return s, (bytes(k.pc.rd(s, equ('MT_LEN'), equ('MT_PARAS') * 16 - equ('MT_LEN'))) if s else b'')
+    s0, z0 = zv(0)
+    s1, z1 = zv(s0 or 0)
+    diff = sum(1 for a, b in zip(z0, z1) if a != b)
+    check('... and MT\'s whole BSS (MT_LEN to the block\'s end, %d bytes, mt_zv to mt_zve among them) is as after a '
+          'start on clear memory when the block (%s) was full of 5Ah as mt_boot began (%d bytes differ)'
+          % (len(z0), s1 and '%04Xh' % s1, diff), s0 and s0 == s1 and z0 == z1, (s0, s1, diff))
     ex = sysb[Y['done.sw']:Y['done.sw'] + 5]
     check('done.sw in LODE.SYS is MOV SS,AX / MOV SP,BX / POPA (8E D0 89 DC 61: what mt_boot patches), the bytes after it '
           'POP DS / POP ES / IRET, and ctrlc\'s copy of them is somewhere else (untouched)',
@@ -7687,6 +7794,151 @@ def t_hwait():
           re.search(r'Hard disk\s+Conner Peripherals 120MB - CP30104H', t) and re.search(r'Hard disk\s+none', t0)
           and not any(c[0] == 0xEC for c in ata.cmds[n0:]), (t[-900:], t0[-400:], ata.cmds[n0:][:10]))
 
+class DKill:
+    """A task MT_KILL ended, task v, seen as it ends: each entry to mt_kdie in it (an owner out or not: mt_down; its
+    SS:SP), each pass of mt_kdie.h (IF then), each pass of mt_gate in it once it is dying with an owner out (held),
+    mt_gate.no in it then, and mt_down at its mt_end.  An entry to mt_kdie with another SP than the first's stops the
+    machine there (a stack left behind at each round would run on till it wraps).  isr: at its first entry with an
+    owner out the test marks IRQ 7 in service, so the gate refuses the call whatever its flags; it clears the bit
+    again at the third pass of .h."""
+    def __init__(s, k, v, isr=False):
+        s.k, s.v, s.isr, s.seg = k, v, isr, mt_seg(k)
+        s.at = {s.seg * 16 + k.Y[n]: n for n in ('mt_kdie', 'mt_kdie.h', 'mt_end', 'mt_gate.no', 'mt_gate')}
+        s.ent = []; s.h = []; s.ends = []; s.no = 0; s.staged = 0; s.lay = []; s.held = 0
+        code_hooks(k, s.at, s.hook)
+    def b(s, n): return s.k.pc.rd(s.seg, s.k.Y[n], 1)[0]
+    def hook(s, a):
+        pc, n = s.k.pc, s.at[a]
+        if s.b('mt_cur') != s.v: return
+        if n == 'mt_kdie':
+            if not s.ent: s.lay = [(t, m) for t, _, m in tstate(s.k)[0]]
+            s.ent.append((s.b('mt_down'), pc.r('ss'), pc.r('sp')))
+            if s.drift() and not pc.stopped: pc.stopped = 'mt_kdie entered with another SP'; pc.mu.emu_stop()
+            if s.isr and not s.staged and s.ent[-1][0] != 0xFF: pc.isr |= 0x80; s.staged = 1
+        elif n == 'mt_kdie.h':
+            s.h.append(bool(pc.r('flags') & 0x200))
+            if s.staged == 1 and len(s.h) >= 3: pc.isr &= ~0x80; s.staged = 2
+        elif n == 'mt_end': s.ends.append(s.b('mt_down'))
+        elif n == 'mt_gate':
+            if s.ent and s.b('mt_down') != 0xFF: s.held += 1
+        elif s.ent: s.no += 1
+    def tasks(s):                       # (tstate's, from MT's segment as it was: its arena may not be, after a fault)
+        return [i for i in range(8) if s.k.pc.rd(s.seg, s.k.Y['mt_tab'] + i * MT_ENT, 1)[0]]
+    def out(s): return [e for e in s.ent if e[0] != 0xFF]
+    def drift(s): return max(e[2] for e in s.ent) - min(e[2] for e in s.ent) if s.ent else 0
+
+def dk_run(k, owner, sim=120, isr=False):
+    """One MTLAUNCH line: OWNER (task 1: its disk calls go out), MTSPIN computing (task 2, to be killed), MTSPIN counting
+    200 ticks to C.TXT (task 3), MTKILL K (task 4: 9 ticks on, MT_KILL of task 2; its answer to KK.TXT).  The kill's
+    call passes the gate with task 1 back; task 1, before task 2 in the round, goes out again before task 2's turn.
+    Back when tasks 1, 2 and 4 have ended and C.TXT is there, the machine stopped (DKill) or the time is up: the
+    DKill."""
+    typ(k, 'cls', 0.3)
+    dk = DKill(k, 2, isr)
+    typ(k, 'mtlaunch %s;mtspin.com 3000 k.txt;mtspin.com 200 c.txt;mtkill.com k 2 kk.txt' % owner, 1.0); typ(k, '', 0.2)
+    k.pc.run_until(lambda: not set(dk.tasks()) & {1, 2, 4} and bool(A.disk_file(k, 'C.TXT')) or k.pc.crash
+                   or k.pc.stopped, sim)
+    if not k.pc.stopped: k.run_for(0.5)
+    return dk
+
+def dk_check(k, dk, what, task1, file, exact, sw):
+    t = dk.tasks()
+    if dk.ent and (dk.ent[0][0] == 0xFF or dk.lay[1:2] != [(1, task1)]):
+        check('%s: STAGING MISSED (the test\'s set-up, not a fault found): the kill landed with no owner out (task 1 '
+              'there: %s), so the case wasn\'t tried; the copy behind must last longer' % (what, dk.lay[1:2]), False,
+              (dk.lay, dk.ent[:4]))
+        return
+    check('%s: its end through INT 21h held at the gate (%d passes there with the owner out, not refused; %d entries to mt_kdie, '
+          '%d with the owner out, one more after each refusal; its SP the same at each: drift %d bytes), MT_END '
+          'reached in it once, the owner back (mt_down then %s), the task gone; nothing halted or stopped (mt_kdie.h '
+          'passed %d times, %d with interrupts off; %s); task 1 ended, %s; task 3 counted on (%d); %d waits given away'
+          % (what, dk.held - dk.no, len(dk.ent), len(dk.out()), dk.drift(), ['%02X' % d for d in dk.ends], len(dk.h),
+             dk.h.count(False), k.pc.stopped, file, spun(k, 'C.TXT'), sw),
+          dk.lay[1:3] == [(1, task1), (2, 'MTSPIN.COM')] and dk.out() and dk.held - dk.no >= 1
+          and len(dk.ent) == 1 + len(dk.h) and dk.drift() == 0 and dk.ends == [0xFF] and not set(t) & {1, 2, 4}
+          and (A.disk_file(k, 'KK.TXT') or b'').startswith(b'0 ') and all(dk.h) and exact and spun(k, 'C.TXT') > 0
+          and sw >= 10 and not k.pc.stopped and not k.crashed,
+          (dk.lay, dk.ent[:8], len(dk.h), dk.ends, dk.held, dk.no, t, A.disk_file(k, 'KK.TXT'), exact, spun(k, 'C.TXT'),
+           sw, k.pc.stopped))
+
+def t_dkill():
+    """A task MT_KILL ended that gets its turn while another task is out on the floppy or C:.  Its end (mt_kdie's MT_END,
+    through the kernel's INT 21h) waits at the gate as any call does, and is made once the owner is back.  Before:
+    its frame's flags had interrupts off, the gate refused it, and its HLT with them off stopped the machine; and,
+    held, mt_switch sent it back to mt_kdie every round, 20 bytes of its stack left behind each time."""
+    print('== a task killed while another is out on a disk ends once the owner is back; nothing halts')
+    # the floppy: task 1 a copy (LCMD /C) of 600 KB, still going when the kill's call gets past the gate
+    pad = dw_pad(600000); want = open(pad, 'rb').read()
+    for isr in (False, True):
+        k = boot('mt_dk%d.img' % isr, b'MULTITASK=1\r\n', 88, MTKL, 'PAD.BIN=' + pad, fd_wait=True, disk_model='real')
+        Shell(k).run('ver')
+        dw = DWait(k)
+        dk = dk_run(k, 'lcmd.com /c copy pad.bin p.bin', isr=isr)
+        probs, _ = A.fatcheck.check(bytes(k.pc.drives[0].img))
+        dk_check(k, dk, 'MTSPIN killed while a copy behind is out on the floppy%s'
+                 % (', IRQ 7 marked in service by the test as its end was first tried (refused %d times, tried again '
+                    'after each interrupt)' % dk.no if isr else ''), 'LCMD.COM', 'P.BIN exact',
+                 A.disk_file(k, 'P.BIN') == want and not probs and k.pc.fd_reentry == 0 and k.pc.fd_frame_bad == 0
+                 and (dk.staged == 2 and dk.no >= 1 if isr else dk.no == 0), dw.sw())
+    # C:: task 1 a copy (LCMD /C)
+    data = hw_data()
+    ata = hw_ata(data)
+    k, hw = hw_boot('mt_dkh.img', ata, b'MULTITASK=1\r\n', MTKL)
+    dk = dk_run(k, r'lcmd.com /c copy c:\big.bin c:\b2.bin')
+    fs, probs = hw_files(ata)
+    dk_check(k, dk, 'the same while a copy behind is out on the hard disk', 'LCMD.COM', 'B2.BIN exact',
+             fs.get('\\B2.BIN') == data and not probs and dk.no == 0, hw.sw())
+
+def t_wfall():
+    """With a disk's owner out, a task behind that waits (an INT 16h read: mt_wkey; an INT 10h call that needs the front:
+    mt_wfront) and finds no other task to run gave its turn to the task in front whatever that one was doing.  In
+    front KEYIN, waiting for a key inside INT 21h (kbd_get, MT's key wait): a task that mt_dok keeps off the CPU while
+    an owner is out, as its kernel code may touch what the owner's call is in the middle of.  Behind MTKEY W (36
+    ticks of computing, then a read) or V (then mode 40h), and a copy on C: (and on the floppy)."""
+    print('== with a disk\'s owner out, a task behind with nothing to run never hands its turn to one inside INT 21h')
+    data = hw_data()
+    pad = dw_pad(); want = open(pad, 'rb').read()
+    kin = 'KEYIN.COM=' + os.path.join(HERE, 'KEYIN.COM')
+    for disk, mode, how in (('C:', 'w', 'an INT 16h read (mt_wkey)'),
+                            ('C:', 'v', 'an INT 10h mode set that waits for the front (mt_wfront)'),
+                            ('A:', 'w', 'an INT 16h read (mt_wkey)')):
+        if disk == 'C:':
+            ata = hw_ata(data)
+            k, hw = hw_boot('mt_wf%s.img' % mode, ata, b'MULTITASK=1\r\n', MTK, kin)
+            copy = r'copy c:\big.bin c:\b2.bin'
+        else:
+            k = boot('mt_wff.img', b'MULTITASK=1\r\n', 88, MTK, kin, 'PAD.BIN=' + pad, fd_wait=True, disk_model='real')
+            Shell(k).run('ver')
+            copy = 'copy pad.bin p.bin'
+        seg, Y = mt_seg(k), k.Y
+        b = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+        lo, hi = 0x600, 0x600 + k.Y['bss_end']      # (the kernel's segment, image and BSS: not the UI's)
+        ran, refused, prev = [], [0], k.pc.watch
+        def w(a):                       # (kernel code run by another task than the owner, out of any interrupt)
+            if prev: prev(a)
+            if lo <= a < hi and a != 0x600 + Y['int21'] and b('mt_down') != 0xFF and b('mt_cur') != b('mt_down') \
+                    and k.pc.isr == 0 and len(ran) < 4:
+                ran.append((hex(a), b('mt_cur'), b('mt_down'), round(k.pc.us / 1e6, 3)))
+        def h(a):                       # (mt_fok's answer: the front task refused, an owner out)
+            refused[0] += b('mt_down') != 0xFF and not k.pc.r('flags') & 0x40
+        code_hooks(k, [seg * 16 + Y['mt_fok.x']], h)
+        k.pc.watch = w
+        typ(k, 'mtlaunch /f keyin.com;mtkey.com %s rr.txt;lcmd.com /c %s' % (mode, copy), 0.5)
+        k.pc.run_until(lambda: not any(t == 3 for t, _, _ in tstate(k)[0]) or k.pc.crash, 90)
+        k.pc.watch = prev
+        if disk == 'C:':
+            fs, probs = hw_files(ata); exact = fs.get('\\B2.BIN') == data and not probs
+        else:
+            exact = A.disk_file(k, 'P.BIN') == want and not A.fatcheck.check(bytes(k.pc.drives[0].img))[0]
+        st = tstate(k)
+        check('KEYIN in front waiting for a key inside INT 21h, MTKEY %s behind, %s, a copy on %s out; KEYIN refused '
+              'while it was out (%d times), no task but the owner ran the kernel\'s code then (%s); the copy ended, '
+              'exact; KEYIN, its key not yet typed, still there and in front'
+              % (mode.upper(), how, disk, refused[0], ran or 'none'),
+              refused[0] >= 1 and not ran and not any(t == 3 for t, _, _ in st[0]) and exact
+              and any(t == 1 and n == 'KEYIN.COM' for t, _, n in st[0]) and st[1] == 1 and not k.crashed,
+              (ran, refused, st))
+
 def t_dmaems():
     """The 1520 restarts when an EMS page register changes while the floppy's DMA runs (found 2026-11-04 with
     CRASHLOG: MT's switch at a floppy's wait, mt_load writing the next task's windows).  pcemu models it
@@ -7926,22 +8178,24 @@ def t_dwait():
     check('the copy alone (the 1520\'s drive timing): %.2f s with MT\'s INT 15h off, %.2f s on (%d of its waits could have been '
           'given away, nobody to take them: no switch), both exact' % (a0, a1, s1),
           o0 and o1 and s0 == 0 and s1 > 0 and abs(a1 - a0) < 0.01 * a0, alone)
-    k, dw = fresh('mt_dw1.img', 'real')
+    k, dw = fresh('mt_dw1.img', 'real')         # (each the first copy on a fresh floppy: the same clusters)
     dw.m10(False)
-    t_off, c_off = dw_run(k, '200 c0.txt', 'copy pad.bin p0.bin', 'copied')
-    ok0 = A.disk_file(k, 'P0.BIN') == want
+    t_off, c_off = dw_run(k, '200 c.txt', 'copy pad.bin p.bin', 'copied')
+    ok0 = A.disk_file(k, 'P.BIN') == want
     sw0 = dw.sw()
-    dw.m10(True)
-    t_on, c_on = dw_run(k, '200 c1.txt', 'copy pad.bin p1.bin', 'copied')
-    ok1 = A.disk_file(k, 'P1.BIN') == want
+    k, dw = fresh('mt_dw1.img', 'real')
+    t_on, c_on = dw_run(k, '200 c.txt', 'copy pad.bin p.bin', 'copied')
+    ok1 = A.disk_file(k, 'P.BIN') == want
     pc = k.pc
-    check('a 300 KB copy at the prompt, MTSPIN counting behind (the 1520\'s drive timing: seeks, rotation): with MT\'s INT 15h '
+    check('a 300 KB copy at the prompt, MTSPIN counting behind (the 1520\'s drive timing: seeks, rotation), each on a '
+          'fresh floppy, to the same clusters: with MT\'s INT 15h '
           'off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d (%d switches at 9001h, back in %d 9101h, %d IRQ 6s through '
-          'MT\'s hook): the waits given to MTSPIN, the copy within 10%% (a switch back is ~1.5 ms); both copies '
+          'MT\'s hook): the waits given to MTSPIN, the copy within 7%% (5.2%% measured, 2026-11-23, and a turn of '
+          'the disk; a switch back is ~1.5 ms); both copies '
           'exact; no INT 13h while one waited, no transfer whose EMS window '
           'changed under it, no time-out' % (t_off, c_off, t_on, c_on, dw.sw(), dw.n['mt_dready.w'],
                                                 dw.n['mt_i0e']),
-          ok0 and ok1 and sw0 == 0 and dw.sw() >= 20 and c_on > 5 * c_off and t_on < 1.10 * t_off
+          ok0 and ok1 and sw0 == 0 and dw.sw() >= 20 and c_on > 5 * c_off and t_on < 1.07 * t_off
           and pc.fd_reentry == 0 and pc.fd_frame_bad == 0 and pc.fd_timeouts == 0 and not k.crashed,
           (ok0, ok1, sw0, dict(dw.n), c_off, c_on, t_off, t_on, pc.fd_reentry, pc.fd_frame_bad, pc.fd_timeouts))
     d = dw.depth
@@ -8380,7 +8634,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_wfall, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

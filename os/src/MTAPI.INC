@@ -92,11 +92,15 @@ MT_TSR      equ 1Ah                     ; (Resident Claude's, at CLAUDE /R and
                                         ;  after its key wait's HLT, where the
                                         ;  tick may switch from it in the task
                                         ;  whose call it is (0:0: none any
-                                        ;  more) -> DX:AX = MT's three bytes:
-                                        ;  the front task's number, the running
-                                        ;  one's, and 1 while its pop-up waits
+                                        ;  more) -> DX:AX = MT's bytes: the
+                                        ;  front task's number, the running
+                                        ;  one's, 1 while its pop-up waits
                                         ;  for the front task (the stub's to
-                                        ;  set and clear)
+                                        ;  set and clear), the task out on a
+                                        ;  disk (FFh: none) and its device
+                                        ;  (1 the floppy, 0 the hard disk);
+                                        ;  CL = 4 (an older LODEMT.SYS, with
+                                        ;  three, leaves CX as it came)
 MT_WIN      equ 1Dh                     ; (a window .RUN's, at its start)
                                         ;  CF clear if the UI code running is a
                                         ;  window .RUN's session, beside others:

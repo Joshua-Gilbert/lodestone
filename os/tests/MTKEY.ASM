@@ -4,6 +4,10 @@
 ;      FILE gets the AX it gave (4 hex digits)
 ;   E  the same with AH=10h
 ;   C  the same as R, with interrupts off (CLI before the INT 16h)
+;   W  the same as R after 36 ticks of its own computing (the BIOS's
+;      clock watched: no INT 21h meanwhile)
+;   V  as W, but then INT 10h mode 40h (graphics: behind, the task waits
+;      to be in front), mode 3, and the end (FILE unused)
 ;   H  stays resident, hooking INT 16h: a read waits in its own loop (a
 ;      peek of its kind through the INT 16h it found, then HLT), as
 ;      Resident Claude's does, then goes on there (JMP FAR); the rest are
@@ -46,7 +50,23 @@ org 100h
         je      .rd
         cmp     al, 'C'
         je      .rd
-        cmp     al, 'H'
+        cmp     al, 'W'
+        je      .w0
+        cmp     al, 'V'
+        jne     .nw
+.w0:    call    t18
+        add     word [tend], 36 - 18
+.ww:    call    tdone
+        jc      .ww
+        cmp     byte [mode], 'V'
+        mov     al, 'R'
+        jne     .rd
+        mov     ax, 40h                 ; V: mode 40h (graphics: behind, it
+        int     10h                     ;  waits to be in front), then 3
+        mov     ax, 3
+        int     10h
+        int     20h
+.nw:    cmp     al, 'H'
         je      hk_
         call    t18
         cmp     al, 'X'

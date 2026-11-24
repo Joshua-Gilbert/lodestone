@@ -307,6 +307,10 @@ mw_shut:
 .x:     pop     bx
         pop     ax
         ret
+mw_sbad: jmp    mw_start.bad            ; (mw_start's: its header damaged,
+mw_sno: jmp     mw_start.no             ;  it can't start, no room)
+mw_sroom: jmp   mw_start.room
+        db      90h                     ; (what follows keeps its parity)
 
 ; ---------------------------------------------------------------------
 ;  a window .RUN (path SI, argument DI) as a new session, in front: the
@@ -321,14 +325,14 @@ mw_start:
         pusha
         mov     ax, 8
         cmp     byte [cs:mw_n], MW_MAX
-        jae     .no
+        jae     mw_sno
         cmp     word [wdepth], NWIN     ; (each has a window)
-        jae     .no
+        jae     mw_sno
         cmp     word [cs:mw_fh], 0      ; (mw_run's peek: open, read)
         jne     .pk
         call    mw_peek
-        jc      .no
-.pk:    mov     ax, 11
+        jc      .no                     ; (this and the next long: each label
+.pk:    mov     ax, 11                  ;  in here keeps its parity)
         test    byte [cs:mw_hdr+14], RF_WIN
         jz      .no
         cmp     word [cs:mw_hdr+4], 6   ; (a window .RUN's windows have W_FLAGS,
@@ -337,28 +341,28 @@ mw_start:
 .api:
         mov     ax, [cs:mw_hdr+10]      ; its footprint, as run_app reckons it
         add     ax, [cs:mw_hdr+12]
-        jc      .bad                    ; (a damaged header, as run_app says)
+        jc      mw_sbad                 ; (a damaged header, as run_app says)
         cmp     ax, 4000h
-        jae     .bad
+        jae     mw_sbad
         shl     ax, 1
         mov     [cs:mw_hdr+14], ax      ; (the fixups' bytes: mw_load reads
         cmp     ax, MW_STK              ;  them past the BSS, into the
         jae     .fx                     ;  stack's room, unused till it runs)
         mov     ax, MW_STK
 .fx:    add     ax, [cs:mw_hdr+8]
-        jc      .room
+        jc      mw_sroom
         add     ax, [cs:mw_hdr+6]
-        jc      .room
+        jc      mw_sroom
         add     ax, MW_TRAMP + 15
-        jc      .room
+        jc      mw_sroom
         and     al, 0F0h
         mov     cx, ax                  ; CX = the slot's size
         call    mw_slot                 ; -> BX = where; CF none
-        jc      .room
+        jc      mw_sroom
         mov     dx, bx
         add     dx, cx                  ; DX = its end
         call    mw_grow                 ; the UI block to the highest end
-        jc      .room
+        jc      .room                   ; (long: .fr keeps its parity)
         call    mw_load                 ; read and fix it at BX (mw_fh closed)
         jc      .lf
         cmp     byte [cs:mw_n], 0       ; the first: the Executive alone in the
@@ -405,20 +409,20 @@ mw_start:
         je      .ex                     ;  title, the redraw and the rest as
         mov     di, mw_ses              ;  the Executive left them, not
         call    mw_load_ctx.di          ;  pointers into the starter's slot
-        pusha                           ; (and that band on the screen)
-        UCALL   band_redraw
-        popa
 .ex:    mov     cx, NALLOC + 8 + 1      ; alloc_tab, run_hdr, run_hnd: none
         mov     di, alloc_tab
         xor     ax, ax
         rep     stosw
         cmp     [held1], ax             ; the Executive's question waiting (
-        je      .nq                     ;  it may be in front at one): not the
+        je      .nh                     ;  it may be in front at one): not the
         mov     [held1], ax             ;  new one's, nor its band
         mov     [held2], ax
         mov     [band1], ax
         mov     [band2], ax
-        pusha
+        jmp     short .bd
+.nh:    cmp     byte [cs:mw_cur], 0     ; (or, from a window, the Executive's
+        je      .nq                     ;  band on the screen: once, either way)
+.bd:    pusha
         UCALL   band_redraw
         popa
 .nq:    pop     ax
@@ -1729,7 +1733,7 @@ mw_tm       db      0                   ; MK_TEXT's mask
 mw_tx       dw      0                   ; MK_TEXT's text (from column mw_r)
 mw_p0       dw      0                   ; MK_XOR's pixels across
 mw_p1       dw      0
-mw_wo       db      0                   ; (mw_clipq: whose window)
+            db      0                   ; (what follows keeps its parity)
 mw_ot       dw      0                   ; the primitive's own code (mw_c_*.o)
 mw_vx       dw      0                   ; MK_VL's pixel x
 mw_yb       dw      0                   ; (mw_cdraw: the band's end)
@@ -2073,16 +2077,16 @@ mw_clipq:
         mov     si, bx
         shl     si, 2
         mov     si, [wstack+si]
-        call    mw_own
-        mov     [cs:mw_wo], al
         mov     ax, [si+W_COL]          ; AX..CX, DX..BP: its columns, rows
         mov     cx, ax
         add     cx, [si+W_W]
         mov     dx, [si+W_Y]
         mov     bp, dx
         add     bp, [si+W_H]
-        cmp     byte [cs:mw_wo], 0
-        jne     .s
+        cmp     si, [run_base]          ; whose?  (Here the Executive runs: its
+        jae     .s                      ;  windows are the UI's own, below the
+                                        ;  .RUNs' load area, help_w its one;
+                                        ;  each session's is in its slot)
         cmp     ax, [cs:mw_r]           ; the Executive's: holding mw_r?
         ja      .l
         cmp     cx, [cs:mw_r+2]
@@ -2382,7 +2386,11 @@ mw_clean:
         pop     bp
         pop     si
         pop     ax
-.x:     pusha                           ; run_cleanup's own first 5 bytes,
+.x:     and     word [cs:mw_fh], 0      ; (mw_peek's file, if open: the root's
+                                        ;  start over closes its handles, so
+                                        ;  the next mw_start mustn't read on
+                                        ;  through one closed or reused)
+        pusha                           ; run_cleanup's own first 5 bytes,
         push    es                      ;  then on there
         mov     si, alloc_tab
         push    ds
