@@ -96,7 +96,9 @@ stay GPIB.
   actually comes. If it doesn't, SERLINK says so and runs polled: every wait and poll drains the UART, and 0Eh
   reports no IRQ, so CLAUDE polls rather than sleeps.
   - Polled works at 2400 baud but can't keep up at 19200, because the 1520's 16450 holds only one received byte.
-  - Whether the internal modem's UART raises IRQ 4 on the 1520 hasn't been tried yet.
+  - The internal modem's UART raises IRQ 4 on the 1520 (2026-11-24): with 2400 8N1 set and the modem woken
+    (DTR and an AT, as MODEMID does), its transmit-empty interrupt came as one IRQ 4, IIR 02h, with OUT2 off and
+    on alike (OUT2 doesn't gate it). Before that, IIR stayed 01h and LSR 61h whatever IER held.
 - **Dialing (`/D:`), at install:**
   - It sends `AT` (once more if there's no answer), `ATE0V1Q0X4` and `AT&C1&D2`. Some modems ERROR on the
     `&C1&D2` line, and either answer is fine.
