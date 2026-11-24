@@ -292,7 +292,9 @@
 - **LODE.INI** keeps the choice as `SAVER=n` (any case). There is no line for the usual 5 minutes, and `SAVER=0` means never. Its other lines, `FONT=` included, are kept; with nothing left the file goes.
   - System writes both settings through one routine (`save_ini`, with `ini_is` matching a key in any case).
   - At start-up the core reads `SAVER=` as well as `FONT=`, in either order.
-- **The most is 30 minutes:** the core counts idle ticks under 8000h, which is how it copes with the clock going back at midnight. A larger value in LODE.INI is taken as 30.
+  - A `SAVER=` line with no digit right after the `=` (`SAVER=`, `SAVER= 10`, `SAVER=x`) is ignored: the delay stays as it was, 5 minutes or what an earlier line set.
+- **The most is 30 minutes:** `saver_set` takes the minutes in a byte and caps them at 30, so the delay is at most 30 × 1,092 = 7FF8h ticks; a larger value in LODE.INI is taken as 30. The core counts idle ticks and starts the count again if it reads F000h or more (the last key ahead of the clock), far above 7FF8h, so a poll a little late still starts the saver. A clock that goes back between two looks (midnight's B0h ticks, or the clock set in System) is caught by the rule that more than 36 ticks between two looks is no idle time. (The 30-minute cap dates from when the count stopped at 8000h.)
+  - *Since 2026-11-23 the idle count goes up to F000h.* At 8000h a 30-minute delay (7FF8h ticks) started the saver only if a poll came in its last 8 ticks; under MULTITASK=1 beside busy tasks the Executive may look only every 10-14 ticks, so it could miss and wait 30 minutes more. A clock that goes back between two looks (midnight's B0h ticks, or the clock set) was already caught by the 36-tick rule, so the count is reset only if it reads F000h or more.
 - **The core:**
   - `saver_t` (ticks; FFFFh means never) replaces the constant;
   - a new call, `UI_SAVER` (entry 46, so UI API 3): AL = 0 gives the minutes, AL = 1 sets them from BL.
@@ -1141,6 +1143,8 @@ A program can name its own modes, which the Executive's right-click menu then of
   - **Setting the clock forward started the saver at once.** The core now takes a tick jump of over 2 s between polls as activity.
   - **System's band** was blank at the start and after the clock form. **A bad time** no longer leaves a new date set. **Numbers** are at most 4 digits. Trailing text, "13 pm" and wrong month names are refused.
   - **The Executive:** "X.COM ended" and the selection are kept when the UI block moves past a TSR. Directory read errors and more than 240 entries are said in the band. The path buffer for Write held 80 bytes, but a deep subject needs 82. An unknown short kind showed stray spaces.
+    - *Since 2026-11-20:* after F5, a disk change, the saver, DEFRAG or a program, the list keeps its selection and its top row; if the list has become shorter the selection is its last entry (it was the first before), with no empty rows under the last.
+    - *Since 2026-11-23:* when the Executive starts over (a .RUN's or the Executive's own divide error, a .RUN's own end by 4Ch, 00h or 20h, ^C at the root), the files the stopped code had open in the root's handles 5-19 are closed; an ordinary end of a .RUN or a DOS program closes nothing of the root's.
   - **Write:**
     - a Substitute that doesn't fit is refused before the match is erased;
     - a click ends Found mode;

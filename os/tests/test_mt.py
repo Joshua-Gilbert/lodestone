@@ -67,7 +67,10 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 485Dh on
 # 2026-11-09, with the 2 s timed from a floppy's last transfer), and a change past it moves image_end and bss_end.
 # The UI's pads, UICORE.INC's, likewise: the slack between ui_image_end and uibss's paragraph, none after 4F00h then)
-OFF_MAP ={'image_end': 0x4810, 'bss_end': 0x7C70, 'ui_keep_end': 0x6894}  # (4800h/7C60h before INT 00h
+OFF_MAP ={'image_end': 0x4810, 'bss_end': 0x7C70, 'ui_keep_end': 0x6854}  # (the UI's 6894h before run_app's,
+                                        #  the editor's and the forms' rare exits were short jumps and
+                                        #  the pointer's rows went back by rep movsb: 64 bytes less of
+                                        #  the UI kept, 2026-11-23; 4800h/7C60h before INT 00h
                                         #  gave up a capture under way, 2026-11-23; 47F0h/7C50h before
                                         #  it ended what is in service at the PICs and set ^C's type:
                                         #  32 bytes in all, 562.3 / 578.4 KB as before; 4870h/7CD0h before the error

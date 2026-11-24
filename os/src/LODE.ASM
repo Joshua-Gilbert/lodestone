@@ -368,6 +368,7 @@ section ui                              ; (UI_PARAS: ui_image_end ends it)
         EVEN    ..@ui_retf, run_app.abs, saver.l, saver.z, ..@ui_sidle, tick
         EVEN    dta2ent, ent_cmp, ent_ptr, kind_of.k, kind_of.n, to_fcb, to_fcb.n, to_fcb.e, to_fcb.el
         EVEN    ex_row, ex_row.tit, puts_tmp
+        EVEN    ed_enter.ch, ed_enter.ins, ed_enter.key, ed_enter.bksp, ed_enter.right, ed_enter.home, ed_enter.end
 %endif
 
 ; section ovl inside the disk buffers (bss_start is image_end; init comes

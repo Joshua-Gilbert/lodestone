@@ -125,6 +125,26 @@ def shot(k, name):
 def lines(k): return [l for y, l in k.ocr()]
 def screen(k): return '\n'.join(lines(k))
 def has(k, text): return any(text in l for l in lines(k))
+def keys_within(k, sim_s, blocks, *keys):
+    """k.key(*keys) bounded by sim_s simulated seconds and a count of blocks, checked at every block: code gone
+    wrong (running over memory it has overwritten, a few thousand blocks a second here, inside one run that
+    never returns) stops the machine there, so the check fails and the group goes on.  False if it ran out."""
+    end, n = k.pc.us + sim_s * 1e6, [0]
+    def h(pc):
+        n[0] += 1
+        if (pc.us > end or n[0] > blocks) and not pc.stopped:
+            pc.stopped = 'over %d s (simulated) or %d blocks' % (sim_s, blocks); pc.mu.emu_stop()
+    k.hooks.append(h)
+    try: k.key(*keys)
+    finally: k.hooks.remove(h)
+    return not k.pc.stopped
+def lit_row(k):
+    """The Executive's list row drawn highlighted (its top pixel row lit across the list): its first word.
+    (The reader also finds a '__' two rows under a lit row's text: not a row.)"""
+    v = k.pc.rd(0xB800, 0, 0x8000)
+    lit = [l.split()[0] for y, l in k.ocr() if 16 < y < 240 and l.split() and l.split()[0].strip('_')
+           and sum(b == 0xFF for b in v[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]) > 40]
+    return lit[0] if len(lit) == 1 else lit
 
 def free_paras(k):
     """Free paragraphs in the MCB chain, and the UI block's size."""
@@ -205,6 +225,92 @@ def xor_rect_unit():
             bad.append((x0, x1, y, h, kept))
     return n, bad
 
+def pointer_unit(path=None):
+    """The core's own pointer as UICORE.INC draws it (show_cursor, move_cursor
+    with compose, hide_cursor), assembled on its own and run under unicorn on
+    a random screen: after each move every byte of the plasma must be the
+    screen under it with the arrow inverted at the new place (cur_shape's
+    rows shifted by x & 7, cut at column 79 and row 399), and hide_cursor
+    must leave the screen as it was.  Moves at every x & 7, overlapping
+    (compose's union, up to 3 bytes wide) and far apart, to x 0 and 639 and
+    to row 399.  Each call enters with DF clear, as every caller in the core
+    does: UIAPI.INC's convention (DF clear into every API call and kept),
+    exec_main's, run_app's and KMW's mw_go's CLD; no interrupt handler
+    draws the pointer.  compose's and
+    move_cursor.done's REP MOVSB count on it, so DF set is no case to try
+    here.  An exception in the code (a run off its end) is a failed move."""
+    import random
+    from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16
+    from unicorn.x86_const import (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI,
+                                   UC_X86_REG_DI, UC_X86_REG_BP, UC_X86_REG_SP, UC_X86_REG_CS, UC_X86_REG_DS,
+                                   UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_EFLAGS, UC_X86_REG_IP)
+    s = open(path or os.path.join(GOS, 'src', 'UICORE.INC'), 'rb').read().decode('latin-1')
+    part = lambda a, b: s[s.index(a):s.index(b, s.index(a))]
+    data = (('cur_x', 'dw 0'), ('cur_y', 'dw 0'), ('cur_xb', 'dw 0'), ('cur_save', 'times 26 db 0'), ('new_save', 'times 26 db 0'),
+            ('ubuf', 'times 4 * 26 db 0'), ('cnew_x', 'dw 0'), ('cnew_y', 'dw 0'), ('cnew_xb', 'dw 0'), ('ux0', 'dw 0'),
+            ('uy0', 'dw 0'), ('uw', 'dw 0'), ('uh', 'dw 0'), ('cflags', 'db 0'), ('mx', 'dw 0'), ('my', 'dw 0'),
+            ('mbase', 'dw 1'), ('curvis', 'db 0'))
+    names = ['cur_shape'] + [n for n, d in data]
+    src = ('cpu 286\norg 0\nVSEG equ 0B800h\n'      # (the three calls, then where each name is)
+           'call show_cursor\n hlt\n call move_cursor\n hlt\n call hide_cursor\n hlt\n dw ' + ', '.join(names) + '\n' +
+           part('cur_shape:', 'show_cursor:') + part('show_cursor:', '\n; =====') + part('row_di:', '; mode 40h') +
+           'align 2\n' + ''.join('%s: %s\n' % nd for nd in data))
+    asm, out = os.path.join(OUT, 'PTRUNIT.ASM'), os.path.join(OUT, 'PTRUNIT.BIN')
+    open(asm, 'w').write(src)
+    subprocess.run(['nasm', '-f', 'bin', '-o', out, asm], check=True)
+    code = open(out, 'rb').read()
+    assert code[3] == code[7] == code[11] == 0xF4, code[:12].hex()
+    sym = dict(zip(names, struct.unpack_from('<%dH' % len(names), code, 12)))
+    shape = [code[sym['cur_shape'] + 2 * r] for r in range(13)]
+    mu = Uc(UC_ARCH_X86, UC_MODE_16)
+    mu.mem_map(0, 0x100000)
+    mu.mem_write(0x10000, code)
+    regs = (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP)
+    rnd = random.Random(1520)
+    screen = bytes(rnd.getrandbits(8) for _ in range(0x10000))
+    mu.mem_write(0xB8000, screen)
+    w16 = lambda n, v: mu.mem_write(0x10000 + sym[n], struct.pack('<H', v))
+    def call(at, ax=0, bx=0):
+        vals = (ax, bx, 0x1357, 0x2468, 0x5A5A, 0xA5A5, 0x7777)
+        for r, v in zip(regs, vals): mu.reg_write(r, v)
+        for r, v in ((UC_X86_REG_CS, 0x1000), (UC_X86_REG_DS, 0x1000), (UC_X86_REG_ES, 0x2000),
+                     (UC_X86_REG_SS, 0x3000), (UC_X86_REG_SP, 0xFFFE), (UC_X86_REG_EFLAGS, 0x0202)):
+            mu.reg_write(r, v)
+        try:
+            mu.emu_start(0x10000 + at, 0x10000 + at + 3, count=100000)
+        except UcError as e:
+            bad.append(('call %d, AX %d, BX %d: %s at %04X' % (at, ax, bx, e, mu.reg_read(UC_X86_REG_IP)),))
+            return False
+        return [mu.reg_read(r) for r in regs] == list(vals) and mu.reg_read(UC_X86_REG_SP) == 0xFFFE \
+            and mu.reg_read(UC_X86_REG_ES) == 0x2000 and mu.reg_read(UC_X86_REG_DS) == 0x1000
+    def want(x, y):
+        e, xb = bytearray(screen), x >> 3
+        for r in range(13):
+            yy = y + r
+            if yy >= 400: break
+            o, v = (yy & 3) * 0x2000 + (yy >> 2) * 80 + xb, shape[r] << 8 >> (x & 7)
+            e[o] ^= v >> 8
+            if xb < 79: e[o + 1] ^= v & 0xFF
+        return bytes(e)
+    pts = [(x, y) for x in (0, 1, 7, 8, 9, 15, 100, 101, 102, 103, 104, 105, 106, 107, 300, 631, 632, 633, 636, 639)
+           for y in (0, 1, 2, 3, 5, 150, 386, 387, 388, 391, 398, 399)]
+    walk = [(320, 200)]
+    for x, y in pts:                            # each far, then small steps from it
+        walk += [(x, y)] + [(min(639, max(0, x + dx)), min(399, max(0, y + dy)))
+                            for dx, dy in ((1, 0), (7, 1), (8, -1), (9, 2), (15, -3), (16, 12), (-9, -13), (-1, 0), (0, 14))]
+    walk += [(639, 399), (632, 399), (0, 399), (639, 0), (638, 398), (5, 387), (6, 388), (630, 389)]
+    bad, n = [], 0
+    w16('mx', walk[0][0]); w16('my', walk[0][1])
+    kept = call(0)                              # show_cursor at (mx, my)
+    if bytes(mu.mem_read(0xB8000, 0x10000)) != want(*walk[0]) or not kept: bad.append(('show',) + walk[0] + (kept,))
+    for x, y in walk[1:]:
+        kept = call(4, x, y)                    # move_cursor AX = x, BX = y
+        n += 1
+        if bytes(mu.mem_read(0xB8000, 0x10000)) != want(x, y) or not kept: bad.append((x, y, kept))
+    kept = call(8)                              # hide_cursor: the screen as it was
+    if bytes(mu.mem_read(0xB8000, 0x10000)) != screen or not kept: bad.append(('hide', kept))
+    return n, bad
+
 # ---------------------------------------------------------------------
 def t_core():
     print('== core (UITEST.RUN)')
@@ -212,6 +318,10 @@ def t_core():
     check('xor_rect on its own (%d frames on a random screen: every start bit, 2-41 pixels wide, each bank, heights '
           '2-11, to x 639 and row 399, DF either way): the frame XORed once, corners included, nothing else touched, '
           'the registers, DS and ES kept' % n, n > 20000 and not bad, bad[:5])
+    n, bad = pointer_unit()
+    check('the pointer on its own (%d moves on a random screen: every x & 7, near and far, to x 0 and 639 and row 399): '
+          'each time the screen under it with the arrow inverted there, nothing else touched; hidden: the screen as it was, '
+          'the registers, DS and ES kept' % n, n > 2000 and not bad, bad[:5])
     img = image('core.img', UITEST, os.path.join(GOS, 'src', 'LCMD.COM'))
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     free0, ui0 = free_paras(k)
@@ -244,10 +354,14 @@ def t_core():
     k.key(CODE['F']); k.key('again'); k.key(K_CODE_ENTER)
     check('form: CODE-Return confirms from the first field', has(k, 'Find: again 1 1'), screen(k))
     k.key(CODE['F']); k.key('world'); k.key(K_CODE_ENTER)
-    k.key(CODE['F']); k.key(ktest.ESC)
-    check('form: ESC cancels and changes nothing', has(k, 'Find: world 1 1') and not has(k, 'Fill in form'), screen(k))
+    k.key(CODE['F']); k.key('typed'); k.key(ktest.ESC)
+    check('form: ESC cancels (text typed first is not confirmed: UITEST still says what it had)', has(k, 'Find: world 1 1')
+          and not has(k, 'Find: typed') and not has(k, 'Fill in form'), screen(k))
+    k.key(CODE['F']); k.key('world'); k.key(K_CODE_ENTER)  # (the field as it was: the form edits it in place)
     k.key(CODE['F']); k.key(ktest.DOWN); f1 = k.u16('fm_cur'); k.key(ktest.DOWN, ktest.DOWN); f3 = k.u16('fm_cur'); k.key(ktest.ESC)
     check('form: Down goes to the next field, and from the last back to the first', (f1, f3) == (1, 0), (f1, f3))
+    k.key(CODE['F']); k.key(ktest.TAB); f1 = k.u16('fm_cur'); k.key(ktest.ESC)
+    check('form: Tab in a text field ends its edit and goes to the next field', f1 == 1, f1)
     # fixes of 2026-10-06
     k.key(CODE['F'])
     click(k, 320, 5)                    # above the form's window
@@ -255,6 +369,12 @@ def t_core():
           not k.crashed and has(k, 'Fill in form') and k.where().split()[-1].split('+')[0] != 'ui_form.click', (k.where(), k.band()))
     k.key(ktest.LEFT, K_PGDN, 'Z', K_CODE_ENTER)
     check('form: a key the form ignores keeps the field as it was (Left, PgDn, Z: "worlZd")', has(k, 'Find: worlZd'), screen(k))
+    k.key(CODE['F'])
+    # (these keys take 1.2 s and 53,000 blocks; an editor that let Right go past the text's
+    # end would run over memory with the next key and not come back)
+    done = keys_within(k, 5, 150000, ktest.RIGHT, 'Q', K_HOME, 0x0E08, ktest.LEFT, 'A', K_CODE_ENTER)
+    check('form: Right at the end, Backspace and Left at the start change nothing (Right, Q, Home, Backspace, Left, A: '
+          '"AworlZdQ"), within 5 s and 150,000 blocks', done and has(k, 'Find: AworlZdQ 1 1'), (k.pc.stopped, screen(k)))
     k.key(CODE['R'])
     check('UI_RUN given a .RUN: error 11 (it ran the header as code)', has(k, 'UI_RUN error 11'), screen(k))
     k.key(CODE['Q'])
@@ -343,13 +463,28 @@ def t_core():
     open(os.path.join(OUT, 'BAD4.RUN'), 'wb').write(hdr(1, 0, 0, 0) + b'\xc3')     # an image under 2 bytes, no fixups
     open(os.path.join(OUT, 'BAD5.RUN'), 'wb').write(hdr(4, 0xFF00, 0, 0) + b'\xc3\x90\x90\x90')     # BSS past 64 KB
     open(os.path.join(OUT, 'BAD6.RUN'), 'wb').write(hdr(100, 0, 0, 0) + b'\xc3\x90\x90\x90')        # the file cut short
-    img = image('bad2.img', *(os.path.join(OUT, 'BAD%d.RUN' % i) for i in range(2, 7)))
+    # each of the header's and the size's other failures
+    # (BAD7, a 10-byte file, is refused; but not by the short-read test alone, which has no check of its own:
+    # whatever the header's last 6 bytes hold, the image read finds no bytes after it, and with none to read
+    # the image is under 2 bytes.  BAD8 is a whole program but for "UN": without that test it would run)
+    open(os.path.join(OUT, 'BAD7.RUN'), 'wb').write(b'GRUN' + bytes(6))                       # a header cut short (10 bytes)
+    open(os.path.join(OUT, 'BAD8.RUN'), 'wb').write(b'GRXX' + hdr(4, 0, 0, 0)[4:] + b'\xc3\x90\x90\x90')   # "GR" but not "UN"
+    open(os.path.join(OUT, 'BAD9.RUN'), 'wb').write(b'GRUN' + struct.pack('<6H', k.Y.equ('UI_API') + 1, 4, 0, 0, 0, 0)
+                                                    + b'\xc3\x90\x90\x90')                     # a newer API than this core's
+    open(os.path.join(OUT, 'BAD10.RUN'), 'wb').write(hdr(4, 0, 0x2000, 0x2000) + b'\xc3\x90\x90\x90')   # 4000h fixups: 32 KB
+    open(os.path.join(OUT, 'BAD11.RUN'), 'wb').write(hdr(0x8000, 0x8000, 0, 0) + b'\xc3\x90\x90\x90')   # image + BSS past 64 KB
+    open(os.path.join(OUT, 'BAD12.RUN'), 'wb').write(hdr(4, 0xFFF8 - ubase - 4, 0, 0) + b'\xc3\x90\x90\x90')  # to FFF8h: no carry
+    img = image('bad2.img', *(os.path.join(OUT, 'BAD%d.RUN' % i) for i in range(2, 13)))
     k = ktest.KPC(img); k.start()
     table = k.pc.rd(k.useg, 0, 135)
+    check('the .RUNs load at the same run_base on this disk (BAD12.RUN counts on it)', k.u16('run_base') == ubase, (k.u16('run_base'), ubase))
     for name, why in (('BAD2.RUN', 'Not a program'), ('BAD3.RUN', 'Not a program'), ('BAD4.RUN', 'Not a program'),
-                      ('BAD5.RUN', 'Not enough memory'), ('BAD6.RUN', 'Not a program')):
+                      ('BAD5.RUN', 'Not enough memory'), ('BAD6.RUN', 'Not a program'), ('BAD7.RUN', 'Not a program'),
+                      ('BAD8.RUN', 'Not a program'), ('BAD9.RUN', 'Not a program'), ('BAD10.RUN', 'Not a program'),
+                      ('BAD11.RUN', 'Not enough memory'), ('BAD12.RUN', 'Not enough memory')):
         k.select(name); k.key(ktest.ENTER)
-        check('%s (a damaged header): "%s", the core untouched, the UI block its own size again' % (name, why),
+        check('%s (%s): "%s", the core untouched, the UI block its own size again'
+              % (name, 'a 10-byte file' if name == 'BAD7.RUN' else 'a damaged header', why),
               any("Can't run %s: %s" % (name, why) in l for l in k.band()) and not k.crashed and k.pc.rd(k.useg, 0, 135) == table
               and free_paras(k)[1] == ui0, (k.band(), k.where(), free_paras(k)[1], ui0))
         k.key(ktest.ENTER)
@@ -1093,6 +1228,47 @@ def t_exec():
     to_subject(k, 'MANY')
     check('more entries than fit (246 > 240): the band says only the first 240 are listed',
           any('Only the first 240 are listed' in l for l in k.band()) and k.u16('nent') == 240, (k.band(), k.u16('nent')))
+    # F5 (relist, as after the saver or a program) on a disk swapped for one with fewer files: no empty rows
+    # under the last, and a selection that is gone on the last entry, as after Delete
+    import pcemu
+    a = image('rla.img', *['F%02d.DAT=%s' % (i, empty) for i in range(20)])        # (21 entries with LODE.SYS)
+    b = bytearray(open(image('rlb.img', *['F%02d.DAT=%s' % (i, empty) for i in range(6)]), 'rb').read())   # (7)
+    b[0x27:0x2B] = b'\x12\x34\x56\x78'                  # (another serial: another disk)
+    for at, want_sel in ((5, 5), (10, 6)):
+        k = ktest.KPC(a); k.start()
+        k.key(K_END)
+        for _ in range(20 - at): k.key(ktest.UP, settle=False)
+        k.settle()
+        before = (k.u16('sel'), k.u16('top'))
+        k.pc.drives[0] = pcemu.Floppy(bytes(b)); k.pc.drives[0].changed = True
+        k.key(0x3F00)                                   # F5
+        names = [n.split('.')[0] for n in k.exec_list()]
+        firsts = [l.split()[0] for l in lines(k)[1:16] if l.split()]
+        check('21 entries, F%02d (%d) selected and %s, then F5 on a disk of 7: all 7 rows drawn, the list from its top, '
+              'entry %d selected, and drawn so' % (at, at, 'at the top' if at == 5 else 'not on it', want_sel),
+              before == (at, at if at == 5 else 8) and len(names) == 7 and all(n in firsts for n in names)
+              and k.u16('top') == 0 and k.u16('sel') == want_sel and lit_row(k) == names[want_sel],
+              (before, firsts, k.u16('top'), k.u16('sel'), names, lit_row(k)))
+    # F5 on the same disk keeps the place: the selection and the top row as they were; and so does F5 after
+    # the drive was not ready (an empty list: relist's place from before it)
+    k = ktest.KPC(a); k.start()
+    k.key(K_END)
+    for _ in range(10): k.key(ktest.UP, settle=False)
+    k.settle()
+    before = (k.u16('sel'), k.u16('top'), lines(k)[1].split()[0], lit_row(k))
+    k.key(0x3F00)
+    check('21 entries, End then 10 Ups (F10 selected, F08 the top row), F5 on the same disk: F10 selected and drawn so, '
+          'F08 still the top row', before == (10, 8, 'F08', 'F10') and (k.u16('sel'), k.u16('top')) == (10, 8)
+          and lines(k)[1].split()[0] == 'F08' and lit_row(k) == 'F10', (before, k.u16('sel'), k.u16('top'), lines(k)[1:3], lit_row(k)))
+    k.pc.drives[0].empty = True; k.pc.drives[0].changed = True
+    k.key(0x3F00, settle=False); k.settle(20)
+    gone = (k.u16('nent'), k.band()[:1])
+    k.key(ktest.ENTER)
+    k.pc.drives[0].empty = False; k.pc.drives[0].changed = True
+    k.key(0x3F00, settle=False); k.settle(20)
+    check('... the disk taken out, F5 ("Drive not ready", no entries), the disk back, F5: F10 selected and F08 the top row again',
+          gone == (0, ["Can't read the disk: Drive not ready (no disk?)"]) and (k.u16('sel'), k.u16('top')) == (10, 8)
+          and lines(k)[1].split()[0] == 'F08' and lit_row(k) == 'F10', (gone, k.u16('sel'), k.u16('top'), lines(k)[1:3], lit_row(k)))
 
 DIVRUN = os.path.join(OUT, 'DIVRUN.RUN')
 def t_divrun():
@@ -1105,11 +1281,17 @@ def t_divrun():
     mkrun.build(os.path.join(HERE, 'DIVRUN.ASM'), DIVRUN)
     k = ktest.KPC(image('divrun.img', DIVRUN, MEMSZ)); k.pc.mouse = True; k.start()
     free0 = free_paras(k)
-    jfree = lambda: list(k.pc.rd(k.u16('root_psp'), 0x18, 20)).count(0xFF)     # (the root's handle table)
-    j0 = jfree()
+    jft = lambda: bytes(k.pc.rd(k.u16('root_psp'), 0x18, 20))                  # (the root's handle table)
+    jfree = lambda: list(jft()).count(0xFF)
+    eq = k.Y.equ
+    refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * eq('SFT_SZ') + eq('S_REF'), 1)[0] for i in range(eq('NSFT'))]
+    dsy = run_syms('tests/DIVRUN.ASM')
+    j0, r0, full = jfree(), refs(), []
     for key, where in (('M', 'its own loop'), ('D', 'a key handler UI_DISPATCH calls')):
         k.select('DIVRUN.RUN'); k.key(ktest.ENTER)
         up = has(k, 'Divide test') and k.rd('run_active', 1) == b'\x01' and free_paras(k) != free0
+        k.key('F')                                      # (its file opened till the table is full)
+        full.append((jfree(), k.pc.u16(k.useg, k.u16('run_base') + dsy['fillerr'])))
         k.pc.tty.clear()
         k.key(key)
         check('DIVRUN.RUN (a window, a UI_ALLOC block), a divide error in %s: "Divide overflow" written, the Executive '
@@ -1118,23 +1300,36 @@ def t_divrun():
               up and '\r\nDivide overflow\r\n' in ''.join(k.pc.tty) and not has(k, 'Divide overflow') and not has(k, 'Divide test') and k.band()[:1] == ['Select a file and confirm'] and 'DIVRUN.RUN' in k.exec_list()
               and k.rd('run_active', 1) == b'\x00' and k.u16('wdepth') == 0 and free_paras(k) == free0 and not k.crashed,
               (up, ''.join(k.pc.tty), k.band(), k.rd('run_active', 1), k.u16('wdepth'), free_paras(k), free0, k.where()))
-    check('(a limit: a .RUN\'s open files stay open after its divide error) DIVRUN.RUN\'s file, opened in each of '
-          'the two runs, still takes a slot of the root\'s handle table: %d free, %d before' % (jfree(), j0),
-          jfree() == j0 - 2, (jfree(), j0))
+    check('the .RUN\'s open files closed when the Executive starts over: DIVRUN.RUN, opened in each of the two runs '
+          'till the root\'s handle table was full (error 4), leaves all 15 of handles 5-19 free and the kernel\'s file '
+          'table\'s reference counts as at the start', full == [(0, 4), (0, 4)] and j0 == 15 and jfree() == 15
+          and refs() == r0, (full, j0, jfree(), r0, refs()))
     click(k, 40, 48)
     s1 = k.u16('sel')
     k.select('DIVRUN.RUN'); k.key(ktest.ENTER); k.key(ktest.ESC)
     check('... afterwards: a click selects a list row (the second: %d), DIVRUN.RUN runs again and ends with ESC '
           '(exit code 5), memory as before' % s1, s1 == 1 and run_ret(k) == 5 and free_paras(k) == free0 and not k.crashed,
           (s1, run_ret(k), free_paras(k), free0))
+    # an ordinary end closes nothing of the root's: a .RUN ending with its file open leaves it so (as it always
+    # has: the .RUN is the root's own code), and a DOS program's run after it leaves the table as it was
+    k.select('DIVRUN.RUN'); k.key(ktest.ENTER); k.key('K')
+    t1, r1 = jft(), refs()
+    k.run_file('MEMSZ.COM', 20)
+    check('a .RUN\'s ordinary end with its file open (DIVRUN.RUN, K: exit code 6): the file still open in the root\'s '
+          'handle table (14 free); after MEMSZ.COM ran, the table and the reference counts as they were',
+          run_ret(k) == 6 and list(t1).count(0xFF) == 14 and any('MEMSZ.COM ended' in l for l in k.band())
+          and jft() == t1 and refs() == r1, (run_ret(k), t1.hex(), jft().hex(), r1, refs(), k.band()))
+    k.select('DIVRUN.RUN')                              # (room below it for the Downs that follow)
     at = divide_at(k, lambda pc: pc.r('cs') == k.useg and pc.r('ip') == k.Y['ex_row'])
     k.pc.tty.clear()
     k.key(ktest.DOWN)
     k.key(ktest.DOWN)
     check('a divide error in the Executive\'s own code (raised at ex_row, a list row it draws): the message, the '
-          'Executive starts over and goes on (Down moves the selection), memory as before',
+          'Executive starts over and goes on (Down moves the selection), memory as before, and the file the .RUN '
+          'left open closed (15 free, the reference counts as at the start)',
           at and 'Divide overflow' in ''.join(k.pc.tty) and k.band()[:1] == ['Select a file and confirm']
-          and k.u16('sel') >= 1 and free_paras(k) == free0 and not k.crashed, (at, ''.join(k.pc.tty), k.band(), k.u16('sel')))
+          and k.u16('sel') >= 1 and free_paras(k) == free0 and not k.crashed and jfree() == 15 and refs() == r0,
+          (at, ''.join(k.pc.tty), k.band(), k.u16('sel'), jfree(), refs(), r0))
     k.run_file('MEMSZ.COM', 20)
     check('... and runs a program', any('MEMSZ.COM ended' in l for l in k.band()) and not k.crashed, k.band())
 
@@ -1319,6 +1514,42 @@ def t_saver_delay():
     ini2 = os.path.join(OUT, 'LODE2.INI'); open(ini2, 'wb').write(b'SAVER=99\r\n')
     k = ktest.KPC(image('svd4.img', 'LODE.INI=' + ini2)); k.start()
     check('SAVER=99: 30 minutes at most', k.rd('saver_min', 1) == b'\x1e' and k.u16('saver_t') == 32760, k.rd('saver_min', 1))
+    # no digit: no line (5 minutes kept); three digits: 30, none wrapped to 0 (never) or to a minute or two
+    for line, mins in ((b'SAVER=', 5), (b'SAVER= 10', 5), (b'SAVER=x', 5), (b'SAVER=256', 30), (b'SAVER=257', 30),
+                       (b'SAVER=512', 30), (b'SAVER=769', 30), (b'SAVER=100', 30), (b'SAVER=7', 7), (b'SAVER=0', 0)):
+        open(ini2, 'wb').write(line + b'\r\n')
+        k = ktest.KPC(image('svd6.img', 'LODE.INI=' + ini2)); k.start()
+        check('%s: %s' % (line.decode(), '%d minutes' % mins if mins else 'never'), k.rd('saver_min', 1) == bytes([mins])
+              and k.u16('saver_t') == (mins * 1092 if mins else 0xFFFF), (k.rd('saver_min', 1), hex(k.u16('saver_t'))))
+    # ... and the delay in effect: idle 10 s short of 30 minutes, no saver; at 30 minutes, the saver
+    open(ini2, 'wb').write(b'SAVER=256\r\n')
+    k = ktest.KPC(image('svd7.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
+    early = idle(k, 30 * 1092 - 182)
+    check('SAVER=256: not after 29 minutes 50 s idle, but after 30 minutes (DEFRAG\'s map)', not early and idle(k, 30 * 1092),
+          (early, lines(k)[:2]))
+    # a poll late (polls 14 ticks apart, as under MULTITASK=1 beside busy tasks) past 30 minutes and 8 ticks:
+    # the saver all the same (idle counted only below 8000h ticks missed it, and 30 minutes more each time);
+    # a clock gone back between polls (midnight's B0h ticks) is no idle time: no saver
+    def late(k, back):
+        t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
+        k.wr('lastpoll', struct.pack('<H', (t + back if back else t - 14) & 0xFFFF))
+        return idle(k, 30 * 1092 + 10)
+    open(ini2, 'wb').write(b'SAVER=30\r\n')
+    k = ktest.KPC(image('svd8.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
+    gone_back = late(k, 0xB0)
+    check('SAVER=30: the clock back B0h ticks between two polls (midnight), 30 minutes and 10 ticks after the last key: '
+          'no saver', not gone_back and k.u16('saver_t') == 30 * 1092, (lines(k)[:2], hex(k.u16('saver_t'))))
+    k = ktest.KPC(image('svd8.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
+    check('SAVER=30: a poll 14 ticks after the last, 30 minutes and 10 ticks after the last key: the saver',
+          late(k, 0), lines(k)[:2])
+    # the last key ahead of the clock (an idle count of F000h or more): no saver, the count starts again
+    k = ktest.KPC(image('svd8.img', DEFRAG, 'LODE.INI=' + ini2)); k.start()
+    t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
+    k.wr('lastpoll', struct.pack('<H', t)); k.wr('lastact', struct.pack('<H', (t + 5) & 0xFFFF))
+    k.pc.run_for(4)
+    since = (struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0] - k.u16('lastact')) & 0xFFFF
+    check('SAVER=30: the last key 5 ticks ahead of the clock (idle FFFBh): no saver, and the idle count starts again',
+          not has(k, 'Drive A:') and since < 100, (lines(k)[:2], since))
     # past 511 bytes of other lines (System keeps a LODE.INI up to 1 KB and
     # puts its own lines last): font_boot read only the first 511
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'X1=1\r\n' * 160 + b'saver=2\r\nFONT=TERMBOLD.FNT\r\nTIDY=0\r\n')

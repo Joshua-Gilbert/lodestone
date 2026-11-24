@@ -535,18 +535,8 @@ relist: mov     al, [focus]
         mov     bx, [last_top]
 .keep:  mov     [last_sel], ax
         mov     [last_top], bx
-        push    ax
-        push    bx
-        call    load_dir
-        pop     ax
-        pop     bx
-        cmp     bx, [nent]
-        jae     .r
-        mov     [sel], bx
-        cmp     ax, bx
-        ja      .r
-        mov     [top], ax
-.r:     jmp     draw_all
+        mov     [top], bx               ; (relist_at's place: from top, AX
+        jmp     relist_at               ;  chosen, the last if it is gone)
 
 ; exec_dta -> FAT-style entry at DI (name, attribute, time, date, size)
 ; (AX, BX, CX, SI, DI change)

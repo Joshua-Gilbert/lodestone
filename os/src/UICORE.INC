@@ -199,7 +199,20 @@ exec_main:
         cmp     byte [mstarted], 0
         jne     .again
         jmp     ui_boot                 ; (the first time: section uiboot)
-.again: call    m33_end
+.again: mov     bx, 5                   ; started over: terminate with the
+.cl:    mov     ah, 3Eh                 ;  root's PSP current (INT 00h's end,
+        int     21h                     ;  a .RUN's own 4Ch, 00h or 20h, the
+        inc     bx                      ;  default INT 23h, ^C, at the root;
+        cmp     bx, 20                  ;  an Abort there is a Fail, KDISK.INC
+        jb      .cl                     ;  crit_disk).  The files the stopped
+                                        ;  code had open in the root's own
+                                        ;  handles 5-19 are closed (one not
+                                        ;  open: error 6, nothing done), before
+                                        ;  INT 24h is ours again (set24) and
+                                        ;  before the mouse is ended, so a
+                                        ;  dirty file on a changed floppy asks
+                                        ;  in the band before the redraw
+        call    m33_end
         call    mouse_on
 .go:    call    set24
         call    act_now
@@ -363,14 +376,23 @@ font_boot:
         jne     .next
         add     si, 6
         xor     bx, bx
+        mov     al, [si]                ; (no digit: no line, the default kept)
+        sub     al, '0'
+        cmp     al, 9
+        ja      .next
 .d:     lodsb                           ; the number
         sub     al, '0'
         cmp     al, 9
         ja      .dn
         imul    bx, bx, 10
-        add     bl, al
-        cmp     bx, 100
-        jb      .d
+        cmp     bx, 100                 ; (a digit after 10 or more: 30;
+        jae     .cap                    ;  capped here, as saver_set takes
+                                        ;  BL alone: of a
+        add     bl, al                  ;  count of 256 or more it would see
+        jmp     .d                      ;  the low byte, 260 as 4 minutes,
+                                        ;  530 as 18; and before the add,
+                                        ;  which wraps BL: 256 would be 0)
+.cap:   mov     bl, 30                  ; (100 or more: 30; 005 is 5)
 .dn:    dec     si
         call    saver_set
         jmp     .next
@@ -452,7 +474,7 @@ api_saver:
 saver_set:
         push    ax
         push    dx
-        cmp     bl, 30                  ; (the idle count stays under 8000h)
+        cmp     bl, 30                  ; (saver_t far under poll_once's F000h)
         jbe     .m
         mov     bl, 30
 .m:     mov     [saver_min], bl
@@ -669,8 +691,13 @@ poll_once:
         mov     [lastact], ax
 .idle:  mov     bx, ax                  ; idle [saver_t] ticks: the screen saver
         sub     bx, [lastact]
-        cmp     bx, 8000h               ; (the clock went back at midnight)
-        jb      .sv
+        cmp     bx, 0F000h              ; (F000h and up: lastact ahead of the
+        jb      .sv                     ;  clock.  A step back between polls,
+                                        ;  midnight's B0h ticks or the clock
+                                        ;  set, is caught by the 36 above; the
+                                        ;  most saver_t, 7FF8h, far below, so a
+                                        ;  poll a few ticks late still starts
+                                        ;  the saver)
         mov     [lastact], ax
         jmp     .ck
         times ($ - $$) & 1 db 90h       ; (hot: even)
@@ -1472,17 +1499,14 @@ compose:
         mov     si, bp
         shl     si, 2
         add     si, ubuf
-        mov     cx, [uw]
-.c4:    mov     al, [si]
-        mov     [es:di], al
-        inc     si
-        inc     di
-        loop    .c4
+        mov     cx, [uw]                ; (1 to 3: never 0; DF clear, as for
+        rep     movsb                   ;  .done's copy)
         inc     bp
         jmp     .r4
 .r4d:   pop     es
         popa
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .old1:  cmp     dx, 80                  ; DX = byte col, DI = ubuf row, BX = save index
         jae     .ox
         mov     si, dx
@@ -3234,15 +3258,17 @@ ed_enter:                               ; (ui_form, back in the same field:
         cmp     ah, 0FFh                ; an event: a click ends it; any other
         jne     .ch                     ;  (EV_MOVED: the window moved, the
         cmp     al, EV_CLICK & 0FFh     ;  field with it, drawn there;
-        je      .out                    ;  EV_RCLICK) and editing goes on, a
+        je      .hout                   ;  EV_RCLICK) and editing goes on, a
         jmp     .l                      ;  first character still replacing
-.ch:
+.hout:  jmp     .out                    ; (the edit's end, in a short jump's
+        times ($ - $$) & 1 db 90h       ;  reach: each key goes past it;
+.ch:                                    ;  hot: even)
         cmp     al, 0Dh
-        je      .out
+        je      .hout
         cmp     al, 1Bh
-        je      .out
+        je      .hout
         cmp     al, 09h
-        je      .out
+        je      .hout
         cmp     al, ' '                 ; a character: in it goes
         jb      .key
         cmp     al, 7Eh
@@ -3275,23 +3301,25 @@ ed_enter:                               ; (ui_form, back in the same field:
         cmp     al, 0E0h
         je      .out
         jmp     .l
-.bksp:  cmp     word [ed_pos], 0
-        je      .l
-        dec     word [ed_pos]
+.bksp:  cmp     word [ed_pos], 0        ; (at either end of the text: by the
+        je      .bkl                    ;  jmp .l below, in a short jump's
+        dec     word [ed_pos]           ;  reach)
 .del:   call    ed_del
-        jmp     .l
+.bkl:   jmp     .l
 .left:  cmp     word [ed_pos], 0
-        je      .l
+        je      .lfl
         dec     word [ed_pos]
-        jmp     .l
+.lfl:   jmp     .l
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .right: mov     si, [ed_buf]
         add     si, [ed_pos]
         cmp     byte [si], 0
-        je      .l
+        je      .rtl
         inc     word [ed_pos]
-        jmp     .l
+.rtl:   jmp     .l
 .home:  mov     word [ed_pos], 0
         jmp     .l
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .end:   mov     si, [ed_buf]
         call    strlen
         mov     [ed_pos], cx
@@ -3458,10 +3486,10 @@ ui_form:
         pop     ax
         cmp     ax, K_ENTER
         je      .next
-        cmp     ax, K_CODE_ENTER
-        je      .ok
-        cmp     ax, K_ESC
-        je      .cancel
+        cmp     ax, K_CODE_ENTER        ; (the form's ends, and a text
+        je      .hok                    ;  field's key with no use here: by
+        cmp     ax, K_ESC               ;  the jmps before .cnext, in a short
+        je      .hcan                   ;  jump's reach)
         cmp     ax, K_TAB
         je      .down
         cmp     ax, K_DOWN
@@ -3473,7 +3501,7 @@ ui_form:
         cmp     ax, EV_CLICK
         je      .click
         cmp     byte [si+FL_TYPE], FT_CHOICE
-        jne     .same                   ; (a key the editor gave back)
+        jne     .hsame                  ; (a key the editor gave back)
         cmp     ax, K_RIGHT
         je      .cnext
         cmp     al, ' '
@@ -3481,9 +3509,11 @@ ui_form:
         cmp     ax, K_LEFT
         je      .cprev
         jmp     .l
-.next:  call    .adv
-        jae     .ok
+        db      90h                     ; (never run: .next, .down and .set
+.next:  call    .adv                    ;  keep their parity)
+        jae     .hok
         jmp     short .set
+        db      90h                     ; (never run, as above)
 .down:  call    .adv
         jb      .set
         xor     ax, ax
@@ -3496,6 +3526,9 @@ ui_form:
         mov     ax, [bx+F_N]
 .u1:    dec     ax
         jmp     .set
+.hok:   jmp     short .ok
+.hcan:  jmp     short .cancel
+.hsame: jmp     short .same
 .cnext: call    fm_choice_count         ; CX = options
         mov     bx, [si+FL_DATA]
         mov     al, [bx]
@@ -4131,7 +4164,7 @@ ui_reclaim:
         mov     [ui_paras], bx
         popa
 .x:     popf
-        ret
+.ret:   ret                             ; (ui_room's too: nothing pushed there)
 
 ; Room for the UI block to be whole, with RUN_ROOM free right after it for
 ; a .RUN.  If something resident (a TSR) now sits there, the block moves:
@@ -4141,11 +4174,11 @@ ui_reclaim:
 ; no segment values: the Executive's main loop.
 RUN_ROOM    equ 1024                    ; 16 KB
 ui_room:
-        cmp     byte [need_room], 0
-        je      .x
+        cmp     byte [need_room], 0     ; (both by the ret just above, in a
+        je      ui_reclaim.ret          ;  short jump's reach)
         mov     byte [need_room], 0
         cmp     byte [run_active], 0
-        jne     .x
+        jne     ui_reclaim.ret
         pusha
         mov     bx, UI_PARAS + RUN_ROOM
         mov     ah, 4Ah                 ; (ES = CS) room here?
@@ -4206,7 +4239,7 @@ ui_room:
         mov     [ui_paras], bx
         mov     word [ent_max], MAXENT
 .stay:  popa
-.x:     ret
+        ret
 
 ; run the .RUN at SI with argument DI -> AX = its exit code; CF if it
 ; couldn't be started (AX = DOS error, or 11 for a file that isn't a .RUN)
@@ -4216,6 +4249,9 @@ run_app:
         mov     ax, 8                   ; (one at a time)
         stc
         ret
+.hbad:  jmp     .bad                    ; (the failures, in a short jump's
+.hbig:  jmp     .big                    ;  reach)
+        db      90h                     ; (never run: .abs and on stay even)
 .free:  pusha
         mov     [run_ret], di
         mov     dx, si
@@ -4230,29 +4266,29 @@ run_app:
         int     21h
         jc      .errc
         cmp     ax, 16
-        jne     .bad
+        jne     .hbad
         cmp     word [run_hdr], 'GR'
-        jne     .bad
+        jne     .hbad
         cmp     word [run_hdr+2], 'UN'
-        jne     .bad
+        jne     .hbad
         cmp     word [run_hdr+4], UI_API
-        ja      .bad
+        ja      .hbad
         mov     ax, [run_hdr+10]        ; fixups after the image: room for them
         add     ax, [run_hdr+12]
-        jc      .bad                    ; (a damaged header: counts that
+        jc      .hbad                   ; (a damaged header: counts that
         cmp     ax, 4000h               ;  overflow when doubled)
-        jae     .bad
+        jae     .hbad
         shl     ax, 1
         mov     [run_hdr+14], ax        ; (the fixups' bytes, in the header's
         cmp     ax, [run_hdr+8]         ;  spare word: mkrun.py writes 0)
         jae     .room
         mov     ax, [run_hdr+8]
 .room:  add     ax, [run_hdr+6]
-        jc      .big
+        jc      .hbig
         add     ax, [run_base]
-        jc      .big
+        jc      .hbig
         cmp     ax, 0FFF0h
-        ja      .big
+        ja      .hbig
         add     ax, 15
         shr     ax, 4
         mov     bx, ax
