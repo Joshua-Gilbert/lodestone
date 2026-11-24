@@ -176,12 +176,19 @@ env_init:
         xor     di, di
 .c:     cmp     byte [si], 0
         je      .d
+        mov     bx, di                  ; (where this string starts)
 .s:     lodsb
         stosb
         or      al, al
-        jnz     .s
-        cmp     di, ENVPARA * 16 - 2
-        jb      .c
+        jz      .c
+        cmp     di, ENVPARA * 16 - 1    ; the last byte is the second NUL's
+        jb      .s
+        mov     di, bx                  ; a string that does not fit whole
+        xor     al, al                  ;  is dropped, and so are the rest.  The
+        stosb                           ;  first string's leaves no NUL before
+        or      bx, bx                  ;  it, and EXEC's copy wants two: a
+        jnz     .d                      ;  second there alone (one starting on
+        stosb                           ;  the last byte has no room for it)
 .d:     pop     ds
         push    es
         mov     es, [mypsp]             ; give the old one back
@@ -558,8 +565,7 @@ do_pipe:
         call    pipe_name
 .no:    inc     byte [pipe_n]           ; (counted first: a later one's
         call    parse_redir             ;  redirection failing, the files
-        jc      .x                      ;  the one before made go too)
-        call    redir_do
+        call    redir_do                ;  the one before made go too)
         jc      .x
         mov     si, cmdl
         call    run_cmd
@@ -710,7 +716,7 @@ redir_do:
         jnc     .io
         jmp     err_notfound
 .io:    mov     bx, ax
-        mov     cx, 0
+        xor     cx, cx
         call    swap_handle
         mov     [save_in], ax
 .o:     cmp     byte [out_name], 0
@@ -722,9 +728,7 @@ redir_do:
         int     21h
         jc      .cr
         mov     bx, ax
-        push    bx
-        call    seek_end
-        pop     bx
+        call    seek_end                ; (BX kept)
         jmp     .oo
 .cr:    mov     dx, out_name
         xor     cx, cx
@@ -739,21 +743,33 @@ redir_do:
 .x:     clc
         ret
 
-; make handle CX refer to file handle BX (which is closed); AX = a copy
-; of what CX was
+; redir_do's: make handle CX refer to file handle BX (which is closed);
+; AX = a copy of what CX was.  No handle left for the copy: CX is left as
+; it was, the file is closed all the same, and "Too many open files" (CF)
+; goes back to redir_do's caller: the command is not run.  A pipe's
+; first command (a rest of the line after it) has pipe_n counted on, so
+; do_pipe deletes this level's pipe files, its own made.  Only then: no
+; delete, so no INT 24h, for a line with no pipe, or for a pipe failing
+; otherwise
 swap_handle:
         push    bx
         mov     bx, cx
         mov     ah, 45h
         int     21h
         pop     bx
-        jc      .x
+        jc      .f
         push    ax
         mov     ah, 46h
         int     21h
         call    fclose
         pop     ax
-.x:     ret
+        ret
+.f:     call    fclose
+        mov     al, [pipe_rest + 1]     ; (the rest: in our buffers, 100h-
+        add     [pipe_n], al            ;  FEFFh, so 1-FEh; none: 0)
+        pop     ax                      ; (redir_do's return)
+        mov     si, e_toomany
+        jmp     err
 
         times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so the hot labels after even)
 redir_undo:
@@ -1248,6 +1264,8 @@ bat_read:
         call    bat_gone                ; (CF: it ended the batch file)
         jnc     .o
         ret
+.ch:    jmp     .ce                     ; (in short reach of the read's)
+        times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so .f even)
 .h:     xchg    bx, ax
         mov     dx, [bat_pos]
         mov     cx, [bat_pos + 2]
@@ -1257,9 +1275,9 @@ bat_read:
         mov     cx, LBUF + 1            ; (127 and CR LF: whole)
         mov     ah, 3Fh
         int     21h
-        jc      .ce
+        jc      .ch
         or      ax, ax
-        jz      .ce
+        jz      .ch
         inc     word [bat_line]
         ; up to the end of the line; seek back to the next one
         mov     cx, ax
@@ -1618,18 +1636,18 @@ do_if:  mov     byte [if_not], 0
         call    skipsp
         jmp     run_cmd
 .x:     ret
-.syn:   jmp     err_syntax
+.syn:   jmp     err_syntax              ; (do_for's too)
 
 ; FOR %V IN (set) DO command: the command once for each item of the set
 ; (the names that match, for one with * or ?), the item in place of %V
-do_for: cmp     byte [for_on], 0
-        jne     .syn                    ; (not one inside another)
-        lodsb
+do_for: cmp     byte [for_on], 0        ; (its syntax errors: do_if's .syn,
+        jne     do_if.syn               ;  just above, in short reach; not
+        lodsb                           ;  one FOR inside another)
         cmp     al, '%'
-        jne     .syn
+        jne     do_if.syn
         lodsb
         cmp     al, ' '
-        jbe     .syn
+        jbe     do_if.syn
         mov     [for_var], al
         call    getarg1
         push    si
@@ -1637,15 +1655,15 @@ do_for: cmp     byte [for_on], 0
         mov     di, s_in
         call    streqi
         pop     si
-        jne     .syn
+        jne     do_if.syn
         call    skipsp
         lodsb
         cmp     al, '('
-        jne     .syn
+        jne     do_if.syn
         mov     [for_item], si          ; (for now: the set's start)
 .p:     lodsb
         or      al, al
-        jz      .syn
+        jz      do_if.syn
         cmp     al, ')'
         jne     .p
         mov     byte [si-1], 0
@@ -1655,10 +1673,10 @@ do_for: cmp     byte [for_on], 0
         mov     di, s_do
         call    streqi
         pop     si
-        jne     .syn
+        jne     do_if.syn
         call    skipsp
         cmp     byte [si], 0
-        je      .syn
+        je      do_if.syn
         mov     [for_cmdp], si          ; (for now: the command's start)
         mov     bx, FB_PARAS            ; the set, the command and the DTA
         mov     ah, 48h                 ;  in a block of their own, out of
@@ -1736,7 +1754,6 @@ do_for: cmp     byte [for_on], 0
         mov     byte [for_on], 0
         dec     byte [for_n]
         jmp     for_free
-.syn:   jmp     err_syntax
 
 ; FOR's block given back, and the DTA ours again (DS = CS)
 for_free:
@@ -2117,11 +2134,11 @@ edit_line:
 .mv:    mov     [ed_pos], dl
         mov     al, dl
         call    ed_at
-        jmp     .key
+.kh:    jmp     .key                    ; (and the keys that do nothing)
 .r:     cmp     ah, 4Dh                 ; Right
         jne     .h
         cmp     dl, dh
-        jae     .key
+        jae     .kh
         inc     dl
         jmp     .mv
 .h:     cmp     ah, 47h                 ; Home
@@ -2135,12 +2152,12 @@ edit_line:
 .d:     cmp     ah, 53h                 ; Del
         jne     .u
         cmp     dl, dh
-        jae     .key
+        jae     .kh
 .del:   mov     cx, 1
         call    ed_cut
         jmp     .show
 .bs:    or      dl, dl
-        jz      .key
+        jz      .kh
         dec     dl
         mov     [ed_pos], dl
         jmp     .del
@@ -2152,7 +2169,7 @@ edit_line:
         jne     .dn
         mov     si, [hist_cur]
         cmp     si, hist
-        jbe     .key
+        jbe     .kh
         call    hist_back
         mov     [hist_cur], si
         jmp     .get
@@ -2160,7 +2177,7 @@ edit_line:
         jne     .f3
         mov     si, [hist_cur]
         cmp     si, [hist_end]
-        jae     .key
+        jae     .kh
 .db:    lodsb
         or      al, al
         jnz     .db
@@ -2176,16 +2193,16 @@ edit_line:
         mov     [ed_pos], al
         jmp     .show
 .f3:    cmp     ah, 3Dh                 ; F3: the rest of the last line
-        jne     .key
+        jne     .kf
         mov     si, [hist_end]
         cmp     si, hist
-        jbe     .key
+        jbe     .kf
         call    hist_back
         mov     cl, dh                  ; past as much as is typed
         xor     ch, ch
 .fk:    jcxz    .fc
         cmp     byte [si], 0
-        je      .key
+        je      .kf
         inc     si
         dec     cx
         jmp     .fk
@@ -2201,6 +2218,7 @@ edit_line:
         jmp     .fl
 .fd:    mov     dl, dh
         jmp     .gset
+.kf:    jmp     .key                    ; (F3's and an unknown key's: in reach)
 .brk:   mov     al, dh                  ; Ctrl-C: the line is dropped
         call    ed_at
         mov     si, s_ctrlc
@@ -2297,7 +2315,7 @@ edit_line:
         mov     cx, 10h
         mov     ah, 4Eh
 .tfind: int     21h
-        jc      .beep
+        jc      .bh
 .tdot:  cmp     byte [dta + 30], '.'    ; (not . and ..)
         je      .tskip
         mov     si, dta + 30            ; (nor a name with a space inside:
@@ -2310,7 +2328,7 @@ edit_line:
         int     21h
         jnc     .tdot
 .twrap: cmp     byte [ed_wrap], 0       ; past the last: the first again
-        jne     .beep                   ;  (once: every name left has a
+        jne     .bh                     ;  (once: every name left has a
         inc     byte [ed_wrap]          ;  space, or there is none)
         jmp     .tfirst
 .tnext: call    set_dta
@@ -2319,6 +2337,7 @@ edit_line:
         int     21h
         jnc     .tdot
         jmp     .twrap
+.bh:    jmp     .beep                   ; (Tab's: in short reach)
 .tput:  mov     si, dta + 30            ; the name found, in place of the
         call    strlen                  ;  one typed (if it fits)
         test    byte [dta + 21], 10h    ; (a directory: with its \)
@@ -2331,7 +2350,7 @@ edit_line:
         sub     ah, al
         add     ah, cl
         cmp     ah, LBUF - 2
-        ja      .beep
+        ja      .bh
         push    cx
         mov     cl, al
         xor     ch, ch
@@ -2540,6 +2559,10 @@ tick:   push    ds
         mov     ax, [46Ch]
         pop     ds
         ret
+run_saver.q:                            ; (a copy of its .x, in short reach
+        pop     es                      ;  of its first two tests)
+        popa
+        ret
 
 ; the Executive's screen saver (INT 21h F0h AL=5 told where), the text
 ; screen kept meanwhile in memory taken for it and put back, the key that
@@ -2550,11 +2573,11 @@ run_saver:
         call    mt_mine                 ; (with multitasking, only in front:
         jc      .on                     ;  behind, the screen isn't ours)
         cmp     al, ah
-        jne     .x
+        jne     .q
 .on:    mov     ah, 0Fh
         int     10h
         cmp     al, 3
-        ja      .x
+        ja      .q
         mov     [sv_mode], al
         mov     ah, 3
         xor     bh, bh
@@ -3485,11 +3508,12 @@ cparse: call    plus_join               ; ("a + b": "a+b")
         mov     [plus], al              ; (not 0: a "+" list)
         xor     bx, bx
         jmp     short .st
+.lh:    jmp     .long                   ; (in short reach of the two)
 .ch:    inc     bx
         cmp     bx, 79
-        ja      .long
+        ja      .lh
 .st:    cmp     di, plist + LBUF
-        jae     .long
+        jae     .lh
         mov     dl, al
         stosb
         jmp     .l
@@ -4955,16 +4979,16 @@ do_start:
 ; but failed)
 do_wait:
         call    task_arg
-        jc      .er
+        jc      .eh
         cmp     bl, [mt_me]
         mov     si, e_tnot
-        je      .er
+        je      .eh
         mov     [wtask], bl
         call    .get
-        jc      .er
+        jc      .eh
         or      ah, ah
         mov     si, e_notask
-        jz      .er
+        jz      .eh
         or      al, al                  ; (free: the last one there ended)
         jz      .end
         mov     [wgen], ah
@@ -4983,6 +5007,7 @@ do_wait:
 .tk:    cbw                             ;  gets here with MT on only)
         int     16h                     ; (AH = 0: AL is 3 or 0)
         jmp     short .cc
+.eh:    jmp     .er                     ; (in short reach of the first four)
 .fw:    push    ds
         push    40h
         pop     ds
@@ -5087,12 +5112,16 @@ do_pause:
 
 do_exit:
         cmp     byte [oneshot], 0
-        jne     .x
+        jne     .q
         cmp     byte [perm], 0          ; the first shell can't go
         jne     .x
         mov     ax, 4C00h
         int     21h
 .x:     ret
+.q:     jmp     start.quit              ; /C: EXIT ends the command, whatever
+                                        ;  a batch file has left (start.quit
+                                        ;  lies in the history overlay, which
+                                        ;  /C never writes)
 
 ; SET, SET NAME=, SET NAME=value
 do_set: cmp     byte [si], 0
@@ -5151,7 +5180,10 @@ es_puts:
 .x:     ret
 
 do_prompt:
-        mov     di, setbuf
+        cmp     byte [si], '='          ; (PROMPT=$P$G, as PATH=X)
+        jne     .v
+        inc     si
+.v:     mov     di, setbuf
         push    si
         mov     si, s_promptv
         call    strcpy
@@ -5309,6 +5341,8 @@ getnum: push    cx
         pop     cx
         ret
 
+        times   ($ - $$) & 1 db 90h     ; (the environment search even: at every
+                                        ;  prompt, command and %NAME%)
 env_seg:                                ; AX (and ES) = environment
         push    ds
         mov     ds, [cs:mypsp]
@@ -5356,6 +5390,8 @@ skipz:  xor     al, al
         mov     cx, 0FFFFh
         repne   scasb
 .x:     ret
+env_set_line.syn:                       ; (in short reach of its two)
+        jmp     err_syntax
 
 ; SI = "NAME=value" (or "NAME="): set or remove it
 env_set_line:
@@ -5438,7 +5474,6 @@ env_set_line:
         pop     es
         mov     si, e_envfull
         jmp     err
-.syn:   jmp     err_syntax
 
 ; ---------------------------------------------------------------------
 ; the prompt from PROMPT ($P$G by default)
@@ -5851,6 +5886,7 @@ padw        dw 0
         EVEN    do_dir.e, do_dir.n, put_83, put_83.part, put_83.pn, put_83.pl, pump.l, show_prompt.l
         EVEN    putc, puts, crlf, strlen.l, strlen.x, strcpy, strend.l, streq, streq.l, streq.x, upcase, upcase.x
         EVEN    skipsp.x, getarg.l, pu2sp
+        EVEN    env_find.v, env_find.c, env_end.e
 
 section .bss
 bss_start:
