@@ -1599,6 +1599,7 @@ hd_warn:
         call    print
         cmp     bl, 'Y'
         je      .y
+        call    irq_back
         mov     ax, 4C05h
         int     21h
 .esc:   jmp     stopped

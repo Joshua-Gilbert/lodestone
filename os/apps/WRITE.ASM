@@ -1827,10 +1827,10 @@ k_subst:
 .ask:   call    UI_EVENT
         cmp     ax, K_ESC
         je      .stop
+        cmp     al, 0Dh
+        je      .do
         or      al, 20h
         cmp     al, 'y'
-        je      .do
-        cmp     al, 0Dh | 20h
         je      .do
         cmp     al, 'a'
         je      .all
@@ -2485,17 +2485,7 @@ h12         db 'Cancel', HT, 12, 'CODE-ESC  Exit without saving (or ESC)',0
 h13         db 'A command, then select, then Return (or drag first)',0
 h14         db 'Move: arrows, PgUp/PgDn, Ctrl-arrows, Ctrl-Home/End',0
 h15         db 'Ins: overtype.  Right click: menu.  Any key closes',0
-f_match     db 0
-f_dir       db 0
-f_verify    db 0
 o_auto      db 1
-o_tab       db 0
-t_act       db 0
-quit        db 0
-mode        db M_EDIT
-ovr         db 0
-autoind     db 0
-changed     dw 0
 WIN_ROWS    equ 15                      ; (its text rows when it opens)
 win:        dw 2, SCR_TOP + 8, 76, W_TOP + WIN_ROWS * 16 + 12 + 16 + 4
             dw title, w_draw, WF_MOVE | WF_CLOSE | WF_SIZE
@@ -2506,6 +2496,16 @@ win:        dw 2, SCR_TOP + 8, 76, W_TOP + WIN_ROWS * 16 + 12 + 16 + 4
         EVEN    build_row.ns, build_row.put, put_row.r, put_row.n, put_row.x, status.pad, load_file.nc
 
 section .bss
+f_match     resb 1
+f_dir       resb 1
+f_verify    resb 1
+o_tab       resb 1
+t_act       resb 1
+quit        resb 1
+mode        resb 1                      ; (M_EDIT: 0)
+ovr         resb 1
+autoind     resb 1
+changed     resw 1
 bseg        resw 1
 cap         resw 1
 gap_s       resw 1                      ; the gap: [gap_s, gap_e); the cursor is gap_s

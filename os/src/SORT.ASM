@@ -13,7 +13,13 @@
 ; Ctrl-Z in the input, or typed at the keyboard, is its end.  Its
 ; messages go to standard error.
 ; At most 63 KB of input, as DOS's: more is "SORT: Insufficient memory".
-; Exit code: 0, 1 (too much, a bad switch).
+; A read that fails is "SORT: Read error", and nothing is written.  Its
+; output not all written (a full disk) ends it: "SORT: Insufficient disk
+; space", as DOS's (which has written nothing; this, the lines before);
+; a write that fails (a write-protected disk, a device error): "SORT:
+; Write error".
+; Exit code: 0, 1 (too much, a bad switch, a read that failed, a full
+; disk, a write that failed).
 cpu 286
 org 100h
 
@@ -129,7 +135,7 @@ rd_all: xor     di, di
         mov     ah, 3Fh
         int     21h
         pop     ds
-        jc      .x
+        jc      .rerr
         or      ax, ax
         jz      .x
         push    es                      ; a Ctrl-Z in what came: the end
@@ -150,7 +156,7 @@ rd_all: xor     di, di
         mov     ah, 3Fh
         int     21h
         pop     ds
-        jc      .x
+        jc      .rerr
         or      ax, ax
         jz      .x
         cmp     byte [onec], 1Ah
@@ -160,6 +166,9 @@ rd_all: xor     di, di
         ret
 .x:     mov     [tlen], di
         clc
+        ret
+.rerr:  mov     dx, s_rerr              ; a read failed: nothing sorted (not
+        stc                             ;  the lines before it, as if all)
         ret
 
 ; the text's lines: their starts in lseg (nlines).  A line ends at its LF
@@ -367,18 +376,31 @@ wr_all: xor     si, si
         mov     ah, 40h
         int     21h
         pop     ds
+        jc      .werr
+        cmp     ax, cx
+        jne     .full
         mov     dx, s_crlf
         mov     cx, 2
         mov     bx, 1
         mov     ah, 40h
         int     21h
+        jc      .werr
+        cmp     ax, cx
+        jne     .full
         inc     si
         jmp     .l
 .x:     ret
+.full:  mov     dx, s_full              ; not all written (a full disk: the
+        jmp     fail                    ;  devices take all), as MS-DOS's
+.werr:  mov     dx, s_wrerr             ; failed (a write-protected disk, a
+        jmp     fail                    ;  device's error)
 
 s_crlf  db 13, 10
 s_badsw db 'SORT: Invalid parameter (SORT [/R] [/+n])', 13, 10, '$'
 s_mem   db 'SORT: Insufficient memory (63 KB of input at most)', 13, 10, '$'
+s_rerr  db 'SORT: Read error', 13, 10, '$'
+s_full  db 'SORT: Insufficient disk space', 13, 10, '$'
+s_wrerr db 'SORT: Write error', 13, 10, '$'
 
         alignb 2
 section .bss

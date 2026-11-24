@@ -405,6 +405,21 @@ def t_hd_no():
     o2 = shell(k, 'if errorlevel 5 echo LEVEL5')
     check('N at Proceed with Format: nothing written, exit code 5',
           said(o, 'FORMAT-FAILED') and 'LEVEL5' in o2 and bytes(ata.disk) == raw and not ata.writes, (o, o2))
+    d = hdisk()
+    d[PLBA * 512:(PLBA + 1) * 512] = bytes(512)          # no C: for the kernel: FORMAT drives the disk, IRQ 14 masked
+    ata2 = hdrive(d); raw2 = bytes(ata2.disk)
+    k2 = boot(ata=ata2)
+    k2.pc.pic2_mask = 0x3F
+    cmd(k2, 'format c: && echo FORMAT-OK || echo FORMAT-FAILED')
+    asked = wait(k2, 'Proceed with Format (Y/N)?', 30)
+    at_q = k2.pc.pic2_mask                              # (IRQ 14 masked while FORMAT drives the disk)
+    k2.key('n'); k2.key(ktest.ENTER, settle=False)
+    k2.pc.run_until(lambda: said(scr(k2), 'FORMAT-OK') or said(scr(k2), 'FORMAT-FAILED'), 60); k2.settle(20)
+    o = scr(k2)
+    o2 = shell(k2, 'if errorlevel 5 echo LEVEL5')
+    check('... N on a partition the kernel has no file system on: exit code 5, nothing written, IRQ 14 masked at the '
+          'question and the second PIC\'s mask as it was after', asked and said(o, 'FORMAT-FAILED') and 'LEVEL5' in o2
+          and bytes(ata2.disk) == raw2 and at_q == 0x7F and k2.pc.pic2_mask == 0x3F, (o, o2, hex(at_q), hex(k2.pc.pic2_mask)))
     cmd(k, 'format c:'); wait(k, 'Proceed with Format', 30)
     k.key('y'); k.key(ktest.ENTER, settle=False); wait(k, 'percent of disk formatted', 60)
     k.key(chr(27)); k.settle(20)

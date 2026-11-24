@@ -257,6 +257,7 @@ python3 tests/test_plot.py            # PLOT, against a model of the plotter's N
 python3 tests/test_modemid.py         # MODEMID, against no modem, Option 330 and Option 331
 python3 tests/test_serial_kernel.py   # the -dSERIAL kernel: its link driver, SERLINK=, the GPIB build untouched
 python3 tests/defrag_cut.py 2         # a power cut at every DEFRAG write (~20 min; "2 hd" for C:)
+python3 tests/test_bench.py           # BENCH's times past 655 s and its total past an hour, from chosen tick counts
 python3 bench/run_bench.py <GRiD MS-DOS EPROM image>
 ```
 

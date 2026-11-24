@@ -10,7 +10,10 @@
 ; pipe); Ctrl-C there ends it.  Ctrl-Z in the input is its end.  (In a
 ; terminal window it pages by the task's 25 rows, though the window may
 ; show fewer: no call tells a program the window's height.)
-; Exit code: 0, or 1 (the file can't be opened).
+; Exit code: 0, or 1 (the file can't be opened; a read that failed: "MORE:
+; Read error", after what came before it; its output not all written, a
+; full disk: "MORE: Insufficient disk space"; a write that failed, a
+; write-protected disk or a device error: "MORE: Write error").
 cpu 286
 org 100h
 
@@ -68,7 +71,7 @@ start:  mov     sp, stack_top
         mov     dx, ibuf
         mov     ah, 3Fh
         int     21h
-        jc      .end
+        jc      .rerr
         or      ax, ax
         jz      .end
         mov     cx, ax
@@ -82,6 +85,8 @@ start:  mov     sp, stack_top
 .end:   call    flush
         mov     ax, 4C00h
         int     21h
+.rerr:  call    flush                   ; a read failed: what came before it,
+        mov     dx, s_rerr              ;  then said
 fail:   call    con                     ; (to standard error)
         mov     ax, 4C01h
         int     21h
@@ -164,12 +169,18 @@ flush:  push    ax
         mov     bx, 1
         mov     ah, 40h
         int     21h
+        mov     dx, s_wrerr             ; (failed: a write-protected disk, a
+        jc      .full                   ;  device's error)
+        cmp     ax, cx
+        jne     .short
 .x:     xor     di, di
         pop     dx
         pop     cx
         pop     bx
         pop     ax
         ret
+.short: mov     dx, s_full              ; not all written (a full disk: the
+.full:  jmp     fail                    ;  devices take all)
 
 ; DX ($) to the screen (standard error: not the output, if that goes on
 ; through a pipe or into a file)
@@ -193,6 +204,9 @@ s_more  db '-- More --$'
 s_unmore db 13, '          ', 13, '$'
 s_crlf  db 13, 10, '$'
 s_nofile db 'MORE: the file can', 39, 't be opened', 13, 10, '$'
+s_rerr  db 'MORE: Read error', 13, 10, '$'
+s_full  db 'MORE: Insufficient disk space', 13, 10, '$'
+s_wrerr db 'MORE: Write error', 13, 10, '$'
 
 OBUF    equ 256
         alignb 2

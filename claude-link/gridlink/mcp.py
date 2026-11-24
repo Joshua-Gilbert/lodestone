@@ -803,6 +803,14 @@ class GridTools:
 # ---- HP-GL for the plotter's Nano (grid_plotter) -------------------------
 HPGL_CTRL = b'\r\n\t\x03\x08\x0e\x0f\x1a\x1b'   # line ends, tabs, ETX (an LB label's end); in labels BS,
                                     # SO and SI (the alternate and standard sets); ESC and SUB: the 4662's own commands
+HPGL_LABELS = (b'LB', b'BL', b'WD')     # the label mnemonics: text up to an ETX
+
+
+def hpgl_dropped(c):
+    """True for a byte the Nano drops between a mnemonic's letters (outside
+    a label): every one below 20h but ESC (which ends the mnemonic and starts
+    one of the 4662's own commands), ETX included, and every one from 7Fh."""
+    return (c < 32 and c != 0x1B) or c > 126
 
 
 def hpgl_check(raw):
@@ -811,32 +819,75 @@ def hpgl_check(raw):
     which the Nano passes to the plotter as they are.
     A ';' goes on the end if there isn't one: like a plotter, the Nano ends a
     command only at the next mnemonic or ';', so it would hold the last point
-    (and never poll idle). A label left open (LB, BL or WD with no ETX after
-    it) would keep the Nano busy for ever, so it is refused."""
+    (and never poll idle). A label left open (hpgl_open) would keep the
+    Nano busy for ever, so it is refused."""
     if not raw.strip(b' \r\n\t;'): raise ValueError('there is no HP-GL to send')
     for i, c in enumerate(raw):
         if (c < 32 and c not in HPGL_CTRL) or c > 126:
             raise ValueError('HP-GL may hold printable ASCII, line ends, ETX (\\x03), BS, SO, SI, and ESC and SUB '
                              'for the 4662\'s own commands, only: byte %02Xh '
                              'at %d' % (c, i))
-    if re.search(rb'(?i)LB|BL|WD', raw[raw.rfind(b'\x03') + 1:]):
+    if hpgl_open(raw):
         raise ValueError('a label (LB, BL or WD) has no ETX (\\x03) at its end')
     return raw if raw.rstrip(b' \r\n\t').endswith(b';') else raw + b';'
 
 
+def hpgl_open(data):
+    """True if data ends inside a label, as the Nano's parser would be.
+    Outside a label, two letters LB, BL or WD (any case) with nothing
+    between them but bytes hpgl_dropped (ESC breaks the pair) begin one;
+    inside, only an ETX ends it. The same rule as hpgl_ends and PLOT's.
+    Approximate: the Nano takes a mnemonic only from a command's first two
+    bytes, and its finer rules aren't modelled (a letter after a mnemonic
+    and its numbers starting the next command; SM's and DT's one character,
+    which may be a letter; the bytes of the 4662's own commands after ESC,
+    which may be letters). Each makes this see a pair the Nano doesn't, so
+    it errs towards refusing; but a label seen that way also ends at its
+    ETX, where the Nano, outside a label, drops the ETX, so letters joined
+    across that ETX (DTLBxL<ETX>B) are a label to the Nano and not here."""
+    lab, prev = False, 0
+    for c in data:
+        if lab:
+            if c == 3: lab, prev = False, 0
+        elif not hpgl_dropped(c):
+            c = c & 0xDF if 97 <= c <= 122 else c
+            if bytes((prev, c)) in HPGL_LABELS: lab = True
+            prev = c
+    return lab
+
+
+def hpgl_label(data, i, e):
+    """The first label mnemonic (LB, BL or WD, any case, its letters as the
+    Nano reads them: bytes hpgl_dropped between them skipped, ESC a break)
+    in data[i:e], which starts outside a label: (the index of its first
+    letter, the index after its second), or (-1, -1). A cut between the two
+    (start < cut < after) leaves the Nano with half a mnemonic: never cut
+    there."""
+    prev, at = 0, -1
+    for k in range(i, e):
+        c = data[k]
+        if hpgl_dropped(c): continue
+        c = c & 0xDF if 97 <= c <= 122 else c
+        if bytes((prev, c)) in HPGL_LABELS: return at, k + 1
+        prev, at = c, k
+    return -1, -1
+
+
 def hpgl_ends(data):
-    """Where each HP-GL command ends (the index after its ';', or after an
-    LB label's ETX and the ';' after it), never inside a label."""
+    """Where each HP-GL command ends (the index after its ';', or, for one
+    with a label (hpgl_label: LB, BL or WD anywhere before its first ';'),
+    after the label's ETX and the ';' after it), never inside a label."""
     ends, i, n = [], 0, len(data)
     while i < n:
         j = i
         while j < n and data[j] in b' \r\n\t;': j += 1
-        if data[j:j + 2].upper() == b'LB':
-            k = data.find(b'\x03', j + 2)
+        k = data.find(b';', j)
+        t = hpgl_label(data, j, n if k < 0 else k)[1]
+        if t >= 0:
+            k = data.find(b'\x03', t)
             i = n if k < 0 else k + 1
             if i < n and data[i:i + 1] == b';': i += 1
         else:
-            k = data.find(b';', j)
             i = n if k < 0 else k + 1
         ends.append(i)
     return ends

@@ -580,6 +580,12 @@ def t_system():
     check('GPIB scan finds the instruments on the simulated bus (6, 14, 29)', re.search(r'Instruments at\s+6, 14, 29', screen(k)), screen(k))
     k.key('A')
     check('About', has(k, 'Lodestone 1.1') and has(k, '3.30 compatible'), screen(k))
+    check('... ROM 1\'s programs: "Programs: the Executive, System, Write, Calc, Tasks"',
+          has(k, 'Programs: the Executive, System, Write, Calc, Tasks'), screen(k))
+    k.key(ktest.UP); k.key(ktest.UP)
+    check('Settings, started from a floppy: "Floppy A:", and the band offers no Return (it would only beep)',
+          has(k, 'Settings') and has(k, 'Floppy A:') and 'RETURN:' not in ' '.join(k.band()), (screen(k), k.band()))
+    k.key('A')
     k.key(ktest.F1)
     check('help', has(k, 'System Help') and has(k, 'back to the Executive'), screen(k))
     check('... its lines with HT, 29 as they were with the spaces', has(k, 'ESC  or  CODE-Q              back to the Executive')
@@ -599,6 +605,47 @@ def write_open(name='NOTES.TXT', data=TEXT, extra=(), mouse=False, **kw):
     k = ktest.KPC(img, **kw); k.pc.mouse = mouse; k.start()
     k.select(name); k.key(ktest.ENTER)
     return k
+
+def t_bss_again():
+    """The flags and counters Write, System and Tasks keep in their BSS (they were initialised data): a .RUN run a second
+    time, the bytes where they were made non-zero in between, starts with them zero (the loader clears the BSS)"""
+    print('== a .RUN again: its BSS variables zero')
+    def sysk():
+        k = ktest.KPC(image('bss_sys.img', SYSTEM)); k.start(); k.key(CODE['U'])
+        return k
+    for src, first, start, end, names in (
+            ('apps/WRITE.ASM', write_open, lambda k: (k.select('NOTES.TXT'), k.key(ktest.ENTER)), (ktest.ESC, ktest.ENTER),
+             ('f_match', 'f_dir', 'f_verify', 'o_tab', 't_act', 'quit', 'mode', 'ovr', 'autoind', 'changed')),
+            ('apps/SYSTEM.ASM', sysk, lambda k: k.key(CODE['U']), (ktest.ESC,),
+             ('quit', 'splash_off', 'splash_known', 'mt_known', 'gp_scanned', 'mt_want', 'mt_now'))):
+        k = first()
+        sy = run_syms(src)
+        b1 = k.u16('run_base')
+        for x in end: k.key(x)
+        k.settle()
+        ended = k.band()[0] == 'Select a file and confirm'
+        for n in names: k.pc.wr(k.useg, b1 + sy[n], b'\xAA')
+        start(k)
+        b2 = k.u16('run_base')
+        got = {n: k.pc.rd(k.useg, b2 + sy[n], 1)[0] for n in names}
+        check('%s run again, its old variables\' bytes AAh in between: each starts zero (%s)' % (os.path.basename(src)[:-4] + '.RUN',
+              ', '.join(names)), ended and b1 == b2 and not any(got.values()) and not k.crashed, (ended, hex(b1), hex(b2), got))
+    import test_mt as M
+    k = M.boot('bss_tr.img', b'MULTITASK=1\r\n', 88, os.path.join(GOS, 'apps', 'TASKS.RUN'))
+    ts, seg = run_syms('apps/TASKS.ASM'), M.mt_seg(k)
+    base = lambda: k.pc.u16(seg, k.Y['mw_ses'] + M.SE_SIZE + M.SE_BASE)
+    poisoned = ('endgen', 'front', 'off', 'quit', 'paints')
+    k.key(CODE['T']); k.run_for(0.5)
+    b1 = base()
+    first = {n: k.pc.rd(k.useg, b1 + ts[n], 1)[0] for n in poisoned}
+    k.key(ktest.ESC); k.run_for(0.5)
+    for n in poisoned: k.pc.wr(k.useg, b1 + ts[n], b'\xAA')
+    k.key(CODE['T']); k.run_for(0.5)
+    got = {n: k.pc.rd(k.useg, base() + ts[n], 1)[0] for n in poisoned}
+    check('Tasks reopened in a window under MULTITASK=1, its old BSS AAh: endgen, front, off, quit and paints as at the '
+          'first opening (endgen and quit zero, paints counted from zero)', b1 == base() and got == first
+          and got['endgen'] == got['quit'] == 0 and 0 < got['paints'] < 0xAA and not k.crashed, (hex(b1), hex(base()), first, got))
+    k.key(ktest.ESC); k.run_for(0.5)
 
 def busy(k, key):
     """Emulated milliseconds from a key to the program asking for the next."""
@@ -642,6 +689,9 @@ def t_write():
     k.key(ktest.ENTER)
     k.key(K_CHOME, CODE['S']); k.key('the'); k.key(ktest.ENTER); k.key('THE'); k.key(ktest.ENTER, ktest.ENTER, ktest.ENTER, ktest.LEFT, ktest.ENTER)
     check('Substitute with verification: it asks', k.band()[0] == 'Substitute this occurrence of the text?', k.band())
+    k.key('-')
+    check('... \'-\' is no answer (not Return): it still asks about the first, nothing replaced',
+          k.band()[0] == 'Substitute this occurrence of the text?' and not has(k, 'THE'), (k.band(), screen(k)))
     k.key('n'); k.key('y'); k.key(ktest.ESC)
     check('Substitute with verification: N skips, Y replaces', any('Number of substitutions: 1' in l for l in k.band()), k.band())
     k.key(ktest.ENTER)
@@ -1575,6 +1625,36 @@ def t_ini_keys():
     check('Return (the saver\'s delay, 2 -> 5 minutes: no SAVER= line): FONT=, SAVER=, TIDY=, SPLASH=, PRINTER= and MULTITASK= '
           'lines replaced, MDISK= (no EMS) and the others kept, the last given a line end',
           got == b'KEYS=1\r\nmdisk=512\r\nLAST=2\r\nFONT=TERMBOLD.FNT\r\nTIDY=0\r\nSPLASH=0\r\nMULTITASK=1\r\n', got)
+    # the most save_ini writes: 1,024 bytes of other lines, the last without a line end, and every setting of its own
+    # changed at its longest (a 12-character font and driver, SAVER=30, MDISK= four digits): 1,120 bytes, all of
+    # ini_new, the byte after it not written
+    other = b''.join(b'K%03d=%s\r\n' % (i, b'v' * 10) for i in range(58))
+    other += b'Z=' + b'z' * (1024 - len(other) - 2)
+    open(ini, 'wb').write(other)
+    k = ktest.KPC(image('iniw.img', SYSTEM, ini), ems_pages=88); k.start()
+    k.key(CODE['U'])
+    for _ in range(6): k.key(ktest.DOWN, settle=False)
+    k.settle()
+    sy, base = run_syms('apps/SYSTEM.ASM'), k.u16('run_base')
+    put = lambda name, data: k.pc.wr(k.useg, base + sy[name], data)
+    for name, v in (('splash_known', 1), ('splash_off', 1), ('mt_known', 1), ('mt_want', 1)): put(name, bytes([v]))
+    end = base + sy['run_bss_end']                      # (ini_new's end: BSS ends with it)
+    k.pc.wr(k.useg, end, b'\xA5')
+    k.wr('font_name', b'ABCDEFGH.FNT\0')
+    k.wr('saver_min', b'\x1e\x00')                       # 30 minutes; Space below: TIDY=0
+    k.wr('prn_path', b'A:\\ABCDEFGH.PRN\0')
+    code = bytes(k.pc.rd(k.useg, base + sy['md_query'], 32))
+    after67 = (k.useg * 16 + base + sy['md_query'] + code.index(b'\xCD\x67') + 2) & 0xFFFFF
+    def md(pc):                                         # (M:'s setting as INT 67h gives it: 5999 KB)
+        if k.addr & 0xFFFFF == after67 and pc.r('ax') >> 8 == 0: pc.w('bx', 5999)
+    k.hooks.append(md)
+    k.key(0x3920)
+    k.hooks.remove(md)
+    got = disk_file(k, 'LODE.INI')
+    want = other + b'\r\nFONT=ABCDEFGH.FNT\r\nSAVER=30\r\nTIDY=0\r\nSPLASH=0\r\nMULTITASK=1\r\nPRINTER=ABCDEFGH.PRN\r\nMDISK=5999\r\n'
+    check('a LODE.INI of 1,024 bytes of other lines (no line end last), every setting changed at its longest: written whole '
+          '(%d bytes), the byte past ini_new untouched' % len(want), len(want) == 1024 + 96 and got == want
+          and k.pc.rd(k.useg, end, 1) == b'\xA5' and not k.crashed, (len(got or b''), (got or b'')[1000:], k.pc.rd(k.useg, end, 1)))
 
 
 def t_saver_tidy():
@@ -4085,10 +4165,26 @@ def t_sys_back():
     k = R.boot(roms={1: rom1(GRIDFNT)}, ata=R.sysinfo_hd(('LODE.INI', b'SPLASH=0\r\n')))   # (a font to go to)
     to_display(k)
     no = re.search(r'Start-up picture\s+no', screen(k))
-    for _ in range(3): k.key(ktest.DOWN)                        # Settings
+    bands = []                                                  # each UI_BAND: its second line
+    def hb(pc):
+        if pc.r('cs') == k.useg and pc.r('ip') == k.Y['ui_band']:
+            bands.append(bytes(pc.asciiz(k.useg, pc.r('di'))).decode('latin-1') if pc.r('di') else '')
+    k.hooks.append(hb)
+    k.key(ktest.DOWN); k.key(ktest.DOWN)
+    del bands[:]
+    k.key(ktest.DOWN)                                           # Settings
+    band0, drawn0 = ' '.join(k.band()), list(bands)
     k.key(ktest.ENTER); k.key(ktest.ENTER)                      # back to the ROM's: asked, confirmed
     gone = R.hd_file(k, 'LODE.INI') is None
     k.key(ktest.ESC)                                            # (the message read)
+    del bands[:]
+    k.key(0x3F00)                                               # F5: shown again
+    band1, drawn1 = ' '.join(k.band()), list(bands)
+    k.hooks.remove(hb)
+    check('Settings from the ROM: the band offers Return while C:\\LODE.INI is there, not once it is gone (Return only beeps); '
+          'drawn once each time, as it ends up', "RETURN: back to the ROM's settings" in band0 and 'RETURN:' not in band1
+          and has(k, 'Your changes') and len(drawn0) == 1 and 'RETURN:' in drawn0[0] and len(drawn1) == 1
+          and 'RETURN:' not in drawn1[0], (band0, band1, drawn0, drawn1, screen(k)))
     for _ in range(3): k.key(ktest.UP)                          # Display
     yes = re.search(r'Start-up picture\s+yes', screen(k))
     k.key(ktest.ENTER)                                          # the next font, saved
@@ -4232,7 +4328,7 @@ if __name__ == '__main__':
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
     for t in (t_core, t_system, t_syslabel, t_spacenames, t_write, t_exec, t_divrun, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_dchg, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
-              t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more):
+              t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more, t_bss_again):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

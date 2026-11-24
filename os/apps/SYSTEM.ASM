@@ -114,7 +114,19 @@ show_topic:
         mov     bx, [topics+LV_SEL]
         shl     bx, 1
         mov     di, [topic_band+bx]
-        mov     si, s_band1
+        cmp     di, s_band_set          ; Settings: Return goes back to the
+        jne     .band                   ;  ROM's only from the ROM with your
+        cmp     byte [boot_l], 'R'      ;  changes there to delete; else it
+        stc                             ;  beeps, so the band doesn't offer
+        jne     .nf                     ;  it (setnone: t_settings says
+        mov     dx, s_ini               ;  which, from this one look)
+        mov     ax, 4300h
+        int     21h
+.nf:    sbb     al, al
+        mov     [setnone], al
+        jnc     .band
+        mov     di, s_band2
+.band:  mov     si, s_band1
         call    UI_BAND
 topic_details:
         mov     dx, 24                  ; clear the panel
@@ -2157,11 +2169,9 @@ t_settings:
         call    vstart                  ; the changes: there, none yet, or
         mov     si, s_ini               ;  not read this time (the menu's 2)
         call    UI_SBSTR
-        mov     dx, s_ini
-        mov     ax, 4300h
-        int     21h
-        mov     si, s_setnone
-        jc      .c
+        mov     si, s_setnone           ; (show_topic looked for them)
+        cmp     byte [setnone], 0
+        jne     .c
         mov     si, s_setoff
         cmp     byte [read_l], 0
         je      .c
@@ -2409,7 +2419,7 @@ s_about1    db 'for the GRiDCase 1520',0
 l_dos       db 'DOS version',0
 s_compat    db ' compatible',0
 l_api       db 'UI core API',0
-s_about2    db 'Programs: the Executive, System, Write',0
+s_about2    db 'Programs: the Executive, System, Write, Calc, Tasks',0  ; (ROM 1's: ROM 2 is optional)
 s_about3    db "Font: Lodefont (GRiD's: GRIDFONT.FNT)",0
 day_names   dw d0, d1, d2, d3, d4, d5, d6
 d0          db 'Sunday',0
@@ -2433,12 +2443,6 @@ m10         db 'October',0
 m11         db 'November',0
 m12         db 'December',0
 months3     db 'JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'
-quit        db 0
-splash_off  db 0                        ; SPLASH=0: no start-up picture
-splash_known db 0                       ;  (1: LODE.INI read for it)
-mt_known    db 0                        ; the same for MULTITASK= (set_back
-                                        ;  clears both as a word)
-gp_scanned  db 0
 l_font      db 'Font',0
 l_fonts     db 'Fonts on the start-up disk:',0
 s_builtin   db 'Lodefont (built in)',0
@@ -2446,7 +2450,6 @@ s_fntall    db '@:\*.FNT',0              ; (@: the disk Lodestone started from,
 s_ini       db '@:\LODE.INI',0          ;  which reads them: set at the start;
                                         ;  the settings: where changes go)
 boot_l      db 'A'                      ; the drive started from
-read_l      db 0                        ; 3305h's DH: the changes read (0 none)
 l_started   db 'Started from',0
 l_setfile   db 'Settings',0
 l_setchg    db 'Your changes',0
@@ -2483,8 +2486,6 @@ s_mtwhy2    db '32 KB of it free, and LODEMT.SYS beside LODE.SYS.',0
 s_mt1t      db 'Programs started from the Executive run as tasks.',0
 s_mt2t      db 'CODE-Tab: the next task.  CODE-T in the',0
 s_mt3t      db 'Executive: the tasks.  LCMD: START, TASKS, WAIT.',0
-mt_want     db 0                        ; MULTITASK=1 in \LODE.INI (mt_known)
-mt_now      db 0                        ; (on now)
 s_romini    db 'R:\LODE.INI',0
 s_prtfile   db 'saves SCREENnn.BMP / .TXT',0
 s_prtwith   db 'prints with ',0
@@ -2584,9 +2585,28 @@ md_max      resw 1
 md_new      resw 1                  ;  the next setting
 md_ok       resb 1                  ;  and FFh: there is M: here
 past        resb 1
+quit        resb 1
+splash_off  resb 1                      ; SPLASH=0: no start-up picture
+splash_known resb 1                     ;  (1: LODE.INI read for it)
+mt_known    resb 1                      ; the same for MULTITASK= (set_back
+                                        ;  clears both as a word)
+gp_scanned  resb 1
+read_l      resb 1                      ; 3305h's DH: the changes read (0 none)
+mt_want     resb 1                      ; MULTITASK=1 in \LODE.INI (mt_known)
+mt_now      resb 1                      ; (on now)
+setnone     resb 1                      ; FFh: no changes' file (show_topic)
 fpath       resb 18
 ini_old     resb INI_MAX + 1
-ini_new     resb INI_MAX + 40
+; save_ini's most: the INI_MAX bytes kept, 2 for a last line without its
+; line end, then FONT= and a 12-character name (19), SAVER=30 (10),
+; TIDY=0 (8), SPLASH=0 (10), MULTITASK=1 (13), PRINTER= and a
+; 12-character name (22), MDISK= and four digits (12: the kernel takes
+; 5999 at most, more is ALL): 1,120 bytes, INI_MAX + 96, none to spare
+INI_ADD     equ 2 + (s_savereq - s_fonteq - 1) + 12 + 2 + (s_tidyeq - s_savereq - 1) + 2 + 2 \
+                + (s_splash0 - s_tidy0 - 1) + (s_mt1 - s_splash0 - 1) + (l_mtnow - s_mt1 - 1) \
+                + (s_mteq - s_printeq - 1) + 12 + 2 + (s_tidy0 - s_mdeq - 1) + 4 + 2
+ini_new     resb INI_MAX + 96
+        times   -(INI_ADD > 96) resb 1  ; (all of it fits)
         times   -(FONT_BYTES + 1 > $ - ini_old) resb 1  ; (fbuf fits in both)
 fbuf        equ ini_old                ; (a font file: never while LODE.INI is in
                                         ;  ini_old/ini_new; UI_FONT copies it)

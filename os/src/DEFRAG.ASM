@@ -63,7 +63,9 @@
 ; shown.
 cpu 286
 org 100h
+%include "FONTPACK.INC"                 ; (FONT_UNPACK: Lodefont into font)
 
+FONT_BYTES equ 96 * 16
 VSEG    equ 0B800h
 MAXF    equ 240                 ; files we can move
 FSZ     equ 32                  ; file record
@@ -118,6 +120,9 @@ start:  cld
         mov     cx, bss_end - bss_start
         xor     al, al
         rep     stosb
+        mov     si, font_z                      ; Lodefont, until F= says
+        mov     di, font                        ;  otherwise
+        FONT_UNPACK
         call    args
         cmp     byte [unitset], 0               ; no drive given: the current
         jne     .u                              ; one
@@ -3243,7 +3248,8 @@ s_nodrv   db 'DEFRAG: there is no drive '
 lt_nodrv  db 'A:', 13, 10, '$'
 s_nogfx   db 'DEFRAG needs the GRiD 640x400 screen', 13, 10, '$'
 
-%include "FONT.INC"
+%define FONTPACK_NAME font_z            ; Lodefont, packed: unpacked into
+%include "FONTPACK.INC"                 ;  font at the start
 
 ; =====================================================================
         alignb  2
@@ -3365,6 +3371,7 @@ rowtab  resw 400
 msgbuf  resb 96
 bootsec resb 512
 dirsec  resb 512
+font    resb FONT_BYTES                 ; the screen font (Lodefont, or F='s)
 files   resb FSZ * MAXF
 bss_end:
         resb 1024
