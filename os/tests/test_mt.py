@@ -3346,6 +3346,46 @@ def t_park():
 
 MTGR = os.path.join(HERE, 'MTGROW.COM')
 
+def t_parkjunk():
+    print('== parking with junk in vectors no one uses (the 1520\'s BIOS leaves C6h-DFh and F1h-FFh so)')
+    k = boot('mt_pj.img', b'MULTITASK=1\r\n', 128, MTKL)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    ent = lambda task, o: k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + o)
+    st = lambda task: k.pc.rd(seg, Y['mt_tab'] + task * MT_ENT, 1)[0]
+    B = Baseline(k)
+    def mt(cmd):
+        o = sh.run('mtlaunch ' + cmd); line(k, ''); k.run_for(0.3)
+        return o
+    def setv(n, sv): k.pc.wr(0, n * 4, struct.pack('<HH', sv[1], sv[0]))
+    # where task 1's region falls: started once and ended
+    mt('mtkill.com f 10 pj.txt')
+    r, n = ent(1, TE_REG), k.pc.u16(ent(1, TE_REG) - 1, 3)
+    mt('/k:1')
+    junk = {0xC6: (r + 0x20, 0x0416), 0xCA: (r, 0x0040), 0xFC: (r + n // 2, 0)}
+    old = {v: vec(k, v) for v in list(junk) + [0xC7]}
+    for v, sv in junk.items(): setv(v, sv)
+    # tasks 1 and 2 started with the junk there: in the table and in both TX_GSNs
+    mt('mtkill.com f 10 pj.txt')
+    mt('mtkill.com f 10 pj2.txt')
+    r1, n1 = ent(1, TE_REG), k.pc.u16(ent(1, TE_REG) - 1, 3)
+    inr = all(r1 <= sv[0] < r1 + n1 for sv in junk.values())
+    o1 = mt('/p:1'); s1 = st(1)
+    o2 = mt('/u:1'); s2 = st(1)
+    check('junk in INT C6h, CAh and FCh, into task 1\'s region (%04X, %d paragraphs) before its spawn, and in task 2\'s '
+          'TX_GSN: not taken for its hooks, task 1 parked (state %d) and back (state %d)' % (r1, n1, s1, s2),
+          inr and 'error' not in o1 + o2 and s1 == 5 and s2 == TS_WAITK and not k.crashed, (r, n, r1, n1, o1, o2, s1, s2))
+    # one set after its spawn, into its region, still pins it
+    setv(0xC7, (r1 + 0x10, 0))
+    o3 = mt('/p:1'); s3 = st(1)
+    setv(0xC7, old[0xC7])
+    check('a vector set into its region after its spawn (INT C7h): pinned all the same (error 5, state %d)' % s3,
+          'MTLAUNCH: error 5' in o3 and s3 == TS_WAITK and not k.crashed, (o3, s3))
+    mt('/k:2'); mt('/k:1')
+    for v in junk: setv(v, old[v])
+    check('both ended, the vectors put back: memory, files and EMS as before', B.back(), B.now())
+
 def t_grow():
     print('== a task\'s region grows on demand')
     k = boot('mt_grow.img', b'MULTITASK=1\r\n', 88, MTGR)
@@ -4072,16 +4112,18 @@ def t_tasksrun():
     b1 = k.band()
     k.key(ktest.ENTER); k.run_for(0.2)
     r2 = rows()
-    k.key(ktest.UP); k.key(A.CODE['Z']); k.run_for(0.3)
+    k.key(A.CODE['Z']); k.run_for(0.3)  # (the list one row shorter: the selection on task 1 now)
     pz = tstate(k)[0][1]
     k.key(ktest.ENTER); k.run_for(1.0)
     st = tstate(k)
     rr = A.run_ret(k)
     line(k, '=2'); k.run_for(1.5); k.settle()
     b2 = k.band()
-    check('CODE-D on task 2: asked ("%s"), Return: its row "being ended"; task 1 parked, then Return: brought back, in '
-          'front, the window closed (exit code 0FFFFh), task 2 gone (%s); task 1 ends: "MTLINE.COM ended, exit code 2"'
-          % (b1[:1], st[:2]), b1[:1] == ['End MTLINE.COM: Confirm to end the task'] and 'being ended' in r2[2]
+    check('CODE-D on task 2: asked ("%s"), Return: within 0.2 s its row gone, no F5 (the window shows it, MT_TOPEN: '
+          'EV_TICK at its end; rows %s); task 1 parked, then Return: brought back, in front, the window closed (exit '
+          'code 0FFFFh), task 2 gone (%s); task 1 ends: "MTLINE.COM ended, exit code 2"'
+          % (b1[:1], r2, st[:2]), b1[:1] == ['End MTLINE.COM: Confirm to end the task'] and len(r2) == 2
+          and r2[1].startswith('1  MTLINE.COM')
           and pz == (1, 5, 'MTLINE.COM') and [n for i, s, n in st[0]] == ['Executive', 'MTLINE.COM'] and st[1] == 1 and rr == 0xFFFF
           and b2[:1] == ['MTLINE.COM ended, exit code 2'] and tstate(k)[0] == [(0, 1, 'Executive')], (b1, r2, pz, st, rr, b2))
 
@@ -7947,6 +7989,22 @@ def t_wfall():
               and any(t == 1 and n == 'KEYIN.COM' for t, _, n in st[0]) and st[1] == 1 and not k.crashed,
               (ran, refused, st))
 
+def t_clmem():
+    print('== CLAUDE.COM typed in a terminal window\'s prompt with too little room for it')
+    CL = os.path.join(GOS, 'claude', 'CLAUDE.COM')
+    k = boot('mt_clm.img', b'MULTITASK=1\r\nMTMEM=LCMD.COM:56\r\n', 88, TERMRUN, TERMFNT, CL,
+             chip=A.sim7210.NEC7210(A.sim7210.bus()))
+    a0 = [(sg, t, o, sz, nm) for sg, t, o, sz, nm in mcbs(k) if nm == b'MT']
+    k.key(ktest.CODE_P, settle=False); k.run_for(4.0)
+    k.key('claude', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(4.0)
+    k.key('ver', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+    a1 = [(sg, t, o, sz, nm) for sg, t, o, sz, nm in mcbs(k) if nm == b'MT']
+    scr = '\n'.join(l for y, l in k.ocr())
+    check('MTMEM=LCMD.COM:56, CODE-P, CLAUDE typed there: "Not enough memory for CLAUDE.", its BSS not cleared past its '
+          'block (MT\'s block %s, as before), the prompt back: VER answered; nothing crashed' % (a1,),
+          'Not enough memory for CLAUDE.' in scr and 'Lodestone' in scr.split('claude')[-1] and a1 == a0 and a0
+          and not k.pc.crash, (a0, a1, k.pc.crash, scr[-600:]))
+
 def t_dmaems():
     """The 1520 restarts when an EMS page register changes while the floppy's DMA runs (found 2026-11-04 with
     CRASHLOG: MT's switch at a floppy's wait, mt_load writing the next task's windows).  pcemu models it
@@ -8642,7 +8700,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_dkill, t_wfall, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_parkjunk, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_clmem, t_hwait, t_dkill, t_wfall, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

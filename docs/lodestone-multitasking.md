@@ -1126,7 +1126,7 @@ The checks:
   - the free block split above the place as well as below (each parked region here was at its free block's high end);
   - parking the caller's own task or the one in front (the tests park from the Executive's task, in front, except one that asks from a task behind and is refused);
   - the copy failing (INT 67h AH=57h's errors);
-  - parking on the 1520, and how long it takes there.
+  - parking on the 1520, and how long it takes there. **Tried 2026-11-24** (the last section): refused at first (junk vectors, fixed), then about 44 ms for 67 KB parked and back.
 
 ## M7a: LCMD's task commands, and a task's exit code (2026-10-22)
 
@@ -1190,7 +1190,7 @@ M7 is split in three: M7a (this) is LCMD's commands and what they need from the 
 - **A pipe** (ECHO | UPPER | UPPER) with multitasking on: its output right, its files gone.
 - **CLAUDE /U** with another task refused (exit code 3); with none, taken out; memory, files and EMS as before.
 
-  **Not tested here:** the count wrapping round at 255; a WAIT that is itself parked or frozen while its task's number is reused (the lost code is tested by setting the counts); `START /D`'s freezing itself and `/B`'s running behind (M4a's tests cover the flags); START along PATH, of an `.EXE`, with no COMSPEC; WAIT in an LCMD that is itself a task; a task that stays resident (0300h: not failed); a Ctrl-Break (0000h) or a ^C with input redirected ending WAIT; WAIT's look through the keys where the BIOS's buffer wraps round; the pipe files' task number, and START inside a pipe; any of it on the 1520. (WAIT, like `mt_drop`, takes the buffer's bounds from 40:80h and 40:82h; the 1520's BIOS sets them, M9a.)
+  **Not tested here:** the count wrapping round at 255; a WAIT that is itself parked or frozen while its task's number is reused (the lost code is tested by setting the counts); `START /D`'s freezing itself and `/B`'s running behind (M4a's tests cover the flags); START along PATH, of an `.EXE` (both good on the 1520, 2026-11-24), with no COMSPEC; WAIT in an LCMD that is itself a task (good on the 1520); a task that stays resident (0300h: not failed; good on the 1520); a Ctrl-Break (0000h) or a ^C with input redirected ending WAIT; WAIT's look through the keys where the BIOS's buffer wraps round; the pipe files' task number, and START inside a pipe; any of it on the 1520 (the commands above tried there 2026-11-24: the last section). (WAIT, like `mt_drop`, takes the buffer's bounds from 40:80h and 40:82h; the 1520's BIOS sets them, M9a.)
 
 ## M7b: the Executive's side: programs as tasks, the Tasks window, System's switch, LODE.INI's lists (2026-10-22)
 
@@ -1350,7 +1350,7 @@ Changes to existing checks:
 - In the Tasks window: F5, a click on the selected row, and ESC or CODE-T closing it with multitasking on. Its "No such task" and "Not enough memory or EMS" messages.
 - A junk `.EXE` header (past 1 MB, or sums that overflow) left to EXEC.
 - System reading `MULTITASK=` again after "back to the ROM's settings".
-- Any of it on the 1520.
+- Any of it on the 1520. **Tried 2026-11-24:** the last section.
 
 ## M7c: Resident Claude with tasks (2026-10-22)
 
@@ -1529,7 +1529,7 @@ t_on's check that MT passes F0h AL=2 and 3 on to the kernel (the help's save-und
 - A `.RUN` calling `UI_EVENT` with ES not the UI's; a header whose counts overflow; the exit codes of several sessions.
 - The real no-room path (`mw_slot` or `mw_grow` failing), and four windows open stopping a start: only the poked count is.
 - The root starting over with sessions open (`mw_clean`).
-- Any of it on the 1520.
+- Any of it on the 1520. **Tried 2026-11-24:** the last section.
 
 ## M8b: Write as a window, and windows that resize (2026-10-22)
 
@@ -1603,7 +1603,7 @@ t_windows: with both windows open, and with one, the UI block is the whole segme
 **Not tested here:**
 - A resize while a session behind has a help window open (`wover`).
 - Write's Include into a window, and Write's messages (out of memory) in a window.
-- Any of it on the 1520, CODE-F8's key code included.
+- Any of it on the 1520, CODE-F8's key code included. **Tried 2026-11-24** (the last section): CODE-F8 is 6F00h; the resize and Include good.
 
 ## M8c: the Executive live under the windows (2026-10-23)
 
@@ -1699,7 +1699,7 @@ t_windows: with both windows open, and with one, the UI block is the whole segme
 - With windows open: Return on a `.COM` or `.EXE` (a task), Return on CALC.RUN or TASKS.RUN (another one), CODE-W and CODE-T with the Executive in front, CODE-F8 with the Executive in front (`mw_szwin` takes only the running session's window).
 - The two CALCs ("CALC.COM ended, exit code 1"), checked by hand in pcemu with the switch on and off, not in a test.
 - The root starting over with the clipping's patches in (`mw_clean`).
-- Any of it on the 1520.
+- Any of it on the 1520. **Tried 2026-11-24:** the last section.
 
 ## After M8c: pop-up menus and drags (UI API 8, 2026-10-23)
 Not one of the stages above: the core's part of right-click editing (docs/lodestone-0.3-apps.md, "Pop-up menus and drags"). Two things in it are multitasking's:
@@ -1751,7 +1751,7 @@ A windowed program that asks for a graphics mode now goes full screen by itself,
 - **A program that ends still in graphics (`mt_pgend`):** the one that asked (`TX_WPSP`: not a helper it ran), with `TX_WGFX` 1 and 40:49h 4 or more: MT sets mode 3 for it (`int 10h`, so that the hook above takes the task back to its window). LCMD's CLS sets the mode it finds, so without this a windowed prompt would stay full screen in graphics.
 - **TERM.RUN:** while the task is in a graphics mode (MT_TROWS's DL 2, CH 4 or more) or frozen (DL 1, `VF_DIRECT`: it writes the screen itself), the window shows a note on its first row ("In a graphics mode: a key here shows it (or CODE-Tab)"; "It writes the screen itself: a key here shows it (FULL= for it)"), made by filling its copy of the screen and drawing it as any other. A key typed then brings the task to the front (`MT_FRONT`) instead of going to it. In front, or with its pages gone, nothing is drawn, as before. The note is forgotten at the key that sends the task to the front (TERM doesn't run while it is there), so the first key after a return from graphics is the task's.
 - **As before (limits):** a mode set from a place tasks can't be switched from is dropped and the task frozen (`VF_DIRECT`), as for any task behind; a program that writes the screen itself while behind isn't seen until it has been in front; a program that ends in graphics from a full screen the user asked for (no `TX_WGFX`) stays so.
-- **Design notes:** back from graphics is always to task 0, not to whatever was in front before (a full-screen game in another task, frozen behind meanwhile, or another windowed task in graphics: each is a CODE-Tab or a key in its window away). The front and back requests are `mt_swreq`'s, so they replace one pending (a CODE-Tab typed in that moment), as `MT_FRONT` does. Coming back in text relies on MT's copy of the screen matching after the BIOS's mode 3 (T1's shadow: else the task is taken for one writing the screen itself, and its window shows the frozen note); untried on the 1520 itself.
+- **Design notes:** back from graphics is always to task 0, not to whatever was in front before (a full-screen game in another task, frozen behind meanwhile, or another windowed task in graphics: each is a CODE-Tab or a key in its window away). The front and back requests are `mt_swreq`'s, so they replace one pending (a CODE-Tab typed in that moment), as `MT_FRONT` does. Coming back in text relies on MT's copy of the screen matching after the BIOS's mode 3 (T1's shadow: else the task is taken for one writing the screen itself, and its window shows the frozen note); on the 1520 itself, good (MTMODE 40 in a terminal window, 2026-11-24).
 
 **Tests:** test_mt's new group `t_tgfx` (13 checks; test_mt 409, 396 before), on a floppy with TERM.RUN and TERM.FNT: MTMODE 40 at the windowed prompt in front by itself, mode 40h, its pattern on the screen, `TX_WGFX` 1; CODE-Tab to task 0, the window's graphics note, a key in the window, in front again with its pattern; MTMODE's mode 3 (its new `T`) back to the window, "MTMODE: text" drawn there, `TX_WGFX` 0, its pattern intact through the switches, and at its end the prompt in the window with task 0 in front; MTMODE 40 ending in graphics, mode 3 set for it, the prompt back in its window (drawn after the mode 3: the command line gone); MTMODE's new `B` (mode 3 and at once 40h again) still in front, `TX_WGFX` 1, not frozen, and back to its window at its end; LCMD put full screen with CODE-Tab staying there through MTMODE 03 (`TX_WGFX` 0); MTSCR W (the screen written itself in front) frozen behind (`VF_DIRECT`), its note, a key bringing it to the front; Return on MTMODE.COM (no arguments, new: mode 40h) opening a window and full screen at once (`TX_WGFX` 1, its pattern), the window gone at its end; the switch audit clean. On a second floppy: `TX_WPSP` made another program's, the end in graphics leaves the task in front, in graphics; then the task ended there with `TX_WGFX` 1 (MTLAUNCH /K, its own number) and a new LCMD in its place (the same TX) with `TX_WGFX` 0, staying in front through MTMODE 03. t_screens' task with no window, MTSCR G, still waits in `TS_WAITF`. Untested: `mt_wback`'s front-task guard (a `BG=` task's mode set made for real while a windowed one is in front for graphics); the note forgotten (only a key typed after the return and before TERM's first tick would show it; the tests wait longer); the cursor mark left out under a note; `mt_wfront`'s front for a call other than a mode set.
 
@@ -2245,3 +2245,28 @@ On the author's 1520: the supply needs a few volts more under load (worn filter 
 
 **Tests:** test_mt's `t_dkill` (3 checks): a task computing, killed by MTKILL K while a copy behind is out on the floppy, again with IRQ 7 marked in service by the test when its end is first tried, and on C:. Each checks that the task's end was held at the gate with the owner out and made once the owner was back (mt_down FFh at its MT_END), that it entered `mt_kdie` once and once more after each refusal with the same stack pointer each time (another stops the machine at once), that the copy is exact and that a third task counts on; a kill that lands with no owner out fails as a missed staging, apart. Without the fix a 286 stops at `mt_kdie`'s HLT with interrupts off (pcemu runs the HLT again at each tick instead, so there the checks fail on the end never made). `t_image` starts once with MT's block filled with 5Ah as `mt_boot` begins: all of MT's BSS reads as after a clear start. `t_windows` counts the band drawn once when a window starts another. On a floppy with the 1520's drive timing, test_mt puts what follows LODE.SYS and LODEMT.SYS at cluster 162, so a copy's time doesn't change with the system files' sizes, and `t_dwait` times its copy with MT's INT 15h off and on each on a fresh floppy, to the same clusters: 23.26 s and 24.46 s, 5.2% more, within the 7% it is allowed. `t_wfall` (3 checks): KEYIN in front waiting for a key inside INT 21h, a copy on C: (or on the floppy) behind, and MTKEY W (an INT 16h read) or V (an INT 10h mode set) behind as well, its call made with the copy out: KEYIN is refused at least once, and no task but the owner runs the kernel's code while it is out (before: KEYIN did, from both fallbacks). `t_tsrd` (2 checks): CLAUDE /R; MT_TSR answers CL = 4 and leaves CH as it came, and at its address the fourth byte is FFh with nobody out and the task out while a copy is out on the floppy or the hard disk, the fifth its device.
 
+
+## On the 1520: the untested items tried, and three fixes (2026-11-24)
+
+Run on the 1520 from the ROM (CLAUDE /T in task 0), then from a floppy with this build. The test programs ran from M: unless said.
+
+**Good on the 1520:**
+- CODE-F7 is 6E00h and CODE-F8 6F00h through INT 16h AH=10h (Alt-F7 and Alt-F8's codes on a PC).
+- LCMD's task commands: START /W, TASKS, WAIT by name (MTSPIN 36: WAIT back after 36 ticks), KILL and WAIT of the killed task (ERRORLEVEL 0), START of an `.EXE` (WAIT's ERRORLEVEL its code, 5), START along PATH, a TSR as a task (WAIT succeeds, the task gone), WAIT in an LCMD that is itself a task, START at a pipe's end (no pipe files left).
+- GPIB's SRQ with tasks: MTSRQ 3 behind (MT_WAKE), woken by the bridge's SRQs as tool calls came, ended; the link went on throughout.
+- PARK and UNPARK (with the fix below) from M: and from batch files on A:, ten rounds; MTLINE's region (10C1h paragraphs, 67 KB) parked and back in about 44 ms (± 5): 20 rounds took 26 ticks, 20 rounds of two TASKS 10.
+- The Executive with tasks and windows, by hand: the Tasks window (F5, a click on the selected row, ESC and CODE-T closing it, "No such task"); Calculator, Tasks and Write open together and closed in another order; Return on an `.EXE` and on CALC.RUN with them open; CODE-F8 on a window and with the Executive in front; Write's Include in a window; a fifth window refused; a right click on a window behind; Open full screen and Shift-Open on an `.EXE`; MTMODE 40 in a terminal window, full screen and back with its text.
+
+**Fixed: parking refused on the 1520.** The 1520's BIOS leaves junk in vectors no one uses, C6h-DFh and F1h-FFh (0:0318h-037Fh and 0:03C4h-03FFh, likely its start-up stack; C6h = 8238:0416h, CAh = 8000:0040h, FCh = 8000:0000h on one start, others on the next). `mt_pinned` took any vector into a task's region for a hook of its, so a region those landed in could never be parked: "Not possible for that task" (error 5) for MTLINE at its first try. pcemu has zeros there. Now, in the table and in the other tasks' `TX_GSN`, a vector as it was at the asked task's own spawn (its `TX_GSN`) doesn't count: it pointed there before the task was. One set into the region after the spawn still pins it.
+
+**Fixed: CLAUDE.COM typed at a terminal window's prompt with too little room froze the 1520.** With Calculator, Tasks and Write open, CODE-P, then `CLAUDE` at R:: a freeze that needed a power cycle. `boot` set SP and cleared BSS to `bss_end` (B642h bytes from its PSP) before looking at its block: in the window's task CLAUDE had 46,528 bytes, 130 short, and the clear wiped MT's own block's MCB just above (pcemu: the arena broken, then the CPU in the vector table). Its block (PSP:2) is now measured first: too small, "Not enough memory for CLAUDE." and exit code 8. CODE-A, its own task, is the way to run Claude beside the Executive.
+
+**Changed: the Tasks window after CODE-D.** Its row said "being ended" till F5. Tasks now gives the task to its window (MT_TOPEN, as TERM.RUN does), so its UI_EVENT has EV_TICK when the task's state changes or it ends, and the list is read again and drawn once it has gone. Its wait stays UI_EVENT's: code in the UI segment is switched from only at its idle HLTs, so a loop of its own (UI_POLL, a HLT between) gave the dying task no turn at all.
+
+**Left (found on the 1520, not in pcemu):**
+- **A task ended from the Tasks window ends only when brought to the front.** In pcemu it ends within 0.2 s, with the Executive idle in Tasks' UI_EVENT; on the 1520 it gets no turn there. KILL at LCMD's prompt ends one at once on the 1520 (INT 21h's way out). Not yet known: whether any task behind runs while the Executive idles there, or only a killed one is held.
+- **One hot restart (no beep) running PARK's batch file from A:**, the first after starting from the floppy, CLAUDE /T in front with 18 KB free (likely CLAUDE running as a task then). Not reproduced: the same steps one by one, the batch file again from A:, and in pcemu with the floppy timed and strict (no EMS page register changed under a transfer).
+
+**Tests:** test_mt's new `t_parkjunk` (3 checks): junk in INT C6h, CAh and FCh into task 1's region before its spawn and in task 2's `TX_GSN`: parked and back (it fails without the fix); a vector set into the region after the spawn: pinned; memory, files and EMS as before. `t_clmem` (1 check): `MTMEM=LCMD.COM:56`, CODE-P, CLAUDE there: the message, MT's block as before, the prompt answering. `t_tasksrun`'s CODE-D check: the row gone within 0.2 s, no F5. test_mt 706 checks.
+
+**Figures:** LODEMT.SYS 21,608 bytes (21,550 before: still 43 sectors); TASKS.RUN 1,840 (1,774); CLAUDE.COM 26,716 (26,684). ROM 1 and ROM 2 have the room they had.

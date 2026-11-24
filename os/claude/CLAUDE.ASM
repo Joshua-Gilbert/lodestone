@@ -3671,7 +3671,20 @@ bss:                                   ; from here, in the file only, what
 ; start-up: run once, from where inbuf goes (BSS clears from past inbuf)
 boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         mov     bp, ax                  ; (else resident Claude's stub, or 0)
-        mov     sp, stack_top
+        mov     bx, bss_end             ; room for code, data and BSS in our
+        add     bx, 15                  ;  block (PSP:2)?  Else the stack and
+        shr     bx, 4                   ;  the clear below would run past it:
+        mov     ax, [2]                 ;  in a terminal window's task, over
+        mov     cx, cs                  ;  MT's own block.  Said, and code 8
+        sub     ax, cx                  ;  (not fatal: res_hot_on reads BSS)
+        cmp     ax, bx
+        jae     .room
+        mov     dx, msg_nomem
+        mov     ah, 9
+        int     21h
+        mov     ax, 4C08h
+        int     21h
+.room:  mov     sp, stack_top
         cld
         push    cs
         pop     es

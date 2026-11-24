@@ -813,7 +813,7 @@ The aim: Lodestone's own programs as GUI-style windows, the calculator first; an
 
   With no save-under (the disk cache's memory already lent out), everything is drawn again (`redraw_all`).
 - **The calculator** draws everything from where its window is now (`icol`, `ey`, `ry`, `ky`, worked out in `w_draw`). A paint at a new place (after a move) doesn't count as a repaint over an older screen, so closing after a move still ends with 0FFFFh: the save-under taken at the move is current, and the Executive doesn't redraw. Its help lists CODE-F7.
-- **Not tested on the 1520 yet:** that its BIOS gives CODE-F7 as 6E00h through INT 16h AH=10h, as a PC BIOS gives Alt-F7. pcemu only confirms its own key mapping.
+- **On the 1520 (2026-11-24):** its BIOS gives CODE-F7 as 6E00h through INT 16h AH=10h, as a PC BIOS gives Alt-F7 (CODE-F8: 6F00h).
 - **Tests:** `t_calc_move`, 18 checks:
   - the close box;
   - a drag (the window, its title and its keys at the new place; the line editor goes on);
