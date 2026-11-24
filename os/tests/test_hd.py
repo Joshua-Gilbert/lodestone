@@ -631,6 +631,29 @@ def t_wpfail():
     check('a create over C:\\FAR\\NOTE.TXT (past 64K sectors) refused, Abort: NOTE.TXT as it was, a file written '
           'there after, C: consistent', not probs and files.get('\\FAR\\NOTE.TXT') == NOTE
           and files.get('\\FAR\\NEW.TXT') == b'hello\r\n', (probs, sorted(files)[:8]))
+    # the same on a 137 MB disk (900 x 8 x 39, 4 KB clusters), FAR at cluster 33000: its directory sector past
+    # 40000h, so the buffer's key has the high part's bit 2 set (2 + 4 x 4), which buf_inval's mask had dropped
+    # (`and ch, 0F3h': 2, 6, 10, 14 only), so the buffer was kept and NOTE.TXT cut to 0 bytes as above
+    bc, bh, bs = 900, 8, 39
+    fb = F.Fat(bc * bh * bs - PLBA, 8, PLBA, True, label='GRIDHD')
+    ents = fb.tree([('GRIDHD', 0x08, None), ('README.TXT', 0x20, README)])
+    fb.skip_to(33000)
+    ents += fb.tree([('FAR', 0, [('NOTE.TXT', 0x20, NOTE)])])
+    fb.finish(ents)
+    d = F.disk(bc, bh, bs, PLBA, fb); v = F.Volume(d, PLBA)
+    far = next(c for n, a, c, s in v.entries(0) if n == 'FAR')
+    lba = PLBA + v.data + (far - 2) * 8
+    ata = pcemu.Ata(model='Conner Peripherals 120MB - CP30104H', cyls=bc, heads=bh, spt=bs, disk=d, badw=[lba])
+    k, _ = boot('wpcbig', ata, files=(LCMD, probe('WPCRFA')))
+    sh = Shell(k)
+    answer(k, 'wpcrfa', 'f')
+    ata.badw.clear()
+    sh.run('echo hello> c:\\far\\new.txt')
+    files, probs = F.Volume(ata.disk, PLBA).files(fb.gaps)
+    check('... the same on a 137 MB C:, FAR\'s directory sector at %Xh (a buffer key of %d): NOTE.TXT as it was, a '
+          'file written there after, C: consistent' % (lba, 2 + 4 * (lba >> 16)), lba >> 16 == 4 and not probs
+          and files.get('\\FAR\\NOTE.TXT') == NOTE and files.get('\\FAR\\NEW.TXT') == b'hello\r\n' and not k.crashed,
+          (probs, {n: len(b) for n, b in files.items()}, k.crashed))
     # an append refused on a write-protected A: (WPAPW, Fail): C:'s calls flush C:'s FAT alone, and the append
     # gave back its clusters: a copy to C:, DEL, MD on C: all done, no prompt (each asked "Write protect error
     # writing drive A" and said it failed, though DEL had deleted and COPY left a 0-byte file)

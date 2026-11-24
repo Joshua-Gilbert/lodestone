@@ -241,7 +241,7 @@ section .text
         EVEN    dir_find.e, dir_find.n, name_match.l, name_match.n, name_match.x
         EVEN    dev_look_ax.f, dev_look_ax.t, dev_look_ax.skip
 %ifndef SERIAL
-        EVEN    gp_cmd_begin, gp_send_cmd, gp_wait_co, gp_wait_co.ok, gp_tick, gp_tmo_start, gp_wait_tick.w
+        EVEN    gp_cmd_begin, gp_send_cmd, gp_wait_co, gp_wait_co.ok, gp_tick, gp_tmo_start
         EVEN    gp_handler.go, gp_isr
 %endif
 %endif

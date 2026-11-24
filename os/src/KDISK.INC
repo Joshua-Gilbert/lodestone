@@ -206,45 +206,47 @@ mount_bpb:
         push    di
         mov     di, [actp]
         cmp     word [si+0Bh], 512
-        jne     .bad
+        jne     .b1
         mov     al, [si+0Dh]            ; sectors per cluster: a power of 2
         or      al, al
-        jz      .bad
+        jz      .b1
         xor     cl, cl
 .p:     shr     al, 1
         jc      .pe
         inc     cl
         jmp     .p
-.pe:    or      al, al
-        jnz     .bad
+.b1:    jmp     .bad                    ; (the checks out of .bad's short reach:
+        db      90h                     ;  a 2-byte jcc not taken on a good BPB;
+.pe:    or      al, al                  ;  the pad keeps the shift even)
+        jnz     .b1
         mov     [di+D_SHIFT], cl
         mov     al, [si+0Dh]
         mov     [di+D_SPC], al
         mov     ax, [si+0Eh]
         or      ax, ax
-        jz      .bad
+        jz      .b1
         mov     [di+D_RSV], ax
         mov     al, [si+10h]
         or      al, al
-        jz      .bad
+        jz      .b1
         cmp     al, 2
-        ja      .bad
+        ja      .b1
         mov     [di+D_NFAT], al
         mov     ax, [si+11h]
         or      ax, ax
-        jz      .bad
+        jz      .b1
         mov     [di+D_NROOT], ax
         mov     ax, [si+13h]
         or      ax, ax
-        jz      .bad
+        jz      .b1
         mov     [di+D_TOT], ax
         mov     al, [si+15h]
         mov     [di+D_MEDIA], al
         mov     ax, [si+16h]
         or      ax, ax
-        jz      .bad
+        jz      .b1
         cmp     ax, MAXSPF
-        ja      .bad
+        ja      .b1
         mov     [di+D_SPF], ax
         mov     ax, [si+18h]
         or      ax, ax
@@ -1704,7 +1706,7 @@ buf_inval:
         xor     bx, bx
 .l:     mov     cl, [buf_drv+bx]
         mov     ch, cl
-        and     ch, 0F3h                ; (2, 6, 10, 14: C:'s)
+        and     ch, 3                   ; (2 + 4n: C:'s, whatever the high part)
         cmp     ch, 2
         jne     .c
         mov     cl, ch
@@ -1816,9 +1818,9 @@ dio:    push    bx
 .pc:    mov     [io_pc], ax
 .tcp:   call    tc_piece                ; through the track cache?  (KEMS.INC:
                                         ;  ems_tc, the cache's pages in first,
-        jc      .err                    ;  gives a failed read back as dio's:
+        jc      .eh                     ;  gives a failed read back as dio's:
         cmp     byte [io_chg], 0        ;  not one the disk changed under)
-        jne     .err
+        jne     .eh
         or      al, al
         jnz     .adv
 %endif
@@ -1868,6 +1870,9 @@ dio:    push    bx
         rep     movsw
         pop     cx
         jmp     .adv
+%ifndef NOTC
+.eh:    jmp     .err                    ; (the cache's failures: a 2-byte jcc,
+%endif                                  ;  not taken on a good piece)
 .direct:
         call    .bios
         jc      .err

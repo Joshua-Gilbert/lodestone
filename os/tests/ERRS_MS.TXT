@@ -545,3 +545,7 @@ fn 5B :NUL -> err 02
 fn 3D A::NUL -> err 02
 fn 3C A::NUL -> err 02
 fn 5B A::NUL -> err 02
+fn 56 A.TXT> -> err 03
+fn 56 >A.TXT -> err 03
+fn 56 > -> err 03
+fn 56 SUB\X.TXT> -> err 03

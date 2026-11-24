@@ -302,3 +302,17 @@ def run_answering(pc, done, sim_s):
         if tty().count('Press any key') <= seen and pc.us == us0: return   # (stopped)
         seen = tty().count('Press any key')
         pc.keys.append(0x1C0D)
+
+def divide_at(k, cond):
+    """A divide error raised as the 286 raises it (the flags, CS and the faulting instruction's IP pushed, IF and
+    TF cleared, INT 00h's vector taken) at the first block start where cond(pc) holds, once: for code that has no
+    DIV of its own to fault.  -> a list that gets the CS:IP."""
+    at = []
+    def h(pc):
+        if at or not cond(pc): return
+        at.append((pc.r('cs'), pc.r('ip')))
+        fl = pc.r('flags'); pc.push(fl); pc.push(pc.r('cs')); pc.push(pc.r('ip'))
+        off, seg = struct.unpack('<HH', pc.rd(0, 0, 4))
+        pc.w('flags', fl & ~0x300); pc.w('cs', seg); pc.w('ip', off); pc.mu.emu_stop()
+    k.hooks.append(h)
+    return at

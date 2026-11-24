@@ -65,7 +65,7 @@ start:  jmp     install
 %include "../os/src/KGPIB.INC"
 %include "../os/src/EVEN.INC"           ; its hot code even, as in the kernel
         EVEN    gp_cmd_begin, gp_send_cmd, gp_wait_co, gp_wait_co.ok, gp_tick
-        EVEN    gp_tmo_start, gp_wait_tick.w, gp_handler.go, gp_isr
+        EVEN    gp_tmo_start, gp_handler.go, gp_isr
         EVEN    gp_fast_write.w, gp_fast_read.w, gp_fast_read.g
                                         ; (a .COM loads on a paragraph and $$
                                         ;  is 100h: the offsets' parity holds)

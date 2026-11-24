@@ -538,6 +538,10 @@ tests   dw 3A00h, p0, 0, 0000h
         dw 5B00h, p%[i], 0, 0000h
 %assign i i+1
 %endrep
+        dw 5600h, p5, p33, 0000h        ; RENAME with an empty name: 3
+        dw 5600h, p33, p5, 0000h
+        dw 5600h, p33, p33, 0000h
+        dw 5600h, p6, p33, 0000h
         dw 0
 p0      db 'NOSUCH', 0
 p1      db 'NOSUCH.TXT', 0

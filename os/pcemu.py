@@ -31,7 +31,7 @@ INT 10h call, where on the 1520 one can, mid-transfer or mid-scroll.  Code
 that must hold while a tick comes in the middle of a BIOS call (MT's
 mt_in13 / mt_inb) is tested by setting those flags by hand (test_mt).
 """
-import collections, ctypes, datetime, os, struct
+import collections, ctypes, datetime, os, struct, sys
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INTR, UC_HOOK_INSN, UC_HOOK_BLOCK, UC_PROT_ALL
 from unicorn import x86_const as X
 
@@ -53,6 +53,38 @@ EMS_FRAME = 0xE0000
 EMS_PAGE = 0x4000
 R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
      'ax bx cx dx si di bp sp cs ds es ss ip flags al ah bl bh cl ch dl dh'.split()}
+
+# A CPU exception the INTR hook takes is never delivered by unicorn's own code, which is where its x86 core
+# forgets it (old_exception back to -1).  So a second divide error in a machine's life came to the hook as a
+# double fault (8, the timer's vector here) and a third halted the CPU as a triple fault, where a 286 gives
+# INT 00h each time.  exc_forget puts the field back.  It is found once, in a scratch CPU: the one word of the
+# saved context that goes from -1 to 0 over a first divide error.  -> True when it did; anything else (no word
+# found) and run() ends the run as a crash, so the test fails at once rather than hanging at the next fault.
+_exc_at = []
+def _ctx(mu):
+    c = mu.context_save()
+    return c, ctypes.cast(c.context, ctypes.c_void_p).value
+def exc_forget(mu):
+    if not _exc_at:
+        t = Uc(UC_ARCH_X86, UC_MODE_16); t.mem_map(0, 0x1000)
+        t.mem_write(0x100, b'\x31\xdb\xf7\xf3')                 # xor bx,bx / div bx
+        t.hook_add(UC_HOOK_INTR, lambda uc, n, ud: uc.emu_stop())
+        t.emu_start(0x100, 0x102)
+        c, at = _ctx(t); a = ctypes.string_at(at, c.size)
+        t.emu_start(0x102, 0x200, count=2)
+        c, at = _ctx(t); b = ctypes.string_at(at, c.size)
+        found = [i for i in range(0, len(a) - 3, 4) if a[i:i + 4] == b'\xff' * 4 and b[i:i + 4] == bytes(4)]
+        _exc_at.append(found[0] if len(found) == 1 else None)   # (not found: this unicorn is left as it is)
+    if _exc_at[0] is None:                                      # (said once, at the first fault it can't forget)
+        if len(_exc_at) == 1:
+            _exc_at.append(None)
+            print('pcemu: exc_forget found no exception word in this unicorn: a second divide error will not be '
+                  'delivered', file=sys.stderr)
+        return False
+    c, at = _ctx(mu)
+    ctypes.memmove(at + _exc_at[0], b'\xff' * 4, 4)
+    mu.context_restore(c)
+    return True
 
 # real-code BIOS pieces at F000:1000 and up
 INT08 = bytes([0x50, 0x1E, 0x31, 0xC0, 0x8E, 0xD8, 0xFF, 0x06, 0x6C, 0x04, 0x75, 0x04,
@@ -407,6 +439,8 @@ class Ata:
 
 
 class PC:
+    exc_seen = False                    # a divide error went to its vector in this run (intr; run() clears it)
+
     def __init__(s, a=None, b=None, chip=None, start=datetime.datetime(2026, 10, 4, 21, 30, 0), mem_kb=640,
                  disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False, roms=None,
                  irq_exact=False, fd_wait=False):
@@ -441,6 +475,7 @@ class PC:
         s.due_at = float('inf'); s.on_due = None
         s.irq_pending = set(); s.pic_mask = 0xB8; s.irq_wait = False
         s.isr = 0; s.pic_rr = 2         # in service (EOI ends it); OCW3: what port 20h reads
+        s.isr2 = 0                      # the slave's in service (IRQ 8-15; the master's bit 2 for all of them)
         s.chip_int_was = False; s.irqs5 = 0
         s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
         s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
@@ -542,7 +577,7 @@ class PC:
             s.ems_reg = [0, 0, 0, 0]
             for w in range(4): s.ems_map(w)
         s.bios_init()
-        s.irq_pending = set(); s.soft = []; s.isr = 0; s.pic_rr = 2; s.irq_wait = False; s.ata_at = float('inf')
+        s.irq_pending = set(); s.soft = []; s.isr = 0; s.isr2 = 0; s.pic_rr = 2; s.irq_wait = False; s.ata_at = float('inf')
         s.pic_mask = 0xB8; s.pic2_mask = 0xFF
         s.keys.clear(); s.blocked = False; s.halted = False
         s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
@@ -673,6 +708,7 @@ class PC:
         for irq in reversed(due):
             s.irq_pending.discard(irq)
             s.isr |= 1 << (irq if irq < 8 else 2)
+            if irq >= 8: s.isr2 |= 1 << (irq - 8)
             off, seg = struct.unpack('<HH', s.rd(0, (8 + irq if irq < 8 else 0x68 + irq) * 4, 4))
             fl = s.r('flags')
             s.push(fl if first else fl & ~0x300); s.push(s.r('cs')); s.push(s.r('ip'))
@@ -683,6 +719,8 @@ class PC:
 
     def intr(s, uc, n, ud):
         cs, ip = s.r('cs'), s.r('ip')
+        if n == 0:                                        # a divide error: the run ends here, and run() clears
+            s.exc_seen = True; uc.emu_stop()              #  unicorn's note of it (exc_forget)
         if not (cs == STUB and ip - 2 == n * 8):          # not the BIOS stub itself
             off, seg = struct.unpack('<HH', s.rd(0, n * 4, 4))
             if not (seg == STUB and off == n * 8):
@@ -842,6 +880,10 @@ class PC:
             if val == 0x20: s.isr &= s.isr - 1          # the highest priority's EOI
             elif val & 0xF8 == 0x60: s.isr &= ~(1 << (val & 7))
             elif val & 0x9A == 0x0A: s.pic_rr = val & 3  # OCW3: read IRR / ISR
+            return
+        if port == 0xA0:                                # (the slave's EOIs: isr2 only; nothing else of it)
+            if val == 0x20: s.isr2 &= s.isr2 - 1
+            elif val & 0xF8 == 0x60: s.isr2 &= ~(1 << (val & 7))
             return
         if 0x2F8 <= port <= 0x2FF: return s.uart_out(port - 0x2F8, val)
         if s.com1 is not None and 0x3F8 <= port <= 0x3FF: return s.com1.write(port - 0x3F8, val)
@@ -1388,7 +1430,7 @@ class PC:
             code = s.cmos[0x0F]; s.cmos[0x0F] = 0
             if code in (0x05, 0x0A):                    # the 1520's Reset_Actual (reset.asm): shutdown code 05h or
                 off, seg = struct.unpack('<HH', s.rd(0, 0x467, 4))   #  0Ah, a jump through 40:67h with memory as it
-                if code == 0x05: s.isr = 0                           #  was, no POST (05h: the PICs' EOI first)
+                if code == 0x05: s.isr = s.isr2 = 0                  #  was, no POST (05h: the PICs' EOI first)
                 s.w('ss', 0x30); s.w('sp', 0x80); s.w('flags', 0x02)
                 s.w('cs', seg); s.w('ip', off); s.resets_caught = getattr(s, 'resets_caught', 0) + 1
                 s.mu.emu_stop(); return
@@ -1456,6 +1498,12 @@ class PC:
             s.mu.emu_start(s.lin(), 0xFFFFFFFF, count=n)
         except UcError as e:
             s.crash = 'CPU %s at %04X:%04X' % (e, s.r('cs'), s.r('ip')); return False
+        if s.exc_seen:
+            s.exc_seen = False
+            if exc_forget(s.mu) is not True:            # (a second divide error would not be delivered: stop here)
+                s.crash = 'a divide error at %04X:%04X that unicorn would not deliver again (exc_forget missed)' % (
+                    s.r('cs'), s.r('ip'))
+                return False
         a, z = s.last_blk
         here = s.lin()
         s.halted = a + z == here and s.rd(0, here - 1, 1)[0] == 0xF4

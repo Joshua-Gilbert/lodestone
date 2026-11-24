@@ -40,8 +40,8 @@ term_type   resb 1              ; 0 normal, 1 ^C, 2 critical error, 3 TSR
 onebyte     resb 1
 cur_year    resw 1
 cur_mon     resb 1
-cur_day     resb 1
-            alignb 2
+cur_day     resb 1              ; (just after cur_mon: clock_init sets both
+            alignb 2            ;  as one word)
 kstack_end  resb 1536           ; INT 21h stack (a screen capture may use
 kstack_top:                     ;  its bottom 1 KB as a buffer: CAP_SEG)
             resb 512
@@ -93,6 +93,8 @@ ivt_init:
         ret
 
 vec_table:
+        db 00h
+        dw int00
         db 05h
         dw int05
         db 20h
@@ -143,6 +145,72 @@ int24:  mov     byte [cs:c24_ans], 80h  ; default critical error: fail the call,
         mov     al, 3                   ;  nobody asked (KDISK.INC rule 4: said
         iret                            ;  in the kernel's byte, not AL, so a
                                         ;  handler that chains here sees 3)
+
+; INT 00h, a divide error: the 286 leaves the DIV's own address on the
+; stack, so a handler that returns runs it again, for ever.  As MS-DOS:
+; "Divide overflow" on a line of its own, and the program ends with exit
+; code 0 and the termination type 1, ^C's (AH of INT 21h 4Dh's), as
+; MS-DOS 3.30's (which doesn't call the program's INT 23h either).  LCMD
+; and the Executive read AL alone; LCMD's WAIT counts a task that ended
+; so as failed, as one ^C ended.
+;   First, with interrupts still off, whatever is in service at the PICs
+; is ended, wherever the fault came: a fault in an interrupt handler (a
+; program's INT 08h or 1Ch hook) would leave its IRQ in service for good,
+; holding back that IRQ and every lower one (the timer, the keyboard).
+; Eight non-specific EOIs to each PIC: each ends the highest level in
+; service, the faulting handler's, then any it had interrupted, all
+; abandoned by the 4Ch; with nothing in service they do nothing.  The one
+; risk: a hook that faults while the program is inside a kernel disk call
+; lets the program's end (terminate's closes and flush) write the half
+; done state of that call.  On C: (polled) and M: that was so anyway; on
+; a floppy it is so because the level is ended (left in service, by the
+; BIOS's code IRQ 6 would be held back, its wait time out and nothing be
+; written, at the price of the whole machine: read, not tested, pcemu's
+; floppy not waiting for IRQ 6).  test_kernel's t_divirq runs the case on
+; a floppy.  Also read, not tested: a hook that faults at every tick can
+; fault again inside terminate's own floppy closes (InDOS 2), so that
+; terminate is entered again from within close_all.
+;   Outside the kernel (InDOS 0) then the message.  Inside it (InDOS not
+; 0) none: int21's entry
+; puts a call at InDOS 0 on kstack_top and a nested one on astack_top, so
+; from InDOS 2 up the message's call would take the stack the fault is
+; on; at InDOS 1 it would not, but AH=09h writes through handle 1, a file
+; or device whose code, and the kernel's one set of per-call state (rw_sft,
+; the buffers), the interrupted call may be in the middle of.  A screen
+; capture under way (cap_req: it runs inside INT 21h, at InDOS 1 and up)
+; is given up as its own end gives it up, a press made meanwhile too,
+; else no capture could start again.  (cap_req is the machine's, InDOS a
+; task's; but a capture is never left under way by a task switch while
+; another task runs inside the kernel: with a floppy owner out only tasks
+; outside it run, and a capture doesn't wait for keys.)
+;   Then the 4Ch, through INT 21h with interrupts on, and never back to the
+; interrupted context.  While a floppy owner is out, multitasking's gate
+; (KMT.INC's mt_gate) holds it, on the stack the fault was on, until the
+; owner has run; but the gate refuses for reasons the faulting context may
+; hold itself (InDOS, mt_inb, mt_crit, mt_swing, the mouse event handler's
+; m33_busy), and then every retry is refused and the machine spins here
+; with interrupts on.
+int00:  mov     al, 20h                 ; the PICs' levels in service ended (IF
+        mov     cx, 8                   ;  clear: the CPU's, for the fault)
+.eoi:   out     0A0h, al
+        out     20h, al
+        loop    .eoi
+        push    cs
+        pop     ds
+        mov     byte [term_type], 1     ; (^C's type, as MS-DOS: AH of 4Dh's)
+        cmp     byte [indos], 0
+        jne     .k
+        sti                             ; outside the kernel: the message
+        mov     dx, s_divov
+        mov     ah, 9
+        int     21h
+        jmp     short .q
+.k:     mov     byte [cap_req], 0       ; inside it: a capture under way given
+        sti                             ;  up, no message
+.q:     mov     ax, 4C00h
+        int     21h
+        jmp     .q
+s_divov db      13, 10, 'Divide overflow', 13, 10, '$'
 
 int25:  mov     ax, 0207h               ; absolute disk I/O: not supported
         stc
@@ -626,9 +694,11 @@ con_ready:
 
 f_01:   call    con_in                  ; read with echo
         cmp     al, 3
-        je      ctrlc
+        je      ..@cc
         call    con_out
         jmp     ret_al
+..@cc:  jmp     ctrlc                   ; (01h's and 08h's ^C: a 2-byte jcc,
+                                        ;  not taken for any other key)
 f_02:   mov     al, [bp+F_DX]
         call    con_out
         jmp     done
@@ -662,8 +732,9 @@ f_07:   call    con_in                  ; raw input, no echo
         jmp     ret_al
 f_08:   call    con_in                  ; input, no echo
         cmp     al, 3
-        je      ctrlc
+        je      ..@cc
         jmp     ret_al
+        db      90h                     ; (a pad, never run: f_09 even)
 f_09:   mov     es, [bp+F_DS]           ; '$'-terminated string: written to
         mov     di, [bp+F_DX]           ;  handle 1 in one go (a file or
         mov     dx, di                  ;  a device in one write, not one a
@@ -783,40 +854,61 @@ clock_init:
         mov     byte [cur_day], 1
         mov     ah, 4
         int     1Ah
+        jc      .x                      ; (any value refused below leaves
+        mov     al, ch                  ;  1980-01-01, as with CF: a CMOS that
+        call    bcd2bin                 ;  lost its battery may answer anything)
         jc      .x
-        push    dx
-        mov     al, ch
-        call    bcd2bin
         mov     bl, 100
         mul     bl
-        push    ax
+        xchg    ax, bx                  ; BX = the century
         mov     al, cl
         call    bcd2bin
-        xor     ah, ah
-        pop     bx
-        add     ax, bx
-        pop     dx
-        cmp     ax, 1980
+        jc      .x
+        add     bx, ax                  ; BX = the year: 1980-2099, as f_2B
+        cmp     bx, 1980
         jb      .x
-        mov     [cur_year], ax
+        cmp     bx, 2099
+        ja      .x
         mov     al, dh
         call    bcd2bin
-        mov     [cur_mon], al
+        jc      .x
+        mov     dh, al                  ; DH = the month, 1-12 (before mdays,
+        dec     ax                      ;  which indexes a table by it)
+        cmp     al, 12 - 1
+        ja      .x
         mov     al, dl
         call    bcd2bin
-        mov     [cur_day], al
+        jc      .x
+        mov     dl, al                  ; DL = the day: 1 to the month's length
+        or      al, al                  ;  (February 29 in a leap year only)
+        jz      .x
+        mov     cx, bx                  ; (mdays: BL the month, CX the year)
+        push    bx
+        mov     bl, dh
+        call    mdays
+        pop     bx
+        cmp     dl, al
+        ja      .x
+        mov     [cur_year], bx
+        xchg    dh, dl
+        mov     [cur_mon], dx           ; (and cur_day)
 .x:     ret
 
-bcd2bin:                                ; AL BCD -> AL binary
-        push    cx
-        mov     ah, al
-        shr     ah, 4
-        and     al, 0Fh
+bcd2bin:                                ; AL BCD -> AX binary.  CF: a digit
+        push    cx                      ;  past 9 (AX not one)
         mov     cl, al
-        mov     al, ah
+        and     cl, 0Fh
+        shr     al, 4
+        cmp     al, 10
+        jae     .bad
+        cmp     cl, 10
+        jae     .bad
         mov     ah, 10
-        mul     ah
-        add     al, cl
+        mul     ah                      ; (AH 0)
+        add     al, cl                  ; (CF 0: 99 at most)
+        pop     cx
+        ret
+.bad:   stc
         pop     cx
         ret
 section .text
@@ -1114,10 +1206,18 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ; INT 21h F0h: Lodestone's own calls (MS-DOS doesn't have it).
 ;   AL = 0: AX = 4F47h ('GO'), BX = version (0201h)
 ;   AL = 1: DL = drive (0 = A:) -> CX = files open on it
+;   AL = 2: lend the disk cache's memory (the UI's save-under, a capture's
+;           buffer) -> ES = its segment, CX = bytes (CF, 8: no cache, lent
+;           already, or with EMS no room for the block of its own).  Any
+;           caller may ask: nothing checks who it is
+;   AL = 3: give it back (and root_restart, when the root starts over)
+;   AL = 4: the UI's segment moved to BX
 ;   AL = 5: the Executive's screen saver, for a program at its prompt:
 ;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
 ;   AL = 6: PrtSc's printer driver -> ES:BX = its path ("": files), CX =
 ;           its room (the caller changes it there)
+;   AL = 7: the internal hard disk's own name -> ES:BX, 40 characters (CF,
+;           1: no C:)
 ;   AL = 8: DL = a floppy (0 = A:) whose sector CX (0: the boot sector;
 ;           the root's first) the caller has just written itself through
 ;           INT 13h, ES:BX = 1,024 bytes: the sector as it read it, then as
@@ -1174,9 +1274,13 @@ f_F0:   mov     al, [bp+F_AX]
 .nolend:
         mov     ax, 8
         jmp     fail
-; AL=3: the cache has its memory back
-.back:  mov     byte [tc_lock], 0
+; AL=3: the cache has its memory back.  .bk: the same for root_restart
+; (a lend from the root's own context goes when it starts over); with
+; EMS, AX not kept (neither caller needs it)
+.back:  call    .bk
         jmp     ok
+.bk:    mov     byte [tc_lock], 0       ; (KEMS.INC: JMP NEAR ems_back here)
+        ret
 ; AL=5: the saver's delay and ui_saver_far (UICORE.INC), which runs it
 .saver: mov     es, [ui_seg]
         mov     [bp+F_ES], es

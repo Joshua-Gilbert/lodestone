@@ -131,8 +131,8 @@ Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its 
 |---|---:|---:|---:|
 | BENCH file-system total | **78.6** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **578.3 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 562.2 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **578.4 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 562.3 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.

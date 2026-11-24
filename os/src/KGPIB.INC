@@ -217,7 +217,7 @@ gp_addressed:
         push    ax
         call    gp_ensure_ctrl
         pop     ax
-        jc      gp_cmdfail
+        jc      ..@gp_cf
         push    ax
         mov     al, gp_UNL
         call    gp_send_cmd
@@ -235,20 +235,24 @@ gp_addressed:
         pop     ax
 .n:     mov     al, gp_UNL
         call    gp_send_cmd
-        jc      gp_cmdfail
+        jc      ..@gp_cf
         xor     ax, ax
         jmp     gp_fin_ax
 .f:     pop     ax
-        jmp     gp_cmdfail
+..@gp_cf: jmp   gp_cmdfail              ; (the failed commands out of
+                                        ;  gp_cmdfail's short reach come here: a
+                                        ;  2-byte jcc, not taken when they go)
 ; universal command AL (DCL)
 gp_uni:    push    ax
         call    gp_ensure_ctrl
         pop     ax
-        jc      gp_cmdfail
+        jc      ..@gp_cf
         call    gp_send_cmd
         jc      gp_cmdfail
         xor     ax, ax
         jmp     gp_fin_ax
+        db      90h                     ; (a pad, never run: what follows at
+                                        ;  its parity)
 
 gp_f_timeout:
         mov     ax, [gp_tdata]             ; old value in ms
@@ -375,8 +379,14 @@ gp_ifc_ren:
         mov     dx, gp_R_AUXMR
         mov     al, gp_AUX_SIFC
         out     dx, al
-        call    gp_wait_tick
-        mov     al, gp_AUX_CIFC
+        push    cx                      ; IFC held for 1500 ISA port reads: each
+        mov     cx, 1500                ;  takes about 1 us whatever the CPU, so
+.w:     in      al, 61h                 ;  1.5 ms at least, a few at most, on the
+        loop    .w                      ;  1520 and the 386s: past the 100 us the
+        pop     cx                      ;  bus asks and a polling device's loop
+        mov     al, gp_AUX_CIFC         ;  (the Pico's, the Nano's).  Not a tick
+                                        ;  (0-55 ms), nor the 7210's ports (an
+                                        ;  ISR2 read clears SRQI)
         out     dx, al
 gp_ren_on: push    ax
         push    dx
@@ -388,6 +398,10 @@ gp_ren_on: push    ax
         pop     ax
         ret
 
+..@gw_cf: jmp   gp_do_write.cf          ; (gp_do_write's failed commands: a 2-byte
+                                        ;  jcc, not taken when they succeed; here,
+                                        ;  not past `jmp short .put', so the
+                                        ;  careful loop keeps its parity)
 ; write CX bytes from ES:SI to device BL.  AX = error, CX = bytes sent
 gp_do_write:
         mov     [gp_count], cx
@@ -402,19 +416,19 @@ gp_do_write:
         jne     .r
         call    gp_ren_on
 .r:     call    gp_ensure_ctrl
-        jc      .cf
+        jc      ..@gw_cf
         mov     al, gp_UNL
         call    gp_send_cmd
-        jc      .cf
+        jc      ..@gw_cf
         mov     al, 40h+gp_MYADDR          ; MTA
         call    gp_send_cmd
-        jc      .cf
+        jc      ..@gw_cf
         mov     al, bl
         or      al, 20h                 ; LAD
         call    gp_send_cmd
-        jc      .cf
+        jc      ..@gw_cf
         call    gp_wait_co
-        jc      .cf
+        jc      ..@gw_cf
         call    gp_do_gts
 %ifndef NOFAST
         call    gp_fast_write           ; the bulk, all but the last byte
@@ -493,7 +507,8 @@ gp_do_write:
 ; kept in registers and [gp_done_n] is settled from SI/DI at the end.  The
 ; pad bytes put the jump targets at the parity they were measured at
 ; (they are executed once a call, if at all).
-; GPIBLOOP 1.4-1.6: read 70 -> 152 KB/s, write 77 -> 119.)
+; GPIBLOOP 1.4-1.6: read 70 -> 152 KB/s, write 77 -> 112 (119 with no
+; time-out, which would hang on a listener that stops).)
 ;
 ; Fast path for the bulk of a write: the next byte is fetched while the bus
 ; handshakes, so DO -> OUT is three instructions, and a poll that misses
@@ -650,24 +665,25 @@ gp_do_read:
         mov     word [gp_fa], 1         ; (04h: the read's own frame check)
         mov     byte [gp_endr], 0
         call    gp_ensure_ctrl
-        jc      .cf
+        jc      .cf1
         mov     al, gp_UNL
         call    gp_send_cmd
-        jc      .cf
+        jc      .cf1
         mov     al, 20h+gp_MYADDR          ; MLA
         call    gp_send_cmd
-        jc      .cf
+        jc      .cf1
         mov     al, bl
         or      al, 40h                 ; TAD
         call    gp_send_cmd
-        jc      .cf
+        jc      .cf1
         call    gp_wait_co
-        jc      .cf
+        jc      .cf1
         call    gp_clear_in
         mov     cx, [gp_count]
         or      cx, cx
         jnz     .nz
         jmp     .full
+.cf1:   jmp     .cf                     ; (failed commands: as ..@gw_cf above)
 .nz:    mov     al, 92h                 ; AUXRA: RFD holdoff on END
         test    byte [gp_lfstop], 1
         jz      .a
@@ -859,18 +875,7 @@ gp_chip_init:
         out     dx, al
         ret
 
-gp_wait_tick:
-        push    ax
-        push    bx
-        call    gp_tick
-        mov     bx, ax
-.w:     call    gp_tick
-        cmp     ax, bx
-        je      .w
-        pop     bx
-        pop     ax
-        ret
-
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 gp_tick:   push    ds
         xor     ax, ax
         mov     ds, ax

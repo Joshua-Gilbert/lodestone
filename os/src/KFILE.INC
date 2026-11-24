@@ -899,8 +899,8 @@ sft_cluster_alloc:
 .bad:   mov     ax, 5
 .e:     pop     dx
         pop     cx
-        stc
-        ret
+..@fr_err: stc                          ; (also file_read's .err, in short
+        ret                             ;  reach of its first check)
 ; cluster AX taken after DX (0: the first): the write's first such kept
 ; (rw_a1, after rw_ap) for its undoing.  All kept
 .took:  cmp     word [rw_a1], 0
@@ -945,16 +945,19 @@ rw_where:
         pop     dx
         pop     si
         ret
-
+..@fr_none: jmp file_read.none          ; (a position past the end: a 2-byte
+        db      90h                     ;  jcc, not taken otherwise; the pad,
+                                        ;  never run, keeps file_read's loop
+                                        ;  labels at their parity)
 file_read:
         call    rw_start
-        jc      .err
+        jc      ..@fr_err
         ; no further than the end of the file
         mov     ax, [si+S_SIZE]
         mov     dx, [si+S_SIZE+2]
         sub     ax, [si+S_POS]
         sbb     dx, [si+S_POS+2]
-        jb      .none
+        jb      ..@fr_none
         or      dx, dx
         jnz     .seq
         cmp     ax, [rw_left]
@@ -1688,7 +1691,7 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
         cmp     al, 8
         je      .rem
         cmp     al, 9
-        je      .remote
+        je      .rh
         cmp     al, 0Eh
         je      .map
         cmp     al, 0Fh
@@ -1707,9 +1710,13 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
         cmp     al, 7
         je      .ost
         cmp     al, 0Ah
-        je      .remote
+        je      .rh
         mov     ax, 1
 .e:     jmp     fail
+.rh:    jmp     .remote                 ; (09h and 0Ah, which nothing here asks:
+        db      90h                     ;  a 2-byte jcc, not taken for the rest;
+                                        ;  the pad, never run: what follows at
+                                        ;  its parity)
 .get:   test    byte [si+S_FLAGS], SF_DEV
         jz      .gf
         mov     al, [si+S_DEV]
@@ -2029,15 +2036,18 @@ fcb_ptr:
         add     di, 7
         inc     bx
 .x:     ret
-
+..@fn_nm: jmp   find_next.nomore        ; (find_next's first two drive checks:
+        db      90h                     ;  a 2-byte jcc, not taken when they
+                                        ;  pass; the pad, never run, keeps it
+                                        ;  and .ld even, so the other two stay)
 find_next:
         les     di, [dta]               ; (kept by drv_present and fat_load,
         mov     al, [es:di]             ;  their M:, R: and C: hooks too)
         dec     al
         call    drv_present
-        jc      .nomore
+        jc      ..@fn_nm
         cmp     byte [si+D_MNT], 0
-        je      .nomore
+        je      ..@fn_nm
         cmp     byte [si+D_CHK], 0      ; a look due (another disk seen and
         je      .ld                     ;  kept, an automatic Fail; INT 21h
         call    drv_ready               ;  0Dh): looked at first, as MS-

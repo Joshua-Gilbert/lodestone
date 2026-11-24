@@ -1205,21 +1205,256 @@ def t_gpirq():
         k.run_file('GPIRQ.COM', 10)
         check('... AH=0Eh AL=1: on again, the same vector, the BIOS\'s still kept', on() == (5, 0, 0x40) + isr, on())
 
+def t_gpifc():
+    """IFC (SIFC to CIFC) at the start-up and at each INT 60h AH=01h: at least the 100 us IEEE-488.1 asks for, and
+    a few ms of simulated time, not a BIOS tick (it was held until 40:6Ch changed: 0-55 ms, a whole tick for a call
+    just after one).  (pcemu charges each pass of the loop a block, 4 us, and its port read nothing, so this shows
+    the loop's count at work, not the 1520's real pulse; so the loop's passes are counted too: 1500 a pulse.)"""
+    com = os.path.join(OUT, 'GPIFC.COM')
+    open(com, 'wb').write(bytes([0xB4, 0x01, 0xCD, 0x60] * 3 + [0xB8, 0x00, 0x4C, 0xCD, 0x21]))   # 3x AH=01h
+    chip = sim7210.NEC7210(sim7210.bus())
+    k = ktest.KPC(image('gpifc.img', com), chip=chip)
+    ev, cx = [], [None, None]                       # (the highest and lowest CX at the loop's block in a pulse)
+    def aux(v, f=chip.aux):
+        if v in (0x1E, 0x16): ev.append((v, k.pc.us, tuple(cx)))
+        if v == 0x1E: cx[:] = [None, None]
+        f(v)
+    chip.aux = aux
+    w = k.Y.lin('gp_ifc_ren.w')                     # (the loop's block: one IN AL, 61h and its LOOP)
+    def h(pc):
+        if k.addr == w:
+            c = pc.r('cx'); cx[:] = [c if cx[0] is None else max(cx[0], c), c if cx[1] is None else min(cx[1], c)]
+    k.hooks.append(h)
+    k.start()
+    k.run_file('GPIFC.COM', 10)
+    pulses, reads, t0 = [], [], None
+    for v, t, c in ev:
+        if v == 0x1E: t0 = t
+        elif t0 is not None: pulses.append(t - t0); reads.append(c); t0 = None
+    check('IFC: four pulses (the start-up, 3x AH=01h), each 100 us to 20 ms of simulated time',
+          len(pulses) == 4 and all(100 <= p <= 20000 for p in pulses) and not k.crashed, ['%.0f' % p for p in pulses])
+    # (the first pass is in the block that falls into the loop, CX 1500; the loop's own block starts with CX
+    # 1499 down to 1, whatever interrupt comes in between and starts it again)
+    check('... each held for 1500 port 61h reads, the count KGPIB.INC gives (CX 1499 to 1 at the loop\'s block)',
+          len(reads) == 4 and all(r == (1499, 1) for r in reads), reads)
+
+def t_gpcmdfail():
+    """A command byte the bus doesn't take (sim7210 gives no CO after it): INT 60h's write (AH=02h) and read
+    (AH=03h) to device 6 fail at the next command or at the wait after the last one, with the time-out (AX 1)
+    after one command's time-out (9 ticks), not two: an exit that let the failure through would wait again at the
+    next command, or for data (2 s).  After UNL, MTA (MLA) and LAD (TAD) in turn; and AH=06h's SDC, at the UNL
+    after it."""
+    src = os.path.join(OUT, 'GPCF.ASM')
+    open(src, 'w').write("""cpu 286
+org 100h
+        xor     ax, ax
+        mov     es, ax
+        mov     ax, [es:46Ch]
+        mov     [t0], ax
+        push    ds
+        pop     es
+        mov     al, [82h]
+        and     al, 0DFh
+        cmp     al, 'R'
+        je      .r
+        cmp     al, 'C'
+        je      .c
+        mov     ax, 0201h
+        mov     bx, 6
+        mov     cx, 3
+        mov     si, msg
+        int     60h
+        jmp     .p
+.r:     mov     ax, 0300h
+        mov     bx, 6
+        mov     cx, 64
+        mov     di, buf
+        int     60h
+        jmp     .p
+.c:     mov     ax, 0600h
+        mov     bx, 6
+        int     60h
+.p:     push    ax
+        xor     ax, ax
+        mov     es, ax
+        mov     ax, [es:46Ch]
+        sub     ax, [t0]
+        mov     [dtk], ax
+        pop     ax
+        push    ax
+        mov     al, ah
+        call    hx
+        pop     ax
+        call    hx
+        mov     dl, ' '
+        mov     ah, 2
+        int     21h
+        mov     ax, [dtk]
+        call    hx
+        mov     ax, 4C00h
+        int     21h
+hx:     push    ax
+        shr     al, 4
+        call    .d
+        pop     ax
+        and     al, 15
+.d:     add     al, '0'
+        cmp     al, '9'
+        jbe     .p
+        add     al, 7
+.p:     mov     dl, al
+        mov     ah, 2
+        int     21h
+        ret
+t0      dw      0
+dtk     dw      0
+msg     db      'ID?'
+buf     times 64 db 0
+""")
+    com = os.path.join(OUT, 'GPCF.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    chip = sim7210.NEC7210(sim7210.bus())
+    hold = [None]                                   # (the command byte after which no CO comes)
+    def cdor(v, f=chip.cdor):
+        atn = chip.atn
+        f(v)
+        if atn and v == hold[0]: chip.co = False
+    chip.cdor = cdor
+    k = ktest.KPC(image('gpcf.img', os.path.join(GOS, 'src', 'LCMD.COM'), com), chip=chip); k.start()
+    sh = Shell(k)
+    o = sh.run('gpcf w')
+    check('GPCF W with the bus answering: no error', o.split('\n')[0].startswith('0000 '), o)
+    my = int(re.search(r'^gp_MYADDR\s+equ\s+(\d+)', open(os.path.join(GOS, 'src', 'KGPIB.INC')).read(), re.M).group(1))
+    for how, cmds in (('w', ((0x3F, 'UNL: MTA'), (0x40 + my, 'MTA: LAD'), (0x26, 'LAD: the wait after it'))),
+                      ('r', ((0x3F, 'UNL: MLA'), (0x20 + my, 'MLA: TAD'), (0x46, 'TAD: the wait after it'))),
+                      ('c', ((0x04, 'SDC: the UNL after it'),))):
+        for b, what in cmds:
+            hold[0] = b
+            o = sh.run('gpcf ' + how)
+            hold[0] = None
+            r = o.split('\n')[0].split()
+            check('INT 60h %s, no CO after %s fails: AX 1 (time-out) after one time-out (9-12 ticks)'
+                  % ({'w': 'AH=02h', 'r': 'AH=03h', 'c': 'AH=06h (SDC)'}[how], what), len(r) == 2 and r[0] == '0001'
+                  and 9 <= int(r[1], 16) <= 12 and not k.crashed, o)
+    sh.run('gpcf w')
+    o = sh.run('gpcf r')
+    check('... and then ID? written and its answer read: no error', o.split('\n')[0].startswith('0000 ') and not k.crashed, o)
+
+def t_rtcdate():
+    """The date from the RTC at start-up (INT 1Ah AH=04h): a year outside 1980-2099 (f_2B's range), a month
+    outside 1-12, a day past the month's length (February 29 in a leap year only) or a digit that isn't BCD (a
+    CMOS that lost its battery) leaves 1980-01-01, as a stopped clock does; month 0 had indexed the byte before
+    the month table, 13 and up past it, and year 9926, February 30 and 0A1Fh (as 10-25) were taken.  A valid date
+    is taken."""
+    N = (1980, 1, 1)
+    for cx, dx, want in ((0x2026, 0x1231, (2026, 12, 31)), (0x2026, 0x0101, (2026, 1, 1)), (0x2026, 0x0015, N),
+                         (0x2026, 0x1315, N), (0x2026, 0x0600, N), (0x2026, 0x0632, N), (0x2026, 0xFFFF, N),
+                         (0x1980, 0x0615, (1980, 6, 15)), (0x1979, 0x1231, N), (0x2099, 0x1231, (2099, 12, 31)),
+                         (0x2100, 0x0101, N), (0x9926, 0x0615, N), (0x2024, 0x0229, (2024, 2, 29)),
+                         (0x2000, 0x0229, (2000, 2, 29)), (0x2026, 0x0229, N), (0x2026, 0x0230, N), (0x2026, 0x0228, (2026, 2, 28)),
+                         (0x2026, 0x0430, (2026, 4, 30)), (0x2026, 0x0431, N), (0x2026, 0x0A1F, N), (0x2026, 0x060A, N),
+                         (0x19A0, 0x0615, N), (0x1A26, 0x0615, N), (0x20A0, 0x0615, N), (0x200A, 0x0615, N)):
+        k = ktest.KPC(image('rtc.img'))
+        def int1a(f=k.pc.int1a, pc=k.pc, cx=cx, dx=dx):
+            if pc.r('ah') == 4: pc.w('cx', cx); pc.w('dx', dx); pc.cf(0)
+            else: f()
+        k.pc.int1a = int1a
+        k.start()
+        got = (k.u16('cur_year'), k.rd('cur_mon', 1)[0], k.rd('cur_day', 1)[0])
+        check('RTC %04X %04X: the date %04d-%02d-%02d, the Executive up' % ((cx, dx) + want),
+              got == want and not k.crashed and k.pc.mode() == 0x40, (got, k.where()))
+
+def execerr():
+    """EXECERR.COM NAME: its block shrunk to itself, EXEC (4B00h) of NAME with an empty tail -> "E=" and AL in
+    hex if it failed (CF), else "OK" after what the program printed.  -> its path."""
+    src = os.path.join(OUT, 'EXECERR.ASM')
+    open(src, 'w').write("""cpu 286
+org 100h
+        mov     sp, stk
+        mov     bx, (stk - $$ + 100h + 15) >> 4
+        mov     ah, 4Ah
+        int     21h
+        mov     si, 81h
+.s:     lodsb
+        cmp     al, ' '
+        je      .s
+        lea     dx, [si - 1]
+.n:     cmp     al, ' '
+        je      .z
+        cmp     al, 0Dh
+        je      .z
+        lodsb
+        jmp     .n
+.z:     mov     byte [si - 1], 0
+        mov     [pb + 4], cs
+        mov     [pb + 8], cs
+        mov     [pb + 12], cs
+        push    cs
+        pop     es
+        mov     bx, pb
+        mov     [cs:ssp], sp
+        mov     ax, 4B00h
+        int     21h
+        cli
+        mov     bx, cs
+        mov     ss, bx
+        mov     sp, [cs:ssp]
+        sti
+        mov     ds, bx
+        jc      .e
+        mov     dx, s_ok
+        mov     ah, 9
+        int     21h
+        jmp     .x
+.e:     push    ax
+        mov     dx, s_e
+        mov     ah, 9
+        int     21h
+        pop     ax
+        push    ax
+        shr     al, 4
+        call    .d
+        pop     ax
+        and     al, 15
+        call    .d
+.x:     mov     ax, 4C00h
+        int     21h
+.d:     add     al, '0'
+        cmp     al, '9'
+        jbe     .p
+        add     al, 7
+.p:     mov     dl, al
+        mov     ah, 2
+        int     21h
+        ret
+pb      dw      0, tail, 0, 5Ch, 0, 6Ch, 0
+tail    db      0, 0Dh
+ssp     dw      0
+s_ok    db      'OK$'
+s_e     db      'E=$'
+        times   256 db 0
+stk:
+""")
+    com = os.path.join(OUT, 'EXECERR.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    return com
+
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (they would be what ex_rel held from
     before: the INT 21h stack's low area since 2026-11-03); the whole one runs."""
     import struct
     code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
-    def exe(nrel, rels=b''):
-        size = 32 + len(code) + len(rels)
+    def exe(nrel, rels=b'', more=0):
+        size = 32 + len(code) + len(rels) + more
         hdr = struct.pack('<2s13H', b'MZ', size % 512, (size + 511) // 512, nrel, 2, 0x20, 0x20,
                           1, 0x100, 0, 0, 0, 32 + len(code), 0)
         return hdr + bytes(32 - len(hdr)) + code + rels
-    for n, data in (('CUT.EXE', exe(3)), ('WHOLE.EXE', exe(1, struct.pack('<HH', 0x30, 0)))):
+    for n, data in (('CUT.EXE', exe(3)), ('WHOLE.EXE', exe(1, struct.pack('<HH', 0x30, 0))), ('SHORT.EXE', exe(0, more=3000))):
         open(os.path.join(OUT, n), 'wb').write(data)
     k = ktest.KPC(image('exe.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'CUT.EXE=' + os.path.join(OUT, 'CUT.EXE'),
-                        'WHOLE.EXE=' + os.path.join(OUT, 'WHOLE.EXE'))); k.start()
+                        'WHOLE.EXE=' + os.path.join(OUT, 'WHOLE.EXE'), 'SHORT.EXE=' + os.path.join(OUT, 'SHORT.EXE'),
+                        execerr())); k.start()
     sh = Shell(k)
     src = open(os.path.join(GOS, 'src', 'KFILE.INC')).read()
     eq = lambda n: int(re.search(r'^%s\s+equ\s+(\d+)' % n, src, re.M).group(1))
@@ -1228,8 +1463,357 @@ def t_exerel():
     o = sh.run('cut')
     check('relocation table past the end: not run', 'RAN' not in o and not k.crashed, o)
     check('... the handles it inherited given back (SFT counts as before)', refs() == r0, (r0, refs()))
+    o = sh.run('execerr cut.exe')
+    check('... EXEC\'s answer: 11 (bad format)', 'E=0B' in o and 'RAN' not in o, o)
+    o = sh.run('execerr')
+    check('EXEC of "" (get_path\'s exit): 3', o.split('\n')[0].strip() == 'E=03', o)
+    o = sh.run('execerr short.exe')
+    check('an .EXE shorter than its header says (its image\'s read short): EXEC answers 11, the handles given back',
+          'E=0B' in o and 'RAN' not in o and refs() == r0 and not k.crashed, (o, r0, refs()))
     o = sh.run('whole')
     check('... the same with its table there: runs', 'RAN' in o and not k.crashed, o)
+    o = sh.run('execerr whole.exe')
+    check('... and EXEC of it answers no error', 'RAN' in o and 'OK' in o, o)
+
+def t_exehuge():
+    """An .EXE whose header says its image (the file's size by the header, less the header) is F0000h bytes
+    (960 KB) or more: EXEC refuses it as a bad format (11), before the DIV that makes its paragraph count, which
+    overflows from 1 MB up; up to EFFFFh it gets as far as the memory check (8, as no such block is there).  The
+    count was a 16-bit quotient: 801h pages faulted at the DIV (which, with no INT 00h handler, ran again for
+    ever), and 800h wrapped to a tiny block."""
+    code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
+    def exe(pages, last=0):
+        if pages == 1: last = 32 + len(code)                # (the one-page file's own size; the others: whole pages)
+        hdr = struct.pack('<2s13H', b'MZ', last, pages, 0, 2, 0x20, 0x20, 1, 0x100, 0, 0, 0, 32 + len(code), 0)
+        return hdr + bytes(32 - len(hdr)) + code
+    files = [execerr()]
+    # (an image of EFFFFh: 780h whole pages and 1Fh bytes, less the 20h of the header; F0000h one more byte)
+    for n, pages, last in (('BIG801.EXE', 0x801, 0), ('BIG800.EXE', 0x800, 0), ('BIGFFFF.EXE', 0xFFFF, 0), ('SMALL.EXE', 1, 0),
+                           ('EFFFF.EXE', 0x781, 0x1F), ('F0000.EXE', 0x781, 0x20)):
+        open(os.path.join(OUT, n), 'wb').write(exe(pages, last)); files.append(os.path.join(OUT, n))
+    mx = bytearray(exe(1)); mx[0x0A:0x0C] = b'\xff\xff'     # (its minimum extra FFFFh: the sum carries)
+    for n, data in (('MINFFFF.EXE', mx), ('COMFE01.COM', b'\xc3' * 0xFE01), ('COM64K.COM', b'\xc3' * 0x10010)):
+        open(os.path.join(OUT, n), 'wb').write(data); files.append(os.path.join(OUT, n))
+    k = ktest.KPC(image('exehuge.img', os.path.join(GOS, 'src', 'LCMD.COM'), *files)); k.start()
+    sh = Shell(k)
+    def arena():                        # (free neighbours merged: EXECERR's shrink leaves its block cut in two)
+        seg, out = k.u16('first_mcb'), []
+        while len(out) < 200:
+            t, own, sz = chr(k.pc.rd(seg, 0, 1)[0]), k.pc.u16(seg, 1), k.pc.u16(seg, 3)
+            if out and own == 0 and out[-1][1] == 0: out[-1] = (out[-1][0], 0, out[-1][2] + sz + 1)
+            else: out.append((seg, own, sz))
+            if t != 'M': break
+            seg += sz + 1
+        return out
+    a0 = arena()
+    for n in ('big801', 'big800', 'bigffff', 'f0000'):
+        o = sh.run(n)
+        check('%s.EXE, an image of F0000h bytes or more by its header: refused, the prompt back' % n.upper(),
+              'RAN' not in o and 'Divide' not in o and not k.crashed and 'A:\\>' in k.pc.text_screen(), o)
+        check('... the arena as it was', arena() == a0, (a0, arena()))
+        o = sh.run('execerr %s.exe' % n)
+        check('... EXEC\'s answer: 11 (bad format), the arena as it was', 'E=0B' in o and arena() == a0, (o, arena()))
+    o = sh.run('execerr effff.exe')
+    check('EFFFF.EXE, an image of EFFFFh bytes: under the bound, refused by the memory check (8), the arena as it was',
+          'E=08' in o and 'RAN' not in o and arena() == a0 and not k.crashed, (o, arena()))
+    for n, what in (('minffff.exe', 'an .EXE whose minimum extra memory carries past FFFFh paragraphs'),
+                    ('comfe01.com', 'a .COM of FE01h bytes'), ('com64k.com', 'a .COM of 64 KB and more')):
+        o = sh.run('execerr ' + n)
+        check('%s: too big, EXEC answers 8, the arena as it was' % what,
+              'E=08' in o and 'RAN' not in o and arena() == a0 and not k.crashed, (o, arena()))
+    o = sh.run('small')
+    check('... and a one-page .EXE still runs', 'RAN' in o and not k.crashed, o)
+
+def t_divide():
+    """A divide error (INT 00h): "Divide overflow" on a line of its own and the program ends, exit code 0, as
+    GRiD MS-DOS 3.30 (measured in the emulator from its ROM image: CR LF before and after, 4Dh's AL 0), its
+    termination type ^C's (1), which neither stops a batch file nor fails a && in LCMD.  The
+    kernel had no handler: the 286 leaves the DIV's address on the stack, so the BIOS's IRET ran it again for
+    ever.  (Three in one machine: pcemu's exc_forget.)"""
+    msg = lambda at: bytes([0xB4, 0x09, 0xBA, at & 0xFF, at >> 8, 0xCD, 0x21])
+    code = msg(0x115) + bytes([0x31, 0xDB, 0xF7, 0xF3]) + msg(0x11D) + bytes([0xCD, 0x20])
+    assert len(code) == 0x14
+    open(os.path.join(OUT, 'DIV0.COM'), 'wb').write(code + b'\x90BEFORE.$AFTER$')
+    open(os.path.join(OUT, 'EXIT7.COM'), 'wb').write(bytes([0xB8, 0x07, 0x4C, 0xCD, 0x21]))
+    open(os.path.join(OUT, 'TYPE4D.COM'), 'wb').write(bytes([0xB4, 0x4D, 0xCD, 0x21, 0x88, 0xE0, 0x04, 0x30,  # 4Dh's AH
+                                                            0x88, 0xC2, 0xB4, 0x02, 0xCD, 0x21, 0xC3]))     #  as a digit
+    open(os.path.join(OUT, 'DV.BAT'), 'wb').write(b'div0\r\necho NEXT\r\n')
+    k = ktest.KPC(image('div0.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(OUT, 'DIV0.COM'),
+                        os.path.join(OUT, 'EXIT7.COM'), os.path.join(OUT, 'TYPE4D.COM'), os.path.join(OUT, 'DV.BAT'))); k.start()
+    k.run_file('DIV0.COM', 20)
+    check('a program that divides by zero, from the Executive: it ends, the Executive back',
+          not k.crashed and k.pc.mode() == 0x40 and any('DIV0.COM ended' in l for l in k.band()), (k.crashed, k.band()))
+    sh = Shell(k)
+    o = sh.run('div0')
+    check('... from the prompt: "Divide overflow", nothing after the DIV runs, the prompt back',
+          'BEFORE.\nDivide overflow\n' in o and 'AFTER' not in o and not k.crashed and 'A:\\>' in k.pc.text_screen().rstrip()[-8:], o)
+    sh.run('exit7')                                     # (an exit code that isn't 0 first)
+    sh.run('div0')
+    o = sh.run('if errorlevel 1 echo E1')
+    o2 = sh.run('if not errorlevel 1 echo E0')
+    check('... its exit code is 0', 'E1' not in o.replace('echo E1', '') and 'E0' in o2.replace('echo E0', ''), (o, o2))
+    sh.run('div0')
+    t1 = sh.run('type4d')
+    sh.run('exit7')
+    t0 = sh.run('type4d')
+    check('... its termination type (4Dh\'s AH) 1, ^C\'s, as MS-DOS 3.30\'s; after a plain exit 0',
+          t1.split('\n')[0].strip() == '1' and t0.split('\n')[0].strip() == '0', (t1, t0))
+    o = sh.run('dv.bat')
+    o2 = sh.run('div0 && echo OK')
+    check('... in a batch file the next line runs, nothing asked ("Terminate batch job" is not); && counts it as '
+          'having worked (exit code 0), as COMMAND does', 'NEXT' in o and 'Terminate' not in o and '?' not in o
+          and o2.rstrip().split('\n')[-2:-1] == ['OK'], (o, o2))
+    o = sh.run('div0 > nul')
+    check('... the message is standard output\'s', 'Divide overflow' not in o and not k.crashed, o)
+    check('... and the shell works on', 'Lodestone version' in sh.run('ver'))
+
+DIVT = os.path.join(OUT, 'DIVT.COM')
+divide_at = ktest.divide_at
+
+def t_divctx():
+    """A divide error outside a program's own plain code (DIVT.ASM).  A program with its own INT 00h handler
+    keeps it to itself; terminate puts back INT 22h-24h only, as MS-DOS, so one left set points into the ended
+    program's memory.  A divide error inside INT 21h (a resident INT 10h hook under AH=02h) ends the calling
+    program without the message, exit code 0, InDOS back to 0.  One in LCMD's own code ends that LCMD: LCMD /P
+    inside a prompt goes back to it, the Executive's prompt back to the Executive."""
+    print('== a divide error: its own handler, inside INT 21h, in LCMD\'s code')
+    subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
+    open(os.path.join(OUT, 'EXIT7.COM'), 'wb').write(bytes([0xB8, 0x07, 0x4C, 0xCD, 0x21]))
+    k = ktest.KPC(image('divctx.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT, os.path.join(OUT, 'EXIT7.COM'))); k.start()
+    v0 = lambda: (k.pc.u16(0, 2), k.pc.u16(0, 0))
+    mine = (0x60, k.Y['int00'])
+    sh = Shell(k)
+    check('INT 00h is the kernel\'s', v0() == mine, v0())
+    o = sh.run('divt o')
+    e = sh.run('if errorlevel 3 echo E3')
+    check('a program with its own INT 00h handler (AH=25h): its handler runs, the program goes on and puts the '
+          'vector back; exit code 3, INT 00h the kernel\'s', 'own after back' in o and 'Divide overflow' not in o
+          and 'E3' in e.replace('echo E3', '') and v0() == mine, (o, e, v0()))
+    o = sh.run('divt k')
+    e = sh.run('if errorlevel 4 echo E4')
+    seg, off = v0()
+    check('... one that leaves it set (exit code 4): INT 00h still points at it, in the ended program\'s freed '
+          'memory (terminate puts back INT 22h-24h only, as MS-DOS)', 'own after' in o and 'E4' in e.replace('echo E4', '')
+          and seg != 0x60 and k.pc.u16(seg - 1, 1) == 0, (o, e, hex(seg), hex(off)))
+    k.pc.wr(0, 0, struct.pack('<HH', mine[1], mine[0]))
+    sh.run('divt t')
+    sft = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0] for i in range(24)]
+    s0 = sft()
+    sh.run('exit7')
+    o = sh.run('divt b')
+    e = sh.run('if not errorlevel 1 echo E0')
+    check('a divide error inside INT 21h (DIVT T\'s resident INT 10h hook, under DIVT B\'s AH=02h \'!\'): the '
+          'program ends there, without "Divide overflow" (none inside the kernel: InDOS not 0) and nothing after it; exit '
+          'code 0, InDOS 0, its handles closed', o.split('\n')[0] == 'A' and 'Divide overflow' not in o
+          and 'E0' in e.replace('echo E0', '') and k.rd('indos', 1)[0] == 0 and sft() == s0 and not k.crashed,
+          (o, e, s0, sft()))
+    outs = [sh.run(c) for c in ('ver', 'dir divt.com', 'divt z', 'ver')]
+    check('... the prompt goes on: VER, DIR, a divide error outside the kernel (the message), VER',
+          'Lodestone version' in outs[0] and 'DIVT     COM' in outs[1] and 'Z1\nDivide overflow' in outs[2]
+          and 'Lodestone version' in outs[3] and not k.crashed, outs)
+    # LCMD's own code: LCMD /P inside the Executive's prompt, then that prompt itself
+    top = k.u16('cur_psp')
+    sh.run('lcmd /p')
+    inner = k.u16('cur_psp')
+    at = divide_at(k, lambda pc: pc.r('cs') == inner and k.rd('indos', 1)[0] == 0)
+    k.run_for(0.5); k.settle()
+    scr = k.pc.text_screen().rstrip()
+    check('a divide error in LCMD /P\'s own code (its key wait): that LCMD ends with "Divide overflow", the prompt '
+          'it was started from goes on', at and inner != top and k.u16('cur_psp') == top and 'Divide overflow' in scr
+          and scr.endswith('A:\\>') and 'Lodestone version' in sh.run('ver'), (at, hex(inner), hex(k.u16('cur_psp')), scr[-200:]))
+    at = divide_at(k, lambda pc: pc.r('cs') == top and k.rd('indos', 1)[0] == 0)
+    k.run_for(0.5); k.settle()
+    check('... one in the Executive\'s prompt\'s own code: it ends, the Executive back ("LCMD.COM ended")',
+          at and k.pc.mode() == 0x40 and k.u16('cur_psp') == k.u16('root_psp') and k.band()[:1] == ['LCMD.COM ended']
+          and not k.crashed, (at, k.band(), k.where()))
+
+def t_divirq():
+    """A divide error in an interrupt handler (DIVT T's resident INT 1Ch hook, armed through its byte at CS:0103h)
+    ends the program that was interrupted, here the Executive's prompt (then LCMD /P's inside one), not the hook's
+    owner.  int00 ends what is in service at the PICs first, wherever the fault came: with pcemu's 8259 model on
+    (PIC_ISR), IRQ 0 is not left in service, the timer's interrupt comes again (INT 08h delivered), the prompt
+    works, and nested levels poked in at both PICs (IRQ 2 and 3, the slave's IRQ 14) are ended too; so too when
+    the foreground waited in INT 21h 08h (InDOS 1: no message).  The risk, pinned as a limit: a fault inside a
+    floppy write (WBIG's INT 21h 40h, on a machine of its own) lets terminate's close write the half done call
+    (the file's size as far as it got, its FAT chain what was linked so far: the written clusters and the next
+    track's run, linked before its write).  (The keyboard's IRQ 1 can't be had here: pcemu gives keys to INT 16h
+    without one.)"""
+    subprocess.run(['nasm', '-f', 'bin', '-o', DIVT, os.path.join(HERE, 'DIVT.ASM')], check=True)
+    old = pcemu.PIC_ISR
+    pcemu.PIC_ISR = True
+    try:
+        cc = os.path.join(OUT, 'CCWAIT.COM')        # CCWAIT 8: INT 21h 08h, then "AFTER" (as t_errexits')
+        open(cc, 'wb').write(bytes([0xB4, 0x01, 0x80, 0x3E, 0x82, 0x00, 0x38, 0x75, 0x02, 0xB4, 0x08, 0xCD, 0x21,
+                                    0xBA, 0x19, 0x01, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x05, 0x4C, 0xCD, 0x21]) + b'AFTER$')
+        src = os.path.join(OUT, 'WBIG.ASM')         # WBIG: X.DAT created, 30,000 bytes in one write, "DONE"
+        open(src, 'w').write("org 100h\n mov ah, 3Ch\n xor cx, cx\n mov dx, nm\n int 21h\n mov bx, ax\n mov ah, 40h\n"
+                             " mov cx, 30000\n mov dx, buf\n int 21h\n mov ah, 3Eh\n int 21h\n mov dx, s\n mov ah, 9\n"
+                             " int 21h\n mov ax, 4C00h\n int 21h\nnm db 'X.DAT', 0\ns db 'DONE$'\nbuf:\n")
+        wbig = os.path.join(OUT, 'WBIG.COM')
+        subprocess.run(['nasm', '-f', 'bin', '-o', wbig, src], check=True)
+        k = ktest.KPC(image('divirq.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT, cc, wbig)); k.start()
+        sh = Shell(k)
+        sh.run('divt t')
+        seg, top = k.pc.u16(0, 0x1C * 4 + 2), k.u16('cur_psp')
+        isr0 = k.pc.isr
+        k.pc.tty.clear()
+        k.pc.wr(seg, 0x103, b'\x01')
+        k.run_for(1.0)
+        off8, seg8 = struct.unpack('<HH', k.pc.rd(0, 8 * 4, 4))
+        lin8, n = seg8 * 16 + off8, [0]                 # (INT 08h's handler entered: a block there)
+        def h8(pc):
+            if k.addr == lin8: n[0] += 1
+        k.hooks.append(h8)
+        k.run_for(1.0)
+        k.hooks.remove(h8)
+        n8 = n[0]
+        check('DIVT T\'s INT 1Ch hook divides: "Divide overflow", the program interrupted (the Executive\'s prompt) '
+              'ends, the Executive back ("LCMD.COM ended"); DIVT stays resident, its hook disarmed; IRQ 0 not left in '
+              'service at the PIC, INT 08h delivered again (%d in 1 s)' % n8,
+              not isr0 & 1 and not k.pc.isr & 1 and n8 >= 15 and 'Divide overflow' in ''.join(k.pc.tty)
+              and top != k.u16('root_psp') and k.u16('cur_psp') == k.u16('root_psp') and k.pc.mode() == 0x40
+              and k.band()[:1] == ['LCMD.COM ended'] and k.pc.u16(0, 0x1C * 4 + 2) == seg and k.pc.u16(seg - 1, 1) == seg
+              and k.pc.rd(seg, 0x103, 1) == b'\x00' and not k.crashed,
+              (hex(isr0), hex(k.pc.isr), n8, ''.join(k.pc.tty), k.band(), k.where()))
+        sh = Shell(k)
+        o = sh.run('ver')
+        sh.run('lcmd /p')
+        inner = k.u16('cur_psp')
+        k.pc.wr(seg, 0x103, b'\x01')
+        k.run_for(1.0); k.settle()
+        scr = k.pc.text_screen().rstrip()
+        o2 = sh.run('ver')
+        check('... the prompt again works (VER); armed again under LCMD /P inside it: that LCMD ends, "Divide '
+              'overflow", the prompt it was started from goes on (VER), IRQ 0 not in service',
+              'Lodestone version' in o and inner != k.u16('cur_psp') and 'Divide overflow' in scr
+              and 'Lodestone version' in o2 and not k.pc.isr & 1 and not k.crashed,
+              (o, hex(inner), hex(k.u16('cur_psp')), scr[-200:], o2, hex(k.pc.isr)))
+        # nested levels: IRQ 2 (the cascade) and 3 in service at the master, IRQ 14 at the slave, as if the tick
+        # had come inside their handlers: all ended
+        k.pc.isr |= 0x0C; k.pc.isr2 |= 0x40
+        k.pc.wr(seg, 0x103, b'\x01')
+        k.run_for(1.0)
+        check('... armed again with IRQ 2 and 3 in service under it and IRQ 14 at the slave: the prompt\'s LCMD ends, '
+              'every level ended at both PICs (master %02X, slave %02X)' % (k.pc.isr, k.pc.isr2),
+              k.pc.isr == 0 and k.pc.isr2 == 0 and k.u16('cur_psp') == k.u16('root_psp') and not k.crashed,
+              (hex(k.pc.isr), hex(k.pc.isr2), k.where()))
+        # inside the kernel: the hook's fault while the foreground program waits in INT 21h 08h (InDOS 1), IRQ 3
+        # and the slave's IRQ 14 poked in under it again
+        sh = Shell(k)
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key('ccwait 8'); k.key(ktest.ENTER)
+        waiting = k.rd('indos', 1)[0]
+        k.pc.isr |= 0x0C; k.pc.isr2 |= 0x40
+        k.pc.wr(seg, 0x103, b'\x01')
+        k.run_for(1.0)
+        n = [0]
+        k.hooks.append(h8)
+        k.run_for(1.0)
+        k.hooks.remove(h8)
+        scr = k.pc.text_screen().rstrip()
+        o = sh.run('ver')
+        check('CCWAIT 8 waiting in INT 21h 08h (InDOS %d), the hook divides: no message, CCWAIT ends (no "AFTER"), '
+              'nothing left in service at either PIC (master %02X, slave %02X), INT 08h delivered again (%d in 1 s), the '
+              'prompt works (VER)' % (waiting, k.pc.isr, k.pc.isr2, n[0]),
+              waiting == 1 and k.pc.isr == 0 and k.pc.isr2 == 0 and n[0] >= 15 and 'Divide overflow' not in scr
+              and 'AFTER' not in scr and scr.endswith('A:\\>') and 'Lodestone version' in o and not k.crashed,
+              (waiting, hex(k.pc.isr), hex(k.pc.isr2), n[0], scr[-200:], o, k.where()))
+        # inside a disk call, on a machine of its own: the hook's fault while WBIG writes 30,000 bytes in one INT 21h
+        # 40h on A: (armed at the call's first floppy write: the next tick faults inside it)
+        k = ktest.KPC(image('divirq2.img', os.path.join(GOS, 'src', 'LCMD.COM'), DIVT, wbig)); k.start()
+        sh = Shell(k)
+        sh.run('divt t')
+        seg = k.pc.u16(0, 0x1C * 4 + 2)
+        c0 = len(k.pc.calls13)
+        def arm(pc):
+            if k.pc.rd(seg, 0x103, 1) == b'\x00' and k.rd('indos', 1)[0] == 1 and \
+                    any(c[0] == 3 for c in k.pc.calls13[c0:]) and not armed:
+                armed.append(1); k.pc.wr(seg, 0x103, b'\x01')
+        armed = []
+        k.hooks.append(arm)
+        o = sh.run('wbig')
+        k.hooks.remove(arm)
+        files = fatcheck.read_files(k.pc.drives[0].img)
+        probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
+        x = files.get('A:\\X.DAT')
+        writes = [c for c in k.pc.calls13[c0:] if c[0] == 3]
+        print('   disk case: %d floppy writes, X.DAT %s bytes, the disk %s' % (len(writes), x is not None and len(x),
+              'consistent' if not probs else 'inconsistent: ' + '; '.join(probs)))
+        pic = (k.pc.isr, k.pc.isr2)
+        v = sh.run('ver')
+        check('(a limit: a hook that faults inside a kernel disk call lets the program\'s end write that call\'s half '
+              'done state) WBIG writing 30,000 bytes on A:, the hook divides inside its INT 21h 40h: WBIG ends (no '
+              '"DONE", no message), nothing left in service at either PIC, the prompt works (VER); terminate\'s close '
+              'writes the call\'s half: X.DAT with what was written before the fault (whole sectors, short of 30,000), '
+              'its FAT chain not its size (what file_write had linked so far): the disk inconsistent',
+              armed and 'DONE' not in o and 'Divide overflow' not in o and pic == (0, 0) and 'Lodestone version' in v
+              and x is not None and 0 < len(x) < 30000 and len(x) % 512 == 0 and any('chain has' in p for p in probs)
+              and not k.crashed, (armed, o, pic, v, x is not None and len(x), probs, len(writes)))
+    finally:
+        pcemu.PIC_ISR = old
+
+def t_divcap():
+    """A divide error while a screen capture is under way, raised in SCREEN.PRN's code once it has its file open
+    (cap_req 2, InDOS 1): no message, the capture given up (cap_req 0, so the next Shift-PrtSc saves again), InDOS 0.
+    From the Executive's prompt the prompt's LCMD ends and terminate closes the file (left at 0 bytes).  From the
+    Executive itself, once the driver has borrowed the disk cache (F002h: tc_lock 1, or with EMS a block of its own
+    in ems_su), the Executive starts over: the cache is given back (tc_lock 0, the block freed; it had stayed lent,
+    the track cache off or 18 KB gone till a reboot), and a later F002h is answered again (LEND.COM), but the file
+    stays open in the root's handle table, as a .RUN's do (a limit, pinned as it stands).  Shift-PrtSc pressed
+    again while the capture was under way (cap_req 3) is dropped with it, as the capture's own end drops one.
+    (cap_req had stayed 2, and no capture started again.)"""
+    lend = os.path.join(OUT, 'LEND.COM')            # F002h: "Y" if lent, "N" if refused; then F003h
+    open(lend, 'wb').write(bytes([0xB8, 0x02, 0xF0, 0xCD, 0x21, 0xB2, 0x59, 0x73, 0x02, 0xB2, 0x4E, 0xB4, 0x02, 0xCD,
+                                  0x21, 0xB8, 0x03, 0xF0, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]))
+    for where, ems in (('prompt', 0), ('Executive', 0), ('Executive', 88)):
+        k = ktest.KPC(image('divcap.img', os.path.join(GOS, 'src', 'LCMD.COM'), SCR, lend), ems_pages=ems); k.start()
+        refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0] for i in range(24)]
+        jfree = lambda: list(k.pc.rd(k.u16('root_psp'), 0x18, 20)).count(0xFF)
+        lent = lambda: k.u16('ems_su') if ems else k.rd('tc_lock', 1)[0]
+        r0, j0 = refs(), jfree()                    # (the Executive's)
+        if where == 'prompt': Shell(k).run('ver')
+        rb = refs()
+        files = lambda: {n: len(b) for n, b in fatcheck.read_files(k.pc.drives[0].img).items() if 'SCREEN0' in n}
+        def cond(pc):
+            if not (k.rd('cap_req', 1)[0] == 2 and pc.r('cs') != 0x60 and pc.r('cs') < 0xA000 and sum(refs()) > sum(rb)
+                    and (where == 'prompt' or lent())): return False
+            k.pc.wr(0x60, k.Y['cap_req'], b'\x03')  # (Shift-PrtSc pressed again meanwhile)
+            return True
+        at = divide_at(k, cond)
+        k.pc.tty.clear()
+        k.pc.prtsc(); k.settle(6.0)
+        f1, probs = files(), fatcheck.check(bytes(k.pc.drives[0].img))[0]
+        st = (k.rd('cap_req', 1)[0], k.rd('indos', 1)[0], lent(), k.u16('cur_psp') == k.u16('root_psp'))
+        if where == 'prompt':
+            check('a divide error in SCREEN.PRN with its file open, from the Executive\'s prompt (%s): no message, the '
+                  'prompt\'s LCMD ends, InDOS 0, cap_req 0; terminate closed the file (SCREEN01.TXT, 0 bytes; the '
+                  'handles as the Executive had them), the disk consistent' % (at and '%04X:%04X' % at[0]),
+                  at and st == (0, 0, 0, True) and k.band()[:1] == ['LCMD.COM ended'] and f1 == {'A:\\SCREEN01.TXT': 0}
+                  and refs() == r0 and not probs and 'Divide overflow' not in ''.join(k.pc.tty) and not k.crashed,
+                  (at, st, k.band(), f1, refs(), r0, probs))
+        else:
+            def sc_blocks():                        # (ems_lend's block: owner 8, "SC" as its name)
+                seg, n = k.u16('first_mcb'), 0
+                for _ in range(200):
+                    t, own, sz = k.pc.rd(seg, 0, 1)[0], k.pc.u16(seg, 1), k.pc.u16(seg, 3)
+                    n += own == 8 and k.pc.rd(seg, 8, 2) == b'SC'
+                    if t != 0x4D: break
+                    seg += sz + 1
+                return n
+            k.pc.tty.clear()
+            if not ems: k.run_file('LEND.COM', 10)  # (with EMS a program can't: its 18 KB block needs room)
+            check('... from the Executive, with the cache borrowed%s (%s): the Executive starts over, cap_req 0, the '
+                  'cache given back (%s)' % (' (EMS)' if ems else '', at and '%04X:%04X' % at[0],
+                  'ems_su 0, its 18 KB block freed' if ems else 'tc_lock 0, and a later F002h lends it again: LEND.COM "Y"'),
+                  at and st == (0, 0, 0, True) and (sc_blocks() == 0 if ems else 'Y' in ''.join(k.pc.tty)) and not k.crashed,
+                  (at, st, k.band(), sc_blocks(), ''.join(k.pc.tty)))
+            check('(a limit: a capture\'s file stays open when the root ends) ... its SCREEN01.BMP (0 bytes) still '
+                  'open in the root\'s handle table: %d free, %d before' % (jfree(), j0),
+                  f1 == {'A:\\SCREEN01.BMP': 0} and jfree() == j0 - 1 and not probs, (f1, jfree(), j0, probs))
+        k.pc.prtsc(); k.settle(6.0)
+        new = sorted(set(files()) - set(f1))
+        check('... the next Shift-PrtSc saves the screen again (%s), cap_req 0' % new,
+              len(new) == 1 and files()[new[0]] > 1000 and k.rd('cap_req', 1)[0] == 0 and not k.crashed, (files(), f1))
 
 def t_trunc():
     """CREATE onto a file there (here a redirection): truncated and stamped,
@@ -5349,7 +5933,13 @@ def t_execabort():
     open(com, 'wb').write(code + b'Q' * (4096 - len(code)))
     badx = os.path.join(OUT, 'BADX.EXE')            # a header bigger than the file: EXEC says 11 (bad format)
     open(badx, 'wb').write((b'MZ' + struct.pack('<4H', 88, 2, 0, 0x40)).ljust(600, b'\0'))
-    k = ktest.KPC(image('exabort.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, os.path.join(HERE, 'UPPER.COM'), badx, SCR))
+    bigx = os.path.join(OUT, 'BIGX.EXE')            # an .EXE of 4 KB that prints HELLO
+    size = 32 + 4096
+    open(bigx, 'wb').write((struct.pack('<2s13H', b'MZ', size % 512, (size + 511) // 512, 0, 2, 0x20, 0x20, 1, 0x100,
+                                        0, 0, 0, 0x1C, 0) + bytes(4)) + code.ljust(4096, b'Q'))
+    EXE_FAIL = '17'                                 # (23: the data error's code, as INT 21h gives a Fail)
+    k = ktest.KPC(image('exabort.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, os.path.join(HERE, 'UPPER.COM'), badx, SCR,
+                        execerr(), bigx))
     k.start()
     pc, d = k.pc, k.pc.drives[0]
     def lbas(name):                     # the file's sectors (1.44 MB FAT12)
@@ -5410,6 +6000,22 @@ def t_execabort():
     k.key('cls'); k.key(ktest.ENTER)
     k.key('badx'); k.key(ktest.ENTER)
     check('... then BADX.EXE: "Bad command or file name"', 'Bad command or file name' in pc.text_screen(), pc.text_screen())
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('execerr badx.exe'); k.key(ktest.ENTER)
+    check('... EXEC\'s answer for it: 11 (bad format: a header bigger than the file)',
+          'E=0B' in pc.text_screen() and arena() == a0, (pc.text_screen(), arena()))
+    # an .EXE's image unreadable, answered Fail: EXEC answers the read's error (not 11, a short file's)
+    d.bad = {lbas(b'BIGX    EXE')[3]}
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('execerr bigx.exe'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Fail?' in pc.text_screen() or pc.crash, 10)
+    o1 = pc.text_screen()
+    d.bad = set()
+    pc.keys.append(ord('f')); k.settle()
+    o = pc.text_screen().rstrip()
+    check('a read error in BIGX.EXE\'s image under EXECERR, answered Fail: EXEC answers %sh, memory and the files as '
+          'before' % EXE_FAIL, 'Data error reading drive A' in o1 and o.endswith('E=%s\nA:\\>' % EXE_FAIL)
+          and 'HELLO' not in o and arena() == a0 and refs() == r0 and not k.crashed, (o1[-200:], o[-200:], arena(), refs()))
     # once a program runs, Abort ends it again (EXEC's flag not left set): UPPER reading BIG.COM's bad sector
     d.bad = {sec[1]}
     k.key('cls'); k.key(ktest.ENTER)
@@ -5505,8 +6111,250 @@ def t_cmdword():
     check('a program named by a path of 70 characters ("%s hello"): its tail is " hello" (%r)' % (p, t),
           t is not None and t.strip() == b'hello', t)
 
+XITS = r"""cpu 286
+org 100h
+%macro dos 0
+        int     21h
+        mov     [sdx], dx
+        call    pr
+%endmacro
+        push    ds
+        pop     es
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, n_a
+        int     21h
+        mov     [h1], ax
+        mov     ah, 40h
+        mov     bx, [h1]
+        mov     cx, 10
+        mov     dx, dig
+        int     21h
+        mov     ah, 56h                 ; RENAME of an open file
+        mov     dx, n_a
+        mov     di, n_c
+        dos
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, n_b
+        int     21h
+        mov     bx, ax
+        mov     ah, 3Eh
+        int     21h
+        mov     ah, 56h                 ; RENAME onto a file there
+        mov     dx, n_b
+        mov     di, n_a
+        dos
+        mov     ah, 3Ah                 ; RMDIR ""
+        mov     dx, n_e
+        dos
+        mov     ah, 3Ah                 ; RMDIR "\" (the current directory)
+        mov     dx, n_r
+        dos
+        mov     ah, 39h                 ; RMDIR "D\" (a trailing \)
+        mov     dx, n_d
+        int     21h
+        mov     ah, 3Ah
+        mov     dx, n_ds
+        dos
+        mov     ah, 3Bh                 ; RMDIR "\" from D (the root: no last
+        mov     dx, n_d                 ;  name, not the current directory)
+        int     21h
+        mov     ah, 3Ah
+        mov     dx, n_r
+        dos
+        mov     ah, 3Bh
+        mov     dx, n_r
+        int     21h
+        mov     ah, 3Ah
+        mov     dx, n_d
+        int     21h
+        mov     ah, 39h                 ; MKDIR ""
+        mov     dx, n_e
+        dos
+        mov     ah, 3Bh                 ; CHDIR ""
+        mov     dx, n_e
+        dos
+        mov     ax, 4200h               ; a seek past the end, then a read
+        mov     bx, [h1]
+        xor     cx, cx
+        mov     dx, 100
+        dos
+        mov     ah, 3Fh
+        mov     bx, [h1]
+        mov     cx, 10
+        mov     dx, buf
+        dos
+        mov     ax, 4409h               ; IOCTL 09h, drive A:
+        mov     bl, 1
+        mov     dx, 0FFFFh
+        dos
+        call    pdx
+        mov     ax, 440Ah               ; IOCTL 0Ah, the open file
+        mov     bx, [h1]
+        mov     dx, 0FFFFh
+        dos
+        call    pdx
+        mov     ah, 3Eh
+        mov     bx, [h1]
+        int     21h
+        mov     si, drvs                ; FIND NEXT with the DTA's drive byte changed
+.f:     lodsb
+        or      al, al
+        jz      .fx
+        push    ax
+        mov     ah, 4Eh
+        xor     cx, cx
+        mov     dx, n_w
+        int     21h
+        pop     ax
+        mov     [80h], al
+        mov     ah, 4Fh
+        dos
+        jmp     .f
+.fx:    mov     ah, 41h
+        mov     dx, n_a
+        int     21h
+        mov     ah, 41h
+        mov     dx, n_b
+        int     21h
+        mov     ax, 4C00h
+        int     21h
+pr:     jc      .e
+        push    ax
+        mov     al, 'K'
+        call    pc
+        pop     ax
+        push    ax
+        mov     al, ah
+        call    hx
+        pop     ax
+        call    hx
+        jmp     .sp
+.e:     push    ax
+        mov     al, 'E'
+        call    pc
+        pop     ax
+        call    hx
+.sp:    mov     al, ' '
+        jmp     pc
+pdx:    mov     al, 'D'
+        call    pc
+        mov     ax, [sdx]
+        push    ax
+        mov     al, ah
+        call    hx
+        pop     ax
+        call    hx
+        mov     al, ' '
+        jmp     pc
+hx:     push    ax
+        shr     al, 4
+        call    .d
+        pop     ax
+        and     al, 15
+.d:     add     al, '0'
+        cmp     al, '9'
+        jbe     pc
+        add     al, 7
+pc:     push    ax
+        push    dx
+        mov     dl, al
+        mov     ah, 2
+        int     21h
+        pop     dx
+        pop     ax
+        ret
+n_a     db      'A.TXT', 0
+n_b     db      'B.TXT', 0
+n_c     db      'C.TXT', 0
+n_e     db      0
+n_r     db      '\', 0
+n_d     db      'D', 0
+n_ds    db      'D\', 0
+n_w     db      '*.*', 0
+dig     db      '0123456789'
+drvs    db      26, 2, 3, 0
+h1      dw      0
+sdx     dw      0
+buf     times 10 db 0
+"""
+def t_errexits():
+    """The answers of error exits that go through a 2-byte jcc to a hub (XITS.COM):
+    RENAME of an open file 5, RENAME onto a file there 5, RMDIR, MKDIR and
+    CHDIR of "" 3, RMDIR of "\\" 16 (the current directory) and from a subdirectory 5 (no last name), of "D\\" 3,
+    a read after a seek past the end 0 bytes and no error, IOCTL 4409h (drive A:) and 440Ah (an open
+    file) no error, DX 0 (local), AX kept; FIND NEXT after FIND FIRST with the DTA's drive byte made Z:, B: or C:
+    (no such drive: drv_present's exit), and on a machine with a B: not yet mounted (D_MNT's exit): 18.  ^C typed
+    at INT 21h 01h and 08h: "^C", the program ends there."""
+    src = os.path.join(OUT, 'XITS.ASM'); open(src, 'w').write(XITS)
+    com = os.path.join(OUT, 'XITS.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    cc = os.path.join(OUT, 'CCWAIT.COM')            # CCWAIT 1 or 8: that call, then "AFTER", exit code 5
+    open(cc, 'wb').write(bytes([0xB4, 0x01, 0x80, 0x3E, 0x82, 0x00, 0x38, 0x75, 0x02, 0xB4, 0x08, 0xCD, 0x21,
+                                0xBA, 0x19, 0x01, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x05, 0x4C, 0xCD, 0x21]) + b'AFTER$')
+    k = ktest.KPC(image('xits.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, cc)); k.start()
+    sh = Shell(k)
+    o = sh.run('xits')
+    want = 'E05 E05 E03 E10 E03 E05 E03 E03 K0064 K0000 K4409 D0000 K440A D0000 E12 E12 E12'
+    check('XITS: RENAME open 5, onto a file 5; RMDIR "" 3, "\\" 16 (current), "D\\" 3, "\\" from D 5; MKDIR, CHDIR '
+          '"" 3; a seek past the end, a read: 0 bytes; IOCTL 09h, 0Ah: DX 0; FIND NEXT on Z:, B:, C: 18 (%s)' % want,
+          o.split('\n')[0].strip() == want and not k.crashed, o)
+    files = sorted(fatcheck.read_files(k.pc.drives[0].img))
+    check('... its files deleted again, none renamed', files == ['A:\\CCWAIT.COM', 'A:\\LCMD.COM', 'A:\\LODE.SYS', 'A:\\XITS.COM'], files)
+    # with a B: drive, its disk not yet mounted (nothing has used it): FIND NEXT on B: is the unmounted check's
+    data = os.path.join(OUT, 'XB.TXT'); open(data, 'wb').write(b'b' * 100)
+    kb = ktest.KPC(image('xits2.img', os.path.join(GOS, 'src', 'LCMD.COM'), com), b=image('xitsb.img', data)); kb.start()
+    bent = lambda: tuple(kb.pc.rd(0x60, kb.Y['drvtab'] + 32 + o, 1)[0] for o in (27, 1))     # (B:'s D_PRES, D_MNT)
+    sh = Shell(kb)
+    b0 = bent()
+    o = sh.run('xits')
+    check('... with a B: there, not mounted (D_PRES %d, D_MNT %d): the same answers, FIND NEXT on B: 18 too' % b0,
+          b0[0] != 0 and b0[1] == 0 and o.split('\n')[0].strip() == want and not kb.crashed, (b0, o))
+    for fn in '18':
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key('ccwait ' + fn); k.key(ktest.ENTER)
+        k.key(0x2E03)
+        o = k.pc.text_screen().rstrip()
+        check('^C at INT 21h 0%sh: "^C", the program ends there (no "AFTER", exit code not its 5), the prompt back' % fn,
+              '^C' in o and 'AFTER' not in o and k.u16('last_exit') & 0xFF != 5 and o.endswith('A:\\>') and not k.crashed,
+              (o[-200:], hex(k.u16('last_exit'))))
+    # a full root directory (224 entries): MKDIR finds no slot, RENAME (which takes a new slot for the new name)
+    # neither
+    src = os.path.join(OUT, 'FULLD.ASM')
+    open(src, 'w').write(XITS.split('pr:     jc')[0].split('push    ds')[0] + """
+        push    ds
+        pop     es
+        mov     ah, 39h
+        mov     dx, n_x
+        dos
+        mov     ah, 56h
+        mov     dx, n_f
+        mov     di, n_z
+        dos
+        mov     ax, 4C00h
+        int     21h
+pr:     jc""" + XITS.split('pr:     jc')[1].split('n_a     db')[0] + """
+n_x     db      'X', 0
+n_f     db      'F000.DAT', 0
+n_z     db      'Z.DAT', 0
+sdx     dw      0
+""")
+    full = os.path.join(OUT, 'FULLD.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', full, src], check=True)
+    empty = os.path.join(OUT, 'EMPTY.DAT'); open(empty, 'wb').write(b'')
+    k = ktest.KPC(image('fulld.img', os.path.join(GOS, 'src', 'LCMD.COM'), full,
+                        *['F%03d.DAT=%s' % (i, empty) for i in range(220)])); k.start()
+    n = sum(1 for i in range(224) if k.pc.drives[0].img[19 * 512 + i * 32] not in (0, 0xE5))
+    sh = Shell(k)
+    o = sh.run('fulld')
+    files = fatcheck.read_files(k.pc.drives[0].img)
+    check('a full root (%d of 224 entries): MKDIR X 5, RENAME F000.DAT Z.DAT 5, nothing made or renamed' % n,
+          n == 224 and o.split('\n')[0].strip() == 'E05 E05' and 'A:\\F000.DAT' in files and 'A:\\Z.DAT' not in files
+          and 'A:\\X' not in files and not k.crashed, (n, o, len(files)))
+
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_gpifc, t_gpcmdfail, t_rtcdate, t_exerel, t_exehuge, t_divide, t_divctx, t_divirq, t_divcap, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_mount, t_chg06, t_mntback, t_swaps, t_cwdfind, t_cwdgone, t_batswap, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_errexits, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

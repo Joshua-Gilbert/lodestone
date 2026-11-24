@@ -38,7 +38,7 @@
 ;    - done.sw, INT 21h's way out, becomes a far jump to mt_exit;
 ;    - INT 21h F0h through mt_f0: f_F0's first 5 bytes (MOV AL,[BP+F_AX]
 ;      and OR AL,AL) become a far jump to it, and it comes back past
-;      them.  (KEMS.INC patches f_F0.lend and .back, further in.)
+;      them.  (KEMS.INC patches f_F0.lend and .bk, further in.)
 ;    - kbd_get.k (MOV AH,1 / INT 16h / JNZ .have: 6 bytes) becomes a far
 ;      jump to mt_kwait, where a task waits for a key: only the front one
 ;      reads them; one that waits with nothing typed lets another run.
