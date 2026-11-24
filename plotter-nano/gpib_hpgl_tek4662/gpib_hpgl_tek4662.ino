@@ -4,6 +4,16 @@
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
  *
+ * v7.7: a device clear starts afresh. SDC (while listening) and DCL drop the
+ *    HP-GL in hand, the rest of a label being drawn, and the bytes queued
+ *    before the clear; bytes sent after it are kept. A label whose ETX never
+ *    came (a plot cancelled in the middle of one) no longer eats the next
+ *    plot. What is already queued for the 4662 is still drawn. IFC is not a
+ *    clear (KGPIB sends it after any failed bus operation). LISTEN_ONLY takes
+ *    DCL only. The serial-poll talker also tests ATN in the same cli as it
+ *    drives DIO. The 4662 commands that would stop its status replies (R,
+ *    U, G, F and BLOCK START at PLOTTER_ADDR) are no longer passed.
+ *
  * v7.6: labels and the 4662's own commands.
  *    - HP-GL's SI/SR (size), ES (extra space), DI/DR (direction), CS/CA with
  *      SS/SA or SO/SI in a label (character sets) and DF become the 4662's
@@ -129,7 +139,9 @@
 // ============================================================================
 
 #define GPIB_ADDRESS    1       // our GPIB address (0-30): Lodestone's [plotter] address
+#ifndef LISTEN_ONLY                     // (the host tests build both)
 #define LISTEN_ONLY     false   // true: take every data byte on the bus (never on a shared bus)
+#endif
 #define DEBUG_ENABLED   false   // USB serial debug output: each command echoed (an LB's text at 9600
                                 //  baud holds the bus ~200 ms), status-mode changes; `?` shows the state
 
@@ -184,6 +196,8 @@
 #define GPIB_UNT   0x5F
 #define GPIB_SPE   0x18
 #define GPIB_SPD   0x19
+#define GPIB_SDC   0x04
+#define GPIB_DCL   0x14
 #define GPIB_MLA   (0x20 | GPIB_ADDRESS)
 #define GPIB_MTA   (0x40 | GPIB_ADDRESS)
 
@@ -290,6 +304,15 @@ volatile uint8_t events = 0;
 #define EV_ADDRESSED  1
 #define EV_UNLISTENED 2
 #define EV_IFC        4
+#define EV_CLEAR      8                 // SDC (while listening) or DCL: loop() resets the parser
+
+// A device clear drops the bytes queued so far at once (so they no longer
+// hold NRFD or keep the poll from idle) and marks itself: gpibService runs
+// from deep inside feedChar (tekRaw's full queue, the pacing waits), so the
+// parser is reset in loop(). ringTail moves only here and in loop()'s ring
+// loop, which steps it before feedChar (the byte in hand is copied) and
+// feeds nothing more once EV_CLEAR is set.
+static inline void markClear() { events |= EV_CLEAR; ringTail = ringHead; }
 
 static inline void talkRelease() {      // let go of DAV and the data lines
     uint8_t s = SREG; cli();
@@ -332,6 +355,8 @@ void busCommand(uint8_t c) {
         spollMode = true; spollSent = false;
     } else if (c == GPIB_SPD) {
         spollMode = false;
+    } else if (c == GPIB_DCL || (c == GPIB_SDC && isListener && !LISTEN_ONLY)) {
+        markClear();                    // (LISTEN_ONLY listens to every SDC, whoever it is for: DCL only)
     }
 }
 
@@ -344,13 +369,17 @@ void talkService() {
         if (!(isTalker && spollMode && !spollSent)) return;
         {
             uint8_t v = statusByte();
+            // ATN tested, DIO driven and talkState set with interrupts off: an
+            // ATN that falls after the test above has run the interrupt
+            // already (it found nothing to let go), so the byte must not go on
             uint8_t s = SREG; cli();
+            if (atnLow()) { SREG = s; return; }
             DDRD = (DDRD & ~D_DIO) | ((v & 0x0F) << 2);     // a 1 pulls its line low
             DDRC = (DDRC & ~C_DIO) | ((v >> 4) & 0x0F);
+            talkState = 1;
             SREG = s;
         }
         nPolls++;
-        talkState = 1;
         return;                         // DAV on the next pass: the byte settles first (T1, 2 us)
     case 1:                             // wait for the listeners: NRFD released, NDAC held
         if (nrfdLow() || !ndacLow()) return;
@@ -367,6 +396,9 @@ void talkService() {
 }
 
 void gpibService() {
+    // IFC resets the interface only, not the device (IEEE-488.1): KGPIB pulses
+    // it after any program's failed bus operation, mid-plot or not, and a
+    // line left floating (the GRiD off) reads low on every pass
     if (ifcLow()) {
         if (!LISTEN_ONLY && isListener) events |= EV_IFC;
         if (!LISTEN_ONLY) isListener = false;
@@ -787,6 +819,7 @@ void tekText(const char* s) {
     alphaSetup(strchr(s, '\r') != NULL); // (a CR: the left margin at the label's start)
     char prev = 0;
     while (*s) {
+        if (events & EV_CLEAR) break;   // a device clear: the rest of the label is dropped
         uint8_t c = (uint8_t)*s++;
         if (c == 0x0E || c == 0x0F) {   // SO, SI: the alternate or the standard set
             useAlt = c == 0x0E; alphaSetup(false); continue;
@@ -942,11 +975,19 @@ void flushNumber() {
     if (penDown) tekDrawTo(tx, ty); else tekMoveTo(tx, ty);
 }
 
-void endCommand() {
-    if (inCoords) { flushNumber(); inCoords = false; haveX = false; cmdLen = 0; return; }
-    if (cmdLen >= 2) { cmdBuf[cmdLen] = '\0'; processCommand(cmdBuf, cmdLen); }
-    cmdLen = 0; inLabel = false;
+static void commandDone() {             // no command, coordinates or label in hand
+    inCoords = false; haveX = false; numLen = 0; cmdLen = 0; inLabel = false;
 }
+
+void endCommand() {
+    if (inCoords) flushNumber();
+    else if (cmdLen >= 2) { cmdBuf[cmdLen] = '\0'; processCommand(cmdBuf, cmdLen); }
+    commandDone();
+}
+
+// The plotter may be anywhere and in any mode: the next stroke re-enters
+// graph mode with GS and a full coordinate.
+static void plotterUnknown() { needsMove = true; inAlpha = false; coordKnown = false; afterLabel = false; }
 
 // ---- the 4662's own commands, passed through ------------------------------
 // An ESC outside a label starts one of the 4662's own commands, which goes to
@@ -962,22 +1003,51 @@ void endCommand() {
 // at its pen position before the next stroke, so HP-GL carries on where it
 // was even after a command that moves the pen. Native alpha commands
 // (I, J, T, V; N, DEVICE RESET) also set what labels use, as SI, DI and CS do.
+//
+// Withheld, at the 4662's own address: the commands that would stop the
+// status replies the Nano paces by, none of them of any use behind it:
+//   R  SET PROMPT CHARACTER: each reply held until that character comes, and
+//      after a READ STATUS nothing but PLOTTER ON/OFF, BLOCK START and DEVICE
+//      RESET obeyed until it does (p. 2-17, 4-10)
+//   U  SET BYPASS CANCEL CHARACTER: after each reply its input ignored up to
+//      that character (p. 2-19, 4-8)
+//   G  SET TURNAROUND DELAY: each reply held until the line has been quiet
+//      that long (p. 2-17, 4-6); the Nano counts what it sent since a reply
+//      from when the reply arrives, so a late one overstates the room
+//   F  PLOTTER OFF: nothing obeyed until PLOTTER ON (p. 4-3)
+//   (  BLOCK START: Block mode, where the Nano's own bytes spoil the block's
+//      checksum and, after the block, all but PLOTTER ON/OFF and BLOCK START
+//      is ignored (p. 2-12 to 2-14)
+// The ESC and the address have gone by the time the code comes: SUB goes in
+// the code's place (ESC A SUB is ignored, p. 3-4), and the rest of the
+// command is read to its end but not sent. The USB console says so.
 #define NAT_MAX 32                      // a longer command is cut (with SUB)
 uint8_t natState = 0;                   // 0 none, 1 after ESC, 2 the code next, 3 Option 31's second code, 4 a character, 5 numbers
+bool natDrop = false;                   // a withheld command: read, not sent
 char natBuf[NAT_MAX + 1]; uint8_t natLen = 0;
 unsigned long nNative = 0;
 
-void natPut(char c) { tekRaw((uint8_t)c); if (natLen < NAT_MAX) natBuf[natLen++] = c; }
+void natPut(char c) { if (!natDrop) tekRaw((uint8_t)c); if (natLen < NAT_MAX) natBuf[natLen++] = c; }
 
 void natEnd(bool sub) {
-    if (sub) tekRaw(0x1A);
-    natBuf[natLen] = 0; natState = 0; nNative++;
-    needsMove = true; inAlpha = false; coordKnown = false; afterLabel = false;   // (it may have moved the pen)
+    bool drop = natDrop;
+    if (sub && !drop) tekRaw(0x1A);
+    natBuf[natLen] = 0; natState = 0; natDrop = false;
+    plotterUnknown();                   // (it may have moved the pen)
+    if (drop) {
+        Serial.print(F("[4662] ESC ")); Serial.write(natBuf[1]); Serial.write(' '); Serial.write(natBuf[2]);
+        Serial.println(F(" dropped: it would break the Nano's pacing"));
+        return;
+    }
+    nNative++;
     // the alpha state, as the plotter now has it
     if (natLen >= 3 && natBuf[1] >= 'A' && natBuf[1] <= 'D') {
         const char* a = natBuf + 3; float x, y; long n;
         switch (natBuf[2]) {
-        case 'N': case 'V':             // DEVICE RESET, RESET ALPHA PARAMETERS
+        case 'N':                       // DEVICE RESET clears its output buffer (p. 4-12): a reply
+            if (natBuf[1] == PLOTTER_ADDR) queryPending = false;   //  to a request may be lost: ask again
+            // fall through
+        case 'V':                       // RESET ALPHA PARAMETERS
             sizeKind = 0; alphaAngle = 0; stdFont = altFont = 0; useAlt = false; alphaForget(); break;
         case 'I': if (parseFloat(&a, &x) && parseFloat(&a, &y)) {
                       sizeKind = 3; sizeW = x; sizeH = y; sentCs = lround(x); sentLs = lround(y); } break;
@@ -1004,6 +1074,7 @@ bool natChar(char c) {
         if (c >= 'A' && c <= 'D') natState = 2; else natEnd(false);
         return true;
     case 2:                             // the command code
+        if (natBuf[1] == PLOTTER_ADDR && (c == 'R' || c == 'U' || c == 'G' || c == 'F' || c == '(')) { tekRaw(0x1A); natDrop = true; }
         natPut(c);
         if (c == 'B') natState = 3;
         else if (strchr("EF(NQVMKL", c)) natEnd(false);
@@ -1022,6 +1093,35 @@ bool natChar(char c) {
     }
     }
     return false;
+}
+
+// A device clear (SDC, DCL), from loop() only: whatever HP-GL was in hand is
+// dropped (a label never ended, a coordinate list cut, a pen left down by a
+// PD whose PU never came), so the next plot starts fresh. What is already
+// queued for the 4662 still goes. A 4662 command cut part-way is ended, so
+// the 4662 doesn't take the Nano's next byte (a GS) as part of it
+// (070-4164-00):
+//   state 1, ESC alone: GS. ESC GS is GS (Table 3-4, p. 3-10); the next
+//     stroke re-enters graph mode with GS and a full coordinate anyway.
+//   states 2, 3 and 5 (the code or Option 31's second letter next, or
+//     numbers): SUB, the Style I terminator the manual recommends (p. 3-4).
+//     A code the 4662 doesn't know is ignored (p. 3-4): ESC A SUB does
+//     nothing.
+//   state 4 (a character argument next: any character but NUL, SYN and
+//     DEL, p. 3-3): SUB is the character. S SUB has the 4662 put SUB before
+//     its replies, which pollRx takes as a block boundary. (U and R at the
+//     4662's address are withheld: nothing of theirs is left to end.)
+//   a withheld command: nothing; its ESC A SUB went whole at its code.
+// Kept on purpose: the label settings (SI/SR, ES, DI/DR, CS/CA, SO/SI) and
+// what the 4662 was last sent for them (it still has them), the page mode,
+// the pen's position and lift, the flow and pacing state, the ! settings.
+// (charArg needs no reset: it is read only once cmdLen is 2, and set there.)
+void parserReset() {
+    if (natState == 1) { natPut(TEK_GS); natEnd(false); }
+    else if (natState) natEnd(true);    // (no SUB for a withheld one)
+    commandDone();
+    plotterUnknown();
+    penDown = false;
 }
 
 void feedChar(char c) {
@@ -1170,7 +1270,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.6"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.7"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL (and ESC 4662 commands) for testing; '?' bus and flow, '#' ask the plotter, '!' settings"));
@@ -1191,7 +1291,11 @@ void loop() {
             if (e & EV_ADDRESSED) Serial.println(F("[GPIB] Addressed as listener"));
             if (e & EV_UNLISTENED) Serial.println(F("[GPIB] Unlistened"));
             if (e & EV_IFC) Serial.println(F("[GPIB] Interface clear"));
+            if (e & EV_CLEAR) Serial.println(F("[GPIB] Cleared: HP-GL in hand dropped"));
         }
+        // the clear: markClear dropped the bytes that came before it; those
+        // after it (a controller's "PU;") are kept
+        if (e & EV_CLEAR) parserReset();
     }
 
     while (Serial.available()) {        // USB: HP-GL for testing, or a console command
@@ -1211,7 +1315,7 @@ void loop() {
         gpibService();
     }
 
-    for (uint8_t n = 0; n < 8 && !ringEmpty() && tekQueued() < 64; n++) {
+    for (uint8_t n = 0; n < 8 && !ringEmpty() && tekQueued() < 64 && !(events & EV_CLEAR); n++) {
         char c = (char)ring[ringTail]; ringTail++;
         feedChar(c);
         gpibService();
