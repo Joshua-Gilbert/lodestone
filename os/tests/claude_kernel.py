@@ -56,10 +56,11 @@ class KernelHarness(G.EmuHarness):
     router then, Term or chat as the GRiD's HELLO asks.  ems_pages: the
     1520's expanded memory (resident Claude needs it).  irq_exact: pcemu's
     (an IRQ held under CLI taken as soon as IF is set again, as the 1520's
-    PIC gives it; on by default, as ktest.KPC's)."""
+    PIC gives it; on by default, as ktest.KPC's).  fd_wait, disk_model:
+    pcemu's (a floppy transfer that takes time, the 1520's drive timing)."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y',
                  claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0, bridge='ar488', frame_cap=None,
-                 irq_exact=True):
+                 irq_exact=True, fd_wait=False, disk_model='flat'):
         s.tmp = tempfile.mkdtemp(prefix='gridk-')
         disk = [LODE_SYS, LCMD_COM, 'CLAUDE.COM=' + claude_com, 'TESTKEY.COM=' + G.TESTKEY_COM]
         for k, v in (files or {}).items():
@@ -69,7 +70,8 @@ class KernelHarness(G.EmuHarness):
             disk.append(name + '=' + p)
         img = mkimg.build(os.path.join(s.tmp, 'a.img'), disk)
         chip = G.Chip(S.bus())
-        s.m = m = KMachine(img, chip, ems_pages=ems_pages, irq_exact=irq_exact)
+        s.m = m = KMachine(img, chip, ems_pages=ems_pages, irq_exact=irq_exact, fd_wait=fd_wait,
+                           disk_model=disk_model)
         chip.clock = m.clock
         s.wire(chip.devices, bridge, patched, baud, script, mode, term, frame_cap=frame_cap)
         s.sym = G.symbols(os.path.splitext(claude_com)[0] + '.MAP')
@@ -162,7 +164,17 @@ OPS_PROBE = [
     ('gpib remote, none', 0x20, _gp(8, 20), 0, b''),
     ('gpib op 10', 0x20, _gp(10, 29), 4, b''),
     ('op 0Bh, none such', 0x0B, b'', {'claude': 0xFF, 'rcon': 0xF6}, b''),
-]
+    ('write, no NUL in the request', 4, b'\0' + struct.pack('<I', 0) + b'A:\\NONUL.TXT', 0xF0, 0),
+    ('write, nothing after the offset', 4, b'\0' + struct.pack('<I', 0), 0xF0, 0),
+    ('write, a mode byte alone', 4, b'\0', 0xF0, 0),
+    ('gpib clear, 8 bytes', 0x20, _gp(5, 29)[:6], 4, b''),           # (under the 9 before the data: refused)
+    ('settime, year 30000', 0x30, struct.pack('<HBBBBB', 30000, 1, 1, 0, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),
+    ('settime, 6 bytes', 0x30, struct.pack('<HBBBB', 2025, 6, 1, 12, 0), {'claude': 4, 'rcon': 0xF6}, 0),
+    ('settime, hour 25', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 25, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),  # (a good
+    ('settime, hour 24', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 24, 0, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),  #  date:
+    ('settime, minute 60', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 23, 60, 0), {'claude': 0x0D, 'rcon': 0xF6}, 0),  # refused
+    ('settime, second 60', 0x30, struct.pack('<HBBBBB', 2025, 6, 1, 23, 59, 60), {'claude': 0x0D, 'rcon': 0xF6}, 0),  # whole,
+]                                       # the clock and the RTC as they were: test_ops_codes)
 
 def ops_want(prog):
     """OPS_PROBE's statuses and replies for 'claude' (CLAUDE.COM) or 'rcon'"""

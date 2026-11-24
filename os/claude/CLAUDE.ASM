@@ -1973,6 +1973,11 @@ maybe_idle:                             ; HLT when nothing is due
         hlt
 .x:     ret
 
+..@sv_rs:                               ; (sv_check's .rs again: here, in
+        mov     byte [sv_st], 0         ;  short reach of its first tests,
+        clc                             ;  each a 2-byte jump not taken on
+        ret                             ;  the way on)
+
 ; ---------------------------------------------------------------------
 ;  the Executive's screen saver (1.14), as at LCMD's prompt (INT 21h F0h
 ;  AL=5: its delay, sv_t, and its far entry): idle that long (no key, no
@@ -1993,19 +1998,19 @@ sv_check:
         cmp     bx, 55
         ja      .act
         cmp     word [sv_t], 0FFFFh
-        je      .rs
+        je      ..@sv_rs
         cmp     byte [connected], 0
-        je      .rs
+        je      ..@sv_rs
         cmp     byte [lstate], LS_IDLE
-        jne     .rs
+        jne     ..@sv_rs
         test    byte [pi_hf], HF_SAVER
-        jz      .rs
+        jz      ..@sv_rs
         cmp     byte [wake_ok], 0
-        je      .rs
+        je      ..@sv_rs
         cmp     word [irq_ptr+2], 0
-        je      .rs
+        je      ..@sv_rs
         cmp     byte [srq_held], 0      ; (another device holds the line: a
-        jne     .rs                     ;  ring would make no edge)
+        jne     ..@sv_rs                ;  ring would make no edge)
 %ifdef TERM_WIN
         cmp     byte [win], 0
         jne     .act
@@ -2678,8 +2683,11 @@ take_snapshot:
 ; ---- running DOS programs -----------------------------------------
 ; flags (1: bit0 capture, bit1 snapshot at exit), timeout (2),
 ; key script length (2), key script, command line.  The timeout is the
-; Pi's own wait: we cannot end a program, so it is skipped here
-op_run: mov     si, reqbuf+2
+; Pi's own wait: we cannot end a program, so it is skipped here.  The
+; last RUN's snapshot block goes first (the Pi has fetched its SCREEN by
+; now): left by a RUN that failed, it took 32 KB from every later program
+op_run: call    snap_free
+        mov     si, reqbuf+2
         lodsb
         mov     [run_flags], al
         lodsw                           ; (the timeout)
@@ -2996,8 +3004,9 @@ exists: mov     dx, exec_path           ; exec_path -> CF if no such file or
         int     21h                     ;  fails with DOS's error).  SI kept
         ret
 
-; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ).  CF if not in the environment
-; (DI as it was: the callers count on it).
+; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ), at most CX bytes with the
+; NUL (a longer one cut).  CF if not in the environment (DI and CX as they
+; were: the callers count on it).
 env_get:
         push    ds
         push    bx
@@ -3021,8 +3030,12 @@ env_get:
 .cp:    lodsb
         stosb
         or      al, al
-        jnz     .cp
-        pop     bx
+        loopnz  .cp
+        jz      .ok
+        dec     di                      ; (no room for the rest: cut, its NUL
+        xor     al, al                  ;  through ES, ours)
+        stosb
+.ok:    pop     bx
         pop     ds
         clc
         ret
@@ -3040,19 +3053,24 @@ env_get:
 get_comspec:
         mov     si, s_comspec
         mov     di, exec_path
+        mov     cx, 80                  ; (exec_path's room)
         call    env_get
         jnc     .x
         mov     si, s_defcomspec
         call    copyz
 .x:     ret
 
-; outname = %TEMP%\CLAUDE.OUT, %TMP%\CLAUDE.OUT or X:\CLAUDE.OUT
+; outname = %TEMP%\CLAUDE.OUT, %TMP%\CLAUDE.OUT or X:\CLAUDE.OUT.  The
+; value cut at 68 characters: "\CLAUDE.OUT" and the NUL fit outname's 80
+; (env_get's CX counts the NUL too).  TEMP's documented limit is 64, as
+; LODE.INI's and LCMD's pipe_name
 make_outname:
         mov     si, s_temp
         mov     di, outname
+        mov     cx, 80 - 11
         call    env_get
         jnc     .have
-        mov     si, s_tmp
+        mov     si, s_tmp               ; (CX as it was)
         call    env_get
         jnc     .have
         mov     ah, 19h
@@ -3203,7 +3221,7 @@ int16:  test    ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         cmp     byte [cs:ks_active], 0
         je      .chain
         push    ax                      ; a real key waiting?
-        mov     ah, 1
+        inc     ah                      ; (the caller's kind: 00h/10h -> 01h/11h)
         pushf
         call    far [cs:old16]
         pop     ax
@@ -3572,7 +3590,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.18', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.19', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
@@ -3963,7 +3981,18 @@ res_load:
         mov     dx, s_r_task
         mov     al, 3
         jmp     res_quit
-.t0:    mov     ax, 3567h               ; an EMS manager, its frame at E000h
+.t0:    mov     ax, 0F01Ah              ; MT_TSR asked first, ES:BX 0:0 (no key
+        xor     bx, bx                  ;  wait of ours yet: none, res_find
+        mov     es, bx                  ;  says), for its bytes' address: the
+        xor     cx, cx                  ;  stub's r_front needs the fourth,
+        stc                             ;  mt_down.  This LODEMT.SYS says so
+        int     21h                     ;  with CL = 4; an older one leaves CX
+        jc      .t1                     ;  and has three: refused
+        cmp     cl, 4
+        jne     .oldmt
+        mov     [res_mt], ax
+        mov     [res_mt + 2], dx
+.t1:    mov     ax, 3567h               ; an EMS manager, its frame at E000h
         int     21h
         mov     di, 0Ah
         mov     si, s_emm
@@ -4038,8 +4067,6 @@ res_load:
         mov     dx, [res_old16 + 2]
         mov     [es:r_old16], ax
         mov     [es:r_old16 + 2], dx
-        mov     [es:r_pold16], ax
-        mov     [es:r_pold16 + 2], dx
         mov     ax, [res_indos]
         mov     [es:r_indos], ax
         mov     ax, [res_indos + 2]
@@ -4067,7 +4094,7 @@ res_load:
         cmp     bx, R_PAGES
         jb      .pg
         mov     al, [es:r_hw]           ; the console into the first
-        out     dx, al
+        call    res_eout
         push    es
         push    R_FRAME
         pop     es
@@ -4086,11 +4113,11 @@ res_load:
         mov     [es:RC_NANO], al
         pop     es
         pop     ax                      ; window 0 as it was
-        out     dx, al
+        call    res_eout
         mov     ax, 0F01Ah              ; Lodestone's multitasking (MT_TSR):
         mov     bx, ..@r_idle           ;  our key wait may be switched from,
-        stc                             ;  and whose call it is, from its two
-        int     21h                     ;  bytes (ES = the stub)
+        stc                             ;  and whose call it is, from its
+        int     21h                     ;  bytes (ES = the stub; CL 4, .t0)
         jc      .nomt
         mov     [es:r_mt], ax
         mov     [es:r_mt + 2], dx
@@ -4123,6 +4150,44 @@ res_load:
 .noems: mov     dx, s_r_noems
         mov     al, 1
         jmp     res_quit
+.oldmt: mov     dx, s_r_oldmt
+        mov     al, 1
+        jmp     res_quit
+; AL to the page register at DX, once no disk's owner is out (MT_TSR's
+; fourth byte FFh, res_mt; the stub's r_front has why: a task behind may
+; be out in a floppy's transfer, and an EMS call before may have let it
+; run).  Looked at and written with interrupts off, so no task switch
+; comes between; while one is out, interrupts on again and an INT 21h
+; call (AH=19h, the drive: nothing changed), which MT holds at its gate
+; while the owner is out (mt_i21: this task waits, the owner runs), then
+; another look.  So the wait doesn't hang on MT's tick switching from us
+; (a TSR's INT 08h hook ahead of MT's, the owner's IRQ 6 lost: its
+; time-out readies it, and the gate gives it its turn).  No bound: only
+; the owner clears mt_down, when it runs again, and it is made ready by
+; its device's interrupt or MT's time-out (~2 s); a bound would write
+; with it out.  Without MT at once.  AX, DX kept
+res_eout:
+        push    ds
+        push    bx
+        lds     bx, [res_mt]
+.a:     cli
+        cmp     word [cs:res_mt + 2], 0 ; (no MT)
+        je      .go
+        cmp     byte [bx + 3], 0FFh
+        je      .go
+        sti
+        push    ax
+        mov     ah, 19h
+        int     21h
+..@res_gate:                            ; (the tests: back from MT's gate)
+        pop     ax
+        jmp     .a
+.go:    out     dx, al
+        sti
+        pop     bx
+        pop     ds
+        ret
+res_mt  dd      0                       ; (MT_TSR's bytes, .t0; 0:0 none)
 r_far   dw      r_int67, 0              ; (the stub's thunk, far)
 res_old16 dd    0                       ; (the stub's, till it is in place)
 res_indos dd    0
@@ -4244,6 +4309,7 @@ s_r_again   db 'Claude is resident already (CODE-\).', 13, 10, '$'
 s_r_noems   db 'CLAUDE /R needs EMS, with its page frame at E000h.', 13, 10, '$'
 s_r_nopages db 'CLAUDE /R needs 4 free EMS pages (64 KB).', 13, 10, '$'
 s_r_nomem   db 'CLAUDE /R: not enough memory.', 13, 10, '$'
+s_r_oldmt   db 'CLAUDE /R needs a newer LODEMT.SYS (or MULTITASK=0 in LODE.INI).', 13, 10, '$'
 s_mcbname   db 'CLAUDE', 0, 0
 s_r_task    db 'CLAUDE /R from inside a task: its memory would go with the task.', 13, 10
             db 'Load it at the Executive', 27h, 's prompt (CODE-P).', 13, 10, '$'
@@ -4282,6 +4348,7 @@ r_off    db     0               ; 10Eh: not 0, no pop-up (CLAUDE.COM runs)
 r_bgon   db     0               ; 10Fh (version 5): 1 background looks at key
                                 ;  calls (the console's to say), 2 in one
         r_at    r_sig, 100h
+        r_at    r_old16, 107h           ; (RCON.ASM's R_OLD16)
         r_at    r_inpop, 10Dh
         r_at    r_off, 10Eh
         r_at    r_bgon, 10Fh
@@ -4291,8 +4358,8 @@ r_bgon   db     0               ; 10Fh (version 5): 1 background looks at key
 %endif
 r_hw     db     0, 0, 0, 0      ; our pages' register values
 r_saved  db     0, 0, 0, 0      ; the program's windows meanwhile
-r_params:                       ; the console's, ES:BX (RCON.ASM P_*)
-r_pold16 dd     0               ;  the BIOS's INT 16h
+r_params:                       ; the console's, ES:BX (RCON.ASM P_*; the
+                                ;  BIOS's INT 16h it reads at r_old16)
 r_indos  dd     0               ;  DOS's busy flag (INT 21h AH=34h)
 r_ss     dw     0
 r_sp     dw     0
@@ -4300,8 +4367,9 @@ r_ks     db     0               ;  not 0: the console has keys for the program
 r_pend   db     0               ;  CODE-\ taken (or the keys done): the console
 r_mt     dd     0               ; Lodestone's multitasking (MT_TSR): its bytes,
                                 ;  the front task's number, the running one's,
-                                ;  and ours: 1 while the pop-up waits for the
-                                ;  front task (0:0: none)
+                                ;  ours (1 while the pop-up waits for the
+                                ;  front task) and the task out on a disk
+                                ;  (FFh none) (0:0: no MT)
 r_bgt    dw     0               ;  the tick of the last background look
 r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         jnz     .ch                     ;  peek; the rest go on to the BIOS)
@@ -4340,10 +4408,11 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         call    r_look                  ; (none, or CODE-\ next: wait)
         jz      .h
         push    ax
-        inc     ah                      ; (a peek of the caller's kind; for a
-        call    r_front                 ;  background task's, AH=11h: the
-        je      .pf                     ;  BIOS's AH=01h drops the keys AH=00h
-        mov     ah, 11h                 ;  can't give, the front task's.  A
+        inc     ah                      ; (a peek of the caller's kind, for
+        call    r_front                 ;  the front task with an owner out
+        jbe     .pf                     ;  too, CF; for a task behind, AH=11h:
+                                        ;  the BIOS's AH=01h drops the keys
+        mov     ah, 11h                 ;  AH=00h can't give, the front's.  A
 .pf:    pushf                           ;  key: the read on to MT, which holds
         call    far [cs:r_old16]        ;  it behind, or lets it through where
         pop     ax                      ;  it can't switch: an INT 24h prompt's)
@@ -4369,18 +4438,32 @@ r_look: push    ax
 .x:     pop     ax
         ret
 
-; the call is the front task's (Lodestone's multitasking), or there are no
-; tasks: ZF.  Registers kept
+; the call is the front task's (Lodestone's multitasking) and no disk's
+; owner is out, or there are no tasks: ZF.  NZ and NC: another task's
+; call; NZ and CF: the front task's, with an owner out.  The owner out is
+; MT_TSR's fourth byte, mt_down (FFh: none): a task MT switched from at a
+; floppy's wait (or the hard disk's) till it runs again.  On the 1520 a
+; page register written during a floppy's DMA resets the machine
+; (2026-11-04), and the DMA runs only while its owner is out or running:
+; running, it is inside INT 13h, where MT never switches (mt_safe), so
+; only an interrupt's code can come here then (r_isr: one in service).
+; So the front task's calls map no page with an owner out (r_hot.p, r_bg,
+; r_feed: a refused pop-up, look or key comes at the next call once the
+; owner has run), and the console never comes up to wait at MT's gate
+; with its first INT 21h.  Nothing switches tasks between this and the
+; callers' OUTs.  Registers kept
 r_front:
-        cmp     word [cs:r_mt + 2], 0
+        cmp     word [cs:r_mt + 2], 0   ; (ZF, NC)
         je      .x
         push    ds
         push    bx
         push    ax
         lds     bx, [cs:r_mt]
         mov     ax, [bx]
-        cmp     al, ah
-        pop     ax
+        xor     al, ah                  ; (NC)
+        jnz     .p
+        cmp     byte [bx + 3], 0FFh     ; (below: CF)
+.p:     pop     ax
         pop     bx
         pop     ds
 .x:     ret
@@ -4389,13 +4472,19 @@ r_front:
 ; none now (AX kept), else AX = the key (not ZF), taken if AH is a read.  The
 ; console's feeder runs with its page in window 0 and the program's back
 ; after; when the keys are done it sets r_pend, and the console comes.
+; None with a disk's owner out (r_front) or a hardware interrupt in service
+; (r_isr: a reader in a handler gets none till it has sent its EOI).
 r_feed: cmp     byte [cs:r_ks], 0
         jne     .k
 .no:    stc
 .x:     ret
-.k:     call    r_front                 ; (the front task's alone: a call from
-        jne     .wk                     ;  behind, after a CODE-Tab, tells MT)
-        push    dx
+.k:     call    r_front                 ; (the front task's alone, and no disk's
+        jne     .wk                     ;  owner out: a call from behind, after
+        push    ax                      ;  a CODE-Tab, tells MT; then nothing
+        call    r_isr                   ;  in service: the key waits for the
+        pop     ax                      ;  next call.  AX kept: RC_FEED takes
+        jnz     .wk                     ;  the caller's AH)
+.in:    push    dx                      ; (.in: the tests, the page goes in)
         push    bx
         xchg    ax, bx                  ; (AX kept in BX)
         mov     dx, R_EPORT
@@ -4410,9 +4499,9 @@ r_feed: cmp     byte [cs:r_ks], 0
         out     dx, al
         xchg    ax, bx
         pop     bx
-        pop     dx
+        inc     dx                      ; (not ZF: a key, DX R_EPORT + 1; CF
+        pop     dx                      ;  kept)
         jc      .wk
-        or      sp, sp                  ; (not ZF: a key)
         ret
 .wk:    push    ax                      ; none now, the keys not done (a wait)
         mov     al, 1                   ;  or just done (r_pend: the console
@@ -4420,6 +4509,7 @@ r_feed: cmp     byte [cs:r_ks], 0
         pop     ax                      ;  wait at our HLT would never end
         stc
         ret
+        times   ($ - $$) & 1 db 90h     ; (r_hot even)
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
 ; move back one), and the console runs, unless a hardware interrupt is in
@@ -4429,9 +4519,15 @@ r_feed: cmp     byte [cs:r_ks], 0
 ; made with none in service.  With Lodestone's tasks, only in a call of
 ; the front task's: the console takes the front screen and keys.  Taken
 ; in another task's call, it tells MT once (mt_tsrk, r_pend 2), which
-; gives the front task a turn as for a key.  Registers kept.  (Never called with the
-; console up: r_int16 answers itself then, and r_popup clears r_inpop
-; before it returns here.)
+; gives the front task a turn as for a key.  Refused in the front task's
+; call (r_front: a disk's owner out; r_isr), it tells MT each time (r_pend
+; stays 1), so a read waiting at our HLT comes back: CODE-\ during a
+; floppy's transfer comes when its owner has run again.  The fold (OR AL,
+; 0F0h) takes any 2Bx0h as the hot key: the 1520's keyboard gives none but
+; CODE-\ (its key gives 2B5Ch, 2B7Ch, 2B1Ch and 2BF0h / 2B00h); a national
+; keyboard driver could.  Registers kept.  (Never called with the console
+; up: r_int16 answers itself then, and r_popup clears r_inpop before it
+; returns here.)
 r_hot:  push    ax
         push    bx
         push    si
@@ -4451,12 +4547,12 @@ r_hot:  push    ax
         pop     ax
 .x:     ret
 .k:     mov     ax, [bx]
-        cmp     ax, R_HOTRAW
-        je      .m
-        cmp     ax, R_HOT
+        or      al, 0F0h                ; (R_HOT folds onto R_HOTRAW; AX is
+        cmp     ax, R_HOTRAW            ;  read again from [BX] after)
         je      .m
         call    .nx
         jmp     .s
+        times   ($ + 1 - $$) & 1 db 90h ; (.m odd, so .nx and .n even)
 .m:     mov     byte [cs:r_pend], 1
 .mv:    mov     si, bx
         call    .nx
@@ -4467,11 +4563,12 @@ r_hot:  push    ax
         jmp     .mv
 .e:     mov     [1Ch], si               ; the tail one back
 .p:     call    r_front                 ; (a background task's call: at the
-        jne     .df                     ;  front one's, over its screen)
-        call    r_isr
-        jnz     .no
-        xor     al, al
-        mov     [cs:r_pend], al
+        jc      .tl                     ;  front one's, over its screen.  An
+        jne     .df                     ;  owner out, CF, or one in service:
+        call    r_isr                   ;  not now, MT told each time, so a
+        jnz     .tl                     ;  read waiting at our HLT comes back
+        xor     al, al                  ;  for it: CODE-\ during a floppy's
+        mov     [cs:r_pend], al         ;  transfer once its owner is back)
         call    r_tell                  ; (no longer waiting, for MT)
         sti
         pop     ds
@@ -4482,7 +4579,7 @@ r_hot:  push    ax
 .df:    cmp     byte [cs:r_pend], 1     ; (MT told once, r_pend 2: the front
         jne     .no                     ;  task's turn to come, as for a key,
         inc     byte [cs:r_pend]        ;  so its call does; MT clears it as
-        mov     al, 1                   ;  it gives it)
+.tl:    mov     al, 1                   ;  it gives it)
         call    r_tell
         jmp     .no
 .nx:    inc     bx                      ; the next word, round the buffer
@@ -4506,15 +4603,15 @@ r_tell: cmp     word [cs:r_mt + 2], 0
 
 ; A background look, if the console asked for them (r_bgon 1: the user
 ; went back to the program with the link up), none was made for R_BGT
-; ticks, no CLAUDE.COM runs, Claude's keys aren't under way, the call is the front task's and
-; nothing is in service (as for the pop-up).  The console comes as at a
-; pop-up, with r_bgon 2, and says in it whether to go on looking.
-; Registers kept.
+; ticks, no CLAUDE.COM runs, the call is the front task's with no disk's
+; owner out, and nothing is in service (as for the pop-up).  The console
+; comes as at a pop-up, with r_bgon 2, and says in it whether to go on
+; looking.  (Never with Claude's keys under way: the console never leaves
+; r_bgon set with r_ks set.  It sets r_ks only in type_start, never in a
+; background pass, and the session that does so ends with r_bgon 0; r_ks
+; is 0 again before any session can set r_bgon 1.)  The tick first: most
+; calls find no look due and go without r_front's test.  Registers kept.
 r_bg:   cmp     byte [cs:r_bgon], 1
-        jne     .x
-        cmp     byte [cs:r_ks], 0
-        jne     .x
-        call    r_front
         jne     .x
         push    ax
         push    ds
@@ -4524,6 +4621,8 @@ r_bg:   cmp     byte [cs:r_bgon], 1
         sub     ax, [cs:r_bgt]
         cmp     ax, R_BGT
         jb      .n
+        call    r_front
+        jne     .n
         call    r_isr
         jz      .go
 .n:     pop     ds
@@ -4585,7 +4684,10 @@ r_popup:
         times   -(R_PAGES != 4 || r_saved != r_hw + 4) db 0
 
 ; the PIC's in-service register, then back to the request one (as the
-; kernel's screen capture does): AH, and ZF if nothing is in service
+; kernel's screen capture does): AH, and ZF if nothing is in service.
+; Callers: r_hot, r_bg and r_feed, each after r_front (no disk's owner
+; out), so TYPE's keys also wait while an interrupt is in service (a
+; reader in a handler before its EOI gets none).  DX kept
 r_isr:  mov     al, 0Bh
         out     20h, al
         in      al, 20h
@@ -4606,8 +4708,10 @@ r_stack_top equ r_code_end + R_STACK    ;  stub's block, not in CLAUDE.COM)
 r_end   equ     r_stack_top
 R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
 ; the stub's hot code even, by its order (r_tell between r_hot and r_bg),
-; r_int16's STI before .pk and two self-correcting pads, never run (after
-; .rt and .ky); a peek's r_hot and r_feed go straight through
+; r_int16's STI before .pk and four self-correcting pads, never run (after
+; .rt, .ky, r_feed's RET (none now) and r_hot's jmp .s); a peek's r_hot and
+; r_feed go straight through
+        times   -((R_HOT | 0F0h) != R_HOTRAW) db 0      ; (r_hot's one compare)
 %ifndef STUB_PAD                        ; (the tests: another version's layout)
         EVEN    r_int16, r_int16.ch, r_feed, r_hot, r_hot.s, r_hot.k, r_hot.nx, r_hot.n, r_bg, r_bg.x
         EVEN    r_int16.pk + 3, r_int16.pk + 9  ; (a peek's returns from r_hot and r_feed)
@@ -4681,15 +4785,18 @@ rbuf        resb 64
 lstate      resb 1
 TERMLINK_RESET_VARS
 pi_active   resb 1
-pend_chunk  resw 1
 done_type   resb 1
+            alignb 2                    ; (the words from here even, whatever
+pend_chunk  resw 1                      ;  TERMLINK_RESET_VARS holds)
 t_sent      resw 1
 t_last      resw 1
 t_reset     resw 1
 n_fail      resw 1
-n_failrun   resb 1
+n_failrun   resb 1                      ; (even: took_answer clears both with one word)
+n_resend    resb 1                      ; the Pi's NAKs in a row: 8 fail the link (link_reset clears it)
 n_bad       resw 1
 spoll_errs  resb 1
+            alignb 2
 pit_last    resw 1
 kbd_pit     resw 1                      ; (KBD_EVERY: when the keys were last looked at)
 kbd_tick    resw 1

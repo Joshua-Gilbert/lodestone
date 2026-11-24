@@ -183,7 +183,7 @@ def test_executive_saver():
         th.start()
         t1 = h.m.us
         assert h.run_until(lambda: not th.is_alive(), 30), ('the call never came back', when, h.k.ocr()[:6])
-        assert 'CLAUDE 1.18' in res.get('r', {}).get('grid', ''), res
+        assert 'CLAUDE 1.19' in res.get('r', {}).get('grid', ''), res
         assert h.run_until(lambda: 'Hi from the Pi.' in h.screen(), 10), h.screen()
         return (h.m.us - t1) / 1e6
     ended = call('dark')                                    # (in the dark screen)
@@ -284,6 +284,42 @@ def test_key_script_other_int16():
 T.test_key_script_other_int16 = test_key_script_other_int16
 
 
+K10 = r'''; K10.COM: keys read with INT 16h AH=10h (the enhanced keyboard's) till Esc
+cpu 286
+org 100h
+.l:     mov     ah, 10h
+        int     16h
+        cmp     al, 1Bh
+        jne     .l
+        mov     ax, 4C00h
+        int     21h
+'''
+
+def test_key_script_wait_kind():
+    """A RUN's {WAIT} under a reader of AH=10h: int16's look for a real key meanwhile is the caller's kind, AH=11h
+    (AH=01h would drop the keys the 1520 BIOS's 01h skips)."""
+    import test_resident as R
+    from unicorn import UC_HOOK_CODE
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'K10', 'capture': False, 'keys': '{WAIT 1}x{ESC}'})),
+                 T.reply(('text', 'Done.'))], mode='auto', files={'A:\\K10.COM': open(R.asm('K10', K10), 'rb').read()})
+    lo = h.claude_psp * 16 + h.sym['int16']
+    code = bytes(h.m.mu.mem_read(lo, 64))
+    at = lo + code.index(b'\xFE\xC4\x9C\x2E\xFF\x1E') + 3       # (inc ah, pushf, then the far call: its AH)
+    ahs = []
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, ud: ahs.append(h.m.r('ah')), None, at, at)
+    h.m.mu.ctl_remove_cache(at, at + 1)
+    try:
+        assert h.turn('run k10', sim_s=60)
+    finally:
+        h.m.mu.hook_del(hk)
+    text = str(T.results(h, 1)[0]['content'])
+    assert 'Exit code: 0' in text and ahs and set(ahs) == {0x11}, (text, len(ahs), sorted(set(ahs)))
+    T.check(h)
+
+
+T.test_key_script_wait_kind = test_key_script_wait_kind
+
+
 def test_run_exec_block():
     """A RUN's EXEC block (filled once at CLAUDE's start): the child gets CLAUDE's environment, the command's
     tail and two blank FCBs in its PSP."""
@@ -362,8 +398,9 @@ def test_run_memory_and_reconnect():
     same = lambda d: {k: v for k, v in d.items() if k != 'date'}
     assert same(h.session.hello) == same(hello) and hello['cwd'] == 'A:\\', (h.session.hello, hello)
     assert run(3, 'and again') == (got, mine, out)
-    g5 = run(5, 'and with a mark', 3)[0]
-    assert g5 == got - (32768 + 11 + 15) // 16 - 1, (g5, got)       # (the snapshot's block and its MCB)
+    g5, m5 = run(5, 'and with a mark', 3)[:2]
+    assert g5 == got - (32768 + 11 + 15) // 16 - 1 - (m5 - mine), (g5, got, m5, mine)  # (the snapshot's block and
+                                                    #  its MCB, and the paragraph the 3-byte script may add to ours)
     print('     with {SNAP} in its script %d paragraphs (%.1f KB)' % (g5, g5 / 64))
     T.check(h, fails=1)
 
@@ -526,6 +563,32 @@ def test_run_script_length_checked():
     T.check(h)
 
 
+def test_run_failed_snap_freed():
+    """A RUN with {SNAP} in its key script that fails before its program runs (F3h, a command line too long
+    for the tail) made the snapshot's block at the top of memory first: the next RUN frees it at its start, so
+    its program gets all the memory again.  It used to stay until a SCREEN reply freed it, which a failed RUN
+    never gets, and every later RUN's program had 32 KB less."""
+    import threading
+    from gridlink import glp
+    h = T.start([], mode='auto')
+    g = h.session.grid
+    snap = (32768 + 11 + 15) // 16                  # (the snapshot's block: SNAPMAX)
+    def call(args):
+        res = {}
+        th = threading.Thread(target=lambda: res.update(r=g.call(glp.OP_RUN, args, timeout=30)))
+        th.start()
+        assert h.run_until(lambda: not th.is_alive(), 60), 'no answer'
+        return res.get('r')
+    long_cmd = b'X' * 130 + b'\0'                   # (no such program: COMSPEC /C, and over the tail's 126)
+    keys = b'\xff\xfe\x00'                          # ({SNAP})
+    st, r = call(struct.pack('<BHH', 0, 10, len(keys)) + keys + long_cmd)
+    assert st == 0xF3 and h.var('snapseg', 2), (st, r, h.var('snapseg', 2))
+    st, r = call(struct.pack('<BHH', 0, 10, 0) + long_cmd)
+    held = [(hex(s), n) for s, o, n in mcbs(h) if o == h.claude_psp and n == snap]
+    assert st == 0xF3 and h.var('snapseg', 2) == 0 and not held, (st, r, h.var('snapseg', 2), held)
+    T.check(h)
+
+
 def test_in_place_ask():
     """An ASK in fragments (Pi frames of 448 bytes; gridlink's own ASKs are one frame), its
     last read in place after the first: the 6 bytes its header went over are put back before open_ask copies
@@ -541,6 +604,7 @@ def test_in_place_ask():
 
 
 T.test_run_script_length_checked = test_run_script_length_checked
+T.test_run_failed_snap_freed = test_run_failed_snap_freed
 T.test_in_place_ask = test_in_place_ask
 
 
@@ -585,10 +649,15 @@ def test_ops_codes():
     driver's) as claude_kernel's OPS_PROBE has them: the table test_resident_term's t_ops_codes holds RCON to (the same
     source in both binaries)."""
     h = T.start([], bridge='pico')
+    Y = h.m.Y
+    date = lambda: (h.m.u16(0x60, Y['cur_year']), h.m.rd(0x60, Y['cur_mon'], 1)[0], h.m.rd(0x60, Y['cur_day'], 1)[0])
+    d0, rtc0 = date(), list(h.m.rtc_set)
     got = CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60), h.m.chip.devices)
     want = CK.ops_want('claude')
     bad = [(g, w) for g, w in zip(got, want) if g != w]
     assert len(got) == len(want) and not bad, bad or got
+    # (the refused SETTIMEs, a short one and a good date with hour 25 among them, set nothing: not the date, not the RTC)
+    assert date() == d0 and h.m.rtc_set == rtc0, (d0, date(), rtc0, h.m.rtc_set)
     T.check(h)
 
 
@@ -623,10 +692,44 @@ def test_nak_resend_keeps_the_check():
     assert h.turn('hello', sim_s=60), (st['arm'], len(st['resent']), h.screen())
     assert st['arm'] == 3 and st['resent'] == [st['first']], (st['arm'], st.get('first'), st['resent'])
     assert h.var('use_fl', 1) == 2 and h.link.stats.get('rx_dup', 0) > s0.get('rx_dup', 0), (h.var('use_fl', 1), h.link.stats)
+    assert h.var('n_resend') == 0, h.var('n_resend')   # (the good answer after the NAK cleared the count)
     T.check(h)
 
 
 T.test_nak_resend_keeps_the_check = test_nak_resend_keeps_the_check
+
+
+def test_naks_fail_the_link():
+    """A Pi that NAKs every frame of the GRiD's (the GRiD's frames damaged on the way, the Pi's intact): each NAK
+    is an answer, and each resend restarted link_wait's 2 s, so the GRiD resent for ever with 'Connected' on the
+    band.  Now the 8th NAK in a row fails the link (the frame and seven resends), a NAK doesn't count as the bridge
+    answering, and after three such runs the band says no answer comes; the frames getting through again, the
+    link comes back and the chat goes on."""
+    h = T.start([T.reply(('text', 'Back after the NAKs.'))])
+    assert h.run_until(h.idle, 20), h.screen()
+    st = {'on': True, 'frames': []}
+    to_pi = h.nano.to_pi
+    def tp(data, t):
+        if st['on'] and len(data) >= 8 and data[0] == 0x47:       # (a GRiD frame: the Pi answers NAK)
+            st['frames'].append(h.var('n_fail', 2))
+            h.link._answer_nak()
+            return
+        return to_pi(data, t)
+    h.nano.to_pi = tp
+    f0, t0 = h.var('n_fail', 2), h.m.us
+    failed = h.run_until(lambda: h.var('n_fail', 2) >= f0 + 3 and 'No answer from the bridge' in h.screen(), 15)
+    dt = (h.m.us - t0) / 1e6
+    per = [st['frames'].count(f0 + i) for i in range(3)]
+    st['on'] = False
+    assert failed and per == [8, 8, 8] and dt < 6, (failed, dt, per, h.var('n_fail', 2), h.screen())
+    print('     three failed runs of 8 NAKs in %.1f s simulated' % dt)
+    assert h.run_until(lambda: 'Reconnected' in h.screen(), 20) and h.run_until(h.idle, 20), h.screen()
+    assert h.turn('hello again', sim_s=60), h.screen()
+    assert 'NAKs.' in h.screen(), h.screen()
+    T.check(h, fails=f0 + 3)                    # (the three runs' failures, none after)
+
+
+T.test_naks_fail_the_link = test_naks_fail_the_link
 
 P7_DATA = b''.join(b'p7 line %05d: the quick brown fox jumps over the lazy dog %s\r\n' % (i, b'#' * (i % 11))
                    for i in range(480))         # (36 KB: three writes, three reads)
@@ -850,6 +953,60 @@ def test_run_temp_setting():
 
 
 T.test_run_temp_setting = test_run_temp_setting
+
+
+def test_run_long_temp_comspec():
+    """A TEMP or a COMSPEC longer than its buffer (a hand-typed SET; LODE.INI's TEMP= stops at 64): env_get
+    copied it to the NUL, so a TEMP of 69+ characters ran outname into the tail, and a COMSPEC of 80+ ran exec_path
+    into outname, and the captured RUN's file was made under a garbage name.  Now each is cut to its room: TEMP at
+    68 characters (68 kept whole, 69 cut), so outname is that and "\\CLAUDE.OUT" and its NUL in its 80 bytes;
+    COMSPEC at 79, outname untouched."""
+    import threading
+    from unicorn import UC_HOOK_CODE
+    from gridlink import glp
+    h = T.start([], mode='auto')
+    g, Y = h.session.grid, h.sym
+    env0 = h.m.u16(h.claude_psp, 0x2C)
+    raw = bytes(h.m.rd(env0, 0, h.m.u16(env0 - 1, 3) * 16))           # (64 bytes: no room for these)
+    end = raw.index(b'\0\0')
+    rest = raw[end + 2:end + 2 + 2 + raw[end + 4:].index(b'\0') + 1]      # (the count and the program's name)
+    env, tail0 = h.claude_psp + 8, bytes(h.m.rd(h.claude_psp, 0x80, 128))
+    def set_env(*vs):                               # (an environment of these alone, in CLAUDE's PSP's 128-byte
+        e = b'\0'.join(vs) + b'\0\0' + rest         #  tail, read at its start only)
+        assert len(e) <= 128, len(e)
+        h.m.wr(env, 0, e)
+        h.m.wr(h.claude_psp, 0x2C, struct.pack('<H', env))
+    seen = []
+    at = h.claude_psp * 16 + Y['build_exec.mk']                  # (the capture file's 3Ch, its name in outname)
+    def mk(uc, addr, size, ud):
+        seen.append((h.m.asciiz(h.claude_psp, Y['outname']), h.m.asciiz(h.claude_psp, Y['exec_path'])))
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, mk, None, at, at)
+    h.m.mu.ctl_remove_cache(at, at + 1)
+    def run():
+        res, n = {}, len(seen)
+        th = threading.Thread(target=lambda: res.update(r=g.call(glp.OP_RUN, struct.pack('<BHH', 1, 10, 0) + b'DIR\0',
+                                                                  timeout=30)))
+        th.start()
+        assert h.run_until(lambda: not th.is_alive(), 60), 'no answer'
+        assert len(seen) == n + 1, seen
+        return res.get('r'), seen[-1]
+    try:
+        set_env(b'COMSPEC=A:\\LCMD.COM', b'TEMP=A:\\' + b'D' * 65)          # (68 characters: kept whole)
+        r, (out, path) = run()
+        assert out == b'A:\\' + b'D' * 65 + b'\\CLAUDE.OUT' and path == b'A:\\LCMD.COM', (r, out, path)
+        set_env(b'COMSPEC=A:\\LCMD.COM', b'TEMP=A:\\' + b'D' * 66)          # (69: cut at 68)
+        r, (out, path) = run()
+        assert out == b'A:\\' + b'D' * 65 + b'\\CLAUDE.OUT' and path == b'A:\\LCMD.COM', (r, out, path)
+        set_env(b'COMSPEC=A:\\' + b'C' * 90)
+        r, (out, path) = run()
+        assert out == b'A:\\CLAUDE.OUT' and path == b'A:\\' + b'C' * 76, (r, out, path)
+    finally:
+        h.m.mu.hook_del(hk)
+        h.m.wr(h.claude_psp, 0x2C, struct.pack('<H', env0)); h.m.wr(h.claude_psp, 0x80, tail0)
+    T.check(h)
+
+
+T.test_run_long_temp_comspec = test_run_long_temp_comspec
 
 if __name__ == '__main__':
     names = [n for n in sorted(vars(T)) if n.startswith('test_')]

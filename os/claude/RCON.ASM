@@ -125,12 +125,12 @@ reqbuf  equ (IOSEG - 0E000h) * 16       ; (DS = E000h: windows 0-3 are DS:0-FFFF
 TXMAX   equ 3300                ; GRiD -> Pi payload per frame (CLAUDE.COM's: a read's
                                 ;  reply in three frames)
 txframe equ reqbuf + REQMAX     ; the frame being sent, after them
-P_OLD16 equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
-P_INDOS equ 4
-P_SS    equ 8                   ;  the stack the stub came on: the INT 16h call's
-P_KS    equ 12                  ;  r_ks, then r_pend
-P_MT    equ 14                  ;  r_mt: Lodestone's tasks (0:0 none)
-P_BGT   equ 18                  ;  r_bgt: the tick of the stub's last background look
+P_INDOS equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
+P_SS    equ 4                   ;  the stack the stub came on: the INT 16h call's
+P_KS    equ 8                   ;  r_ks, then r_pend
+P_MT    equ 10                  ;  r_mt: Lodestone's tasks (0:0 none)
+P_BGT   equ 14                  ;  r_bgt: the tick of the stub's last background look
+R_OLD16 equ 107h                ; the stub's r_old16 (its header): the BIOS's INT 16h
 R_BGON  equ 10Fh                ; the stub's r_bgon (its header): 0 no background,
                                 ;  1 look at key calls, 2 this call is a look
 R_BGT   equ 4                   ; (the stub's: ticks between looks)
@@ -164,9 +164,9 @@ rc_main:
         cld
         mov     [parms], bx             ; (the stub's, for the feeder)
         mov     [parms + 2], es
-        mov     ax, [es:bx + P_OLD16]   ; the BIOS's INT 16h, and is DOS busy?
+        mov     ax, [es:R_OLD16]        ; the BIOS's INT 16h, and is DOS busy?
         mov     [old16], ax
-        mov     ax, [es:bx + P_OLD16 + 2]
+        mov     ax, [es:R_OLD16 + 2]
         mov     [old16 + 2], ax
         cmp     byte [es:R_BGON], 2     ; a background look
         jne     .pu
@@ -1523,7 +1523,7 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.13', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.14', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
             db 'ops=files,gpib,bgscreen', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
@@ -1578,15 +1578,18 @@ connected   resb 1
 pi_active   resb 1
 lstate      resb 1
 TERMLINK_RESET_VARS
-pend_chunk  resw 1
 done_type   resb 1
+            alignb 2                    ; (the words from here even, whatever
+pend_chunk  resw 1                      ;  TERMLINK_RESET_VARS holds)
 t_sent      resw 1
 t_last      resw 1
 t_reset     resw 1
 n_fail      resw 1
-n_failrun   resb 1
+n_failrun   resb 1                      ; (even: took_answer clears both with one word)
+n_resend    resb 1                      ; the Pi's NAKs in a row: 8 fail the link (link_reset clears it)
 n_bad       resw 1
 spoll_errs  resb 1
+            alignb 2
 pit_last    resw 1
 pit_tick    resw 1
 txq         resb TXQN * 10

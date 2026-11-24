@@ -218,6 +218,10 @@ def t_rload():
     blk = [b[2] for b in mcbs(k) if b[1] == 8 and b[3] == 'CLAUDE']
     check('... the stub\'s block: 61 paragraphs and its MCB, 992 bytes (63 till 2026-10-28)',
           blk == [61] == [(csym('r_stack_top') - 0x100 + 15) // 16], blk)
+    stub = stub_seg(k)
+    check('... no multitasking: the stub\'s r_mt 0:0, its r_int16.mp a JNZ still (MT_TSR not there)',
+          k.pc.rd(stub, csym('r_mt'), 4) == b'\0' * 4 and k.pc.rd(stub, csym('r_int16.mp'), 1)[0] == 0x75,
+          (k.pc.rd(stub, csym('r_mt'), 4).hex(), k.pc.rd(stub, csym('r_int16.mp'), 2).hex()))
     check('... its EMS handle kept after CLAUDE.COM ended (asked for from the stub: no program\'s)', handles() == h0 + 1,
           (h0, handles()))
     check('... at the prompt it costs DOS programs %.1f KB (the plan\'s target: 1.2 KB)' % ((m0 or 0) - (m1 or 0)),
@@ -312,9 +316,13 @@ def t_rpoll():
             continue
         k.key(HOT, settle=False)
         k.pc.run_until(lambda: k.pc.mode() == 3, 3)
+    k.key(0x2B5C)                       # (the \ key itself, 2B5Ch: r_hot's fold takes only 2Bx0h, not it)
+    stub = stub_seg(k)
+    pend, up = k.pc.rd(stub, csym('r_pend'), 1)[0], console(k)
     k.key('a'); k.key(ktest.ESC)
-    check('CODE-\\ under KEYPK at 24 moments of its peek loop: the console came each time, and back', not missed
-          and 'KEYPK ready: a' in k.pc.text_screen(), (missed, k.pc.text_screen()[:200]))
+    check('CODE-\\ under KEYPK at 24 moments of its peek loop: the console came each time, and back; the \\ key '
+          '(2B5Ch) is KEYPK\'s (r_pend %d)' % pend, not missed and not up and pend == 0
+          and 'KEYPK ready: \\a' in k.pc.text_screen(), (missed, up, pend, k.pc.text_screen()[:200]))
 
 def t_rvideo():
     """The console over CGA graphics, the 640x400 mode and text: the screen
@@ -576,8 +584,43 @@ def t_rhole():
           i is not None and all(b[1] == 0 for b in blocks[i + 1:]) and holes,
           [(hex(s), o_, n, nm) for s, o_, n, nm in blocks])
 
+def t_roldmt():
+    """With Lodestone's multitasking CLAUDE /R asks MT_TSR (CX 0) for its bytes, the fourth the task out on a disk
+    (mt_down), and goes resident only if CL comes back 4.  An older LODEMT.SYS leaves CX as it came and has three:
+    made here by taking MT_TSR's MOV BYTE [BP+F_CX],4 out of the copy in memory (LODE.SYS checks the file's sum, so
+    a changed file would leave MT off)."""
+    ini = os.path.join(OUT, 'MTINI.TXT')
+    open(ini, 'wb').write(b'MULTITASK=1\r\n')
+    k = ktest.KPC(image('roldmt.img', 'LODEMT.SYS=' + os.path.join(GOS, 'src', 'LODEMT.SYS'), 'LODE.INI=' + ini),
+                  ems_pages=88)
+    k.start(10)
+    ms = next((s + 1 for s, own, n, nm in mcbs(k) if own == 8 and nm.startswith('MT')), None)    # (the whole arena:
+    k.code_p()                                                                                  #  first_mcb, before a task)
+    at = k.Y['mt_tsrc']
+    code = bytes(k.pc.rd(ms, at, 4)) if ms else b''
+    check('MULTITASK=1: MT there (its block %s), MT_TSR starts MOV BYTE [BP+F_CX],4 (%s)' % (ms and '%04Xh' % ms, code.hex()),
+          ms and code[:2] == b'\xC6\x46' and code[3] == 4, (ms, code.hex()))
+    if not ms: return
+    def patch(data):                            # (and unicorn's translation of the old bytes dropped)
+        k.pc.wr(ms, at, data); k.pc.mu.ctl_remove_cache(ms * 16 + at, ms * 16 + at + len(data))
+    patch(b'\x90' * 4)                          # (an older LODEMT.SYS's MT_TSR: CX left)
+    m0, v0 = memsz(k), k.pc.rd(0, 0x16 * 4, 4)
+    o, el = run_el(k, 'claude /r')
+    check('MT_TSR leaving CX (an older LODEMT.SYS): CLAUDE /R refused, "needs a newer LODEMT.SYS", exit code 1, '
+          'nothing kept (INT 16h, the memory, no CLAUDE block)',
+          'CLAUDE /R needs a newer LODEMT.SYS' in o and el == 1 and k.pc.rd(0, 0x16 * 4, 4) == v0 and memsz(k) == m0
+          and not any(own == 8 and nm == 'CLAUDE' for s, own, n, nm in mcbs(k)), (el, o, memsz(k), m0))
+    patch(code)                                 # (this LODEMT.SYS's again)
+    o, el = run_el(k, 'claude /r')
+    stub = stub_seg(k)
+    mt = (k.pc.u16(stub, csym('r_mt') + 2), k.pc.u16(stub, csym('r_mt')))
+    check('... with this LODEMT.SYS\'s MT_TSR (CL 4): resident, exit code 0; the stub\'s r_mt is MT\'s bytes '
+          '(%04X:%04X: mt_front, then mt_cur, mt_tsrk, mt_down)' % mt,
+          'Claude is resident' in o and el == 0 and mt == (ms, k.Y['mt_front']) and k.Y['mt_down'] == k.Y['mt_front'] + 3,
+          (el, o, mt))
+
 TESTS = [t_rload, t_rems, t_rother, t_rpoll, t_rvideo, t_rdos, t_rexec, t_rtm5000g,
-         t_rirq, t_rmouse, t_rversion, t_rhole]
+         t_rirq, t_rmouse, t_rversion, t_rhole, t_roldmt]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

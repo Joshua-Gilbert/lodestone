@@ -161,7 +161,8 @@ def t_popup():
         ok = h.has('Welcome to Claude Code', 30)
         check('CODE-\\ over EMSUSE: the console connects and shows Claude Code', ok and h.up(), h.screen())
         enc = h.router.term.enc
-        check('... its HELLO says app=resident, and gridlink gives it Term', h.router.term.hello.get('app') == 'resident'
+        check('... its HELLO says app=resident and the console\'s version (grid=CLAUDE 1.14), and gridlink gives it Term',
+              h.router.term.hello.get('app') == 'resident' and 'CLAUDE 1.14' in h.router.term.hello.get('grid', '')
               and h.router.app == 'term', (h.router.term.hello, h.router.app))
         check('... the console\'s shadow and screen are pyte\'s on the Pi', in_step(h), h.screen())
         check('... the band: how to go back, its last letter in column 78', 'CODE-\\ back' in h.band()
@@ -1561,13 +1562,25 @@ def t_ops_mt():
         h.cmd('claude /r')
         h.cmd('emsuse')
         mt_on = h.m.u16(h.stub(), h.sym['r_mt'] + 2) != 0
+        # what dos_check reads as MT's segment (P_MT + 2 in the stub's parameters): CX after its third instruction,
+        # mov cx, [es:bx + P_MT + 2] (26 8B 4F disp8), 9 bytes on
+        from unicorn import UC_HOOK_CODE
+        dc = h.rsym['dos_check'] + 13
+        mts = []
+        hk = h.m.mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, ud: mts.append(h.m.r('cx')), None, 0xE0000 + dc, 0xE0000 + dc)
+        h.m.mu.ctl_remove_cache(0xE0000 + dc, 0xE0000 + dc + 1)
         gen = generation(h)
         h.press(HOT)
         up = popped(h, gen) and in_step(h)
         r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
-        check('MULTITASK=1 (the stub has MT\'s address), over EMSUSE: files work (BIG.TXT read)',
-              mt_on and up and r and not r[1] and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n'),
-              (mt_on, up, r and r[0][0]['text'][-100:]))
+        h.m.mu.hook_del(hk)
+        code = bytes(h.m.ems_read(h.page(), dc - 4, 3))
+        seg = h.m.u16(h.stub(), h.sym['r_mt'] + 2)
+        check('MULTITASK=1 (the stub has MT\'s address), over EMSUSE: files work (BIG.TXT read); the console\'s '
+              'dos_check read MT\'s segment from the stub\'s r_mt (%04X: %s)' % (seg, ' '.join('%04X' % v for v in mts)),
+              mt_on and up and r and not r[1] and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n')
+              and code == b'\x26\x8B\x4F' and mts and all(v == seg for v in mts),
+              (mt_on, up, r and r[0][0]['text'][-100:], code.hex(), mts, hex(seg)))
         h.press(HOT)
         h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
         h.k.key(ESC)
@@ -1701,6 +1714,377 @@ def t_bg_mt():
         check('... nothing wrong in gridlink\'s log', not h.m.crash and not errs, (h.m.crash, errs))
     finally:
         h.close()
+
+BUSY = 3                                        # (t_bg_floppy: res_eout's first call finds a disk's owner out)
+
+def gate_watch(h, ms, chain, phase=lambda: None):
+    """r_front's answer, at each return, against MT's bytes then (mt_front, mt_cur, mt_tsrk, mt_down): ZF the front
+    task's call with no disk's owner out, CF the front task's with one out (mt_down not FFh), neither another task's.
+    -> ({'front': n, 'out': n, 'behind': n, (phase(), kind): n, 'bad': [...]}, the watch, chaining on)"""
+    pc, g, rets = h.m, {'front': 0, 'out': 0, 'behind': 0, 'bad': []}, set()
+    base = h.stub() * 16
+    ent, want = base + h.sym['r_front'], {'front': (True, False), 'out': (False, True), 'behind': (False, False)}
+    def w(addr):
+        if addr == ent:
+            rets.add(base + pc.u16(pc.r('ss'), pc.r('sp')))
+        elif addr in rets:
+            rets.discard(addr)
+            f, c, _, d = pc.rd(ms, pc.Y['mt_front'], 4)
+            fl = pc.r('flags')
+            kind = 'behind' if f != c else 'out' if d != 0xFF else 'front'
+            g[kind] += 1
+            g[(phase(), kind)] = g.get((phase(), kind), 0) + 1
+            if (bool(fl & 0x40), bool(fl & 1)) != want[kind]: g['bad'].append((kind, f, c, d, hex(fl)))
+        chain(addr)
+    return g, w
+
+def t_bg_floppy():
+    """On the 1520 a page register written while a floppy's DMA runs resets the machine (pcemu's fd_ems_write;
+    FD_STRICT: a crash).  With Lodestone's tasks a task behind may be out on the floppy while the front task's
+    INT 16h call comes to the stub: the stub maps no page then (r_front: MT_TSR's fourth byte, mt_down, says a
+    disk's owner is out), not for a background look, CODE-\\, TYPE's keys or CLAUDE /R's install (res_eout), and
+    does once the owner has run again.  The 1520's drive timing (fd_wait, disk_model 'real'); MTKEY P polls INT 16h
+    in front, started with the copy in one MTLAUNCH (a program typed at the prompt after the copy starts would wait
+    at MT's gate meanwhile).  r_front's answer is checked at every return (gate_watch)."""
+    pcemu = CK.pcemu
+    strict, h = pcemu.FD_STRICT, None
+    try:
+        pcemu.FD_STRICT = True
+        more = {'A:\\' + f: open(os.path.join(HERE, f), 'rb').read() for f in ('MTKEY.COM', 'MTLAUNCH.COM')}
+        more['A:\\LODEMT.SYS'] = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
+        h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more=more, fd_wait=True, disk_model='real')
+        pc = h.m
+        h.boot()
+        com = pc.fs['A:\\CLAUDE.COM']
+        fdw = lambda: getattr(pc, 'fd_ems_write', 0)
+        def copied(name, sim_s=60): return h.wait(lambda: pc.crash or pc.fs.get('A:\\' + name) == com, sim_s) \
+            and pc.fs.get('A:\\' + name) == com
+        # counted at the stub's OUTs' paths (and r_hot.p, r_isr), and at res_load's res_eout (CLAUDE.COM's own CS),
+        # each with a transfer in flight or not: {(phase, label, in flight): n}.  res_eout's first call has its
+        # res_mt pointed at four bytes of ours (the BIOS's ICA, 0040:00F0h), the fourth 05h (a task out) for its
+        # first BUSY passes, then FFh; its second, MT's own
+        n = {'phase': 'install'}
+        ms = mt_seg(pc)
+        at, eout = {}, {h.sym[x]: x for x in ('res_eout', 'res_eout.a', 'res_eout.go', '..@res_gate')}
+        watch = pc.watch
+        def w(addr):
+            x = at.get(addr) or n['phase'] == 'install' and eout.get(addr - pc.r('cs') * 16)
+            if x:
+                k = (n['phase'], x, pc.fd_dma())
+                n[k] = n.get(k, 0) + 1
+                if x in ('r_popup', 'r_bg.go', 'r_feed.in', '..@r_back') and pc.rd(ms, pc.Y['mt_down'], 1)[0] != 0xFF:
+                    n['owner out'] = n.get('owner out', 0) + 1      # (a page in or out with a disk's owner out)
+                if x == '..@r_back': n['backs'] = n.get('backs', 0) + 1
+                if n['phase'] == 'install':
+                    cs = pc.r('cs')
+                    if x == 'res_eout' and 'ems0' not in n:
+                        n['ems0'], n['real'] = list(pc.ems_reg), bytes(pc.rd(cs, h.sym['res_mt'], 4))
+                        n['ica'] = bytes(pc.rd(0x40, 0xF0, 4))
+                        pc.wr(0x40, 0xF0, b'\0\0\0\x05')
+                        pc.wr(cs, h.sym['res_mt'], struct.pack('<HH', 0xF0, 0x40))
+                    elif x == 'res_eout.a' and 'go1' not in n:      # (each pass again: interrupts on, no OUT yet)
+                        ps = n.setdefault('passes', [])
+                        ps.append((bool(pc.r('flags') & 0x200), list(pc.ems_reg) == n['ems0']))
+                        if len(ps) == BUSY: pc.wr(0x40, 0xF3, b'\xFF')      # (the owner back)
+                    elif x == '..@res_gate' and 'go1' not in n:     # (each pass's INT 21h back: MT's gate there)
+                        n['gates'] = n.get('gates', 0) + 1
+                    elif x == 'res_eout.go':
+                        if 'go1' not in n:
+                            n['go1'] = (list(pc.ems_reg) == n['ems0'], len(n.get('passes', [])))
+                            pc.wr(0x40, 0xF0, n['ica']); pc.wr(cs, h.sym['res_mt'], n['real'])
+                        else:
+                            n['down2'] = pc.rd(ms, pc.Y['mt_down'], 1)[0]
+            watch(addr)
+        pc.watch = w
+        def cnt(phase, name, dma=True): return n.get((phase, name, dma), 0)
+        # CLAUDE /R installed while a task behind copies (res_load's two OUTs wait for a transfer's end)
+        v16 = h.stub()                          # (MT's INT 16h)
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('mtlaunch lcmd.com /c copy claude.com x0.com'); h.k.key(ENTER, settle=False)
+        moving = h.wait(lambda: pc.fd_dma(), 10)
+        h.k.key(ENTER, 'claude /r', ENTER, settle=False)       # (MTLAUNCH's line, then /R as the copy runs)
+        ok = h.wait(lambda: pc.crash or h.stub() != v16 and 'Claude is resident' in pc.text_screen(), 30)
+        early = pc.fs.get('A:\\X0.COM') != com  # (the copy not done yet as /R ends)
+        ok = ok and copied('X0.COM')
+        ne = sum(cnt('install', 'res_eout', d) for d in (False, True))
+        check('CLAUDE /R while a task behind copies on the floppy (still copying as /R ended): installed (res_eout %d '
+              'times), the copy exact, no page register written under a transfer (%d); res_mt MT\'s bytes (MT_TSR asked '
+              'first), the second res_eout\'s write with no disk\'s owner out (mt_down %s)' % (ne, fdw(), n.get('down2')),
+              moving and early and ok and ne == 2 and cnt('install', 'res_eout.go') == 0 and not pc.crash and fdw() == 0
+              and r_bgon(h) == 0 and n.get('real') == struct.pack('<HH', pc.Y['mt_front'], ms) and n.get('down2') == 0xFF,
+              (moving, early, ok, n, pc.crash, fdw(), pc.log[-3:], pc.text_screen()))
+        ps = n.get('passes', [])
+        check('... res_eout with a disk\'s owner out (its bytes\' fourth 05h for its first %d passes): %d passes more, '
+              'each with interrupts on, after an INT 21h call (MT\'s gate: %d back), and no page register written before '
+              'the last' % (BUSY, len(ps), n.get('gates', 0)),
+              len(ps) == BUSY == n.get('gates', 0) and all(a and b for a, b in ps) and n.get('go1') == (True, BUSY),
+              (ps, n.get('gates'), n.get('go1')))
+        if pc.crash: return
+        base = h.stub() * 16
+        at.update({base + h.sym[x]: x for x in ('r_isr', 'r_feed.k', 'r_feed.in', 'r_popup', 'r_hot.p', 'r_bg.go',
+                                                '..@r_back')})
+        g, pc.watch = gate_watch(h, ms, pc.watch, lambda: n['phase'])
+        # (r_bg.go falls into r_popup: a look's start there, CODE-\'s at r_popup)
+        n['phase'] = None
+        looks = bg_looks(h)
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
+        # TYPE: the MTLAUNCH line typed at the prompt, then a {WAIT}: MTKEY's peeks come to r_feed while the copy runs
+        n['phase'] = 'type'
+        res = tool(h, 'grid_type', {'keys': 'mtlaunch /f mtkey.com p bp.txt;lcmd.com /c copy claude.com x1.com'
+                                            '{ENTER}{WAIT 3}{ENTER}', 'timeout': 60}, 90, 120)   # (then MTLAUNCH's line)
+        n['phase'] = None
+        ok = copied('X1.COM')
+        bp = pc.fs.get('A:\\BP.TXT')
+        check('TYPE\'s keys over MTKEY polling in front, a copy behind: %d of the peeks fed came while a transfer was in '
+              'flight, %d times r_front found a disk\'s owner out, none of them mapped (no page register written: %d); '
+              'the keys done, the console back by itself; the copy exact (MTKEY: %s)'
+              % (cnt('type', 'r_feed.k'), g.get(('type', 'out'), 0), fdw(), bp),
+              up and res and not res[1] and h.up() and ok and fdw() == 0 and not pc.crash
+              and cnt('type', 'r_feed.k') >= 1 and g.get(('type', 'out'), 0) >= 1
+              and cnt('type', 'r_feed.in') + cnt('type', 'r_popup') + cnt('type', 'r_bg.go') == 0
+              and cnt('type', 'r_bg.go', False) == 0,     # (and no background look while TYPE's keys are out)
+              (up, res and str(res)[:300], h.up(), ok, fdw(), pc.crash, pc.log[-3:], n, g))
+        if pc.crash: return
+        h.press(HOT)
+        back = h.wait(lambda: pc.mode() == 3 and h.inpop() == 0, 5) and h.pi_wait(lambda: h.router.term.away, 10)
+        check('back at the prompt with the link up: background looks on (r_bgon 1)', back and r_bgon(h) == 1,
+              (back, r_bgon(h)))
+        # the looks: MTKEY P and the copy in one MTLAUNCH; CODE-\ pressed during a transfer too
+        n0 = looks['n']
+        n['phase'] = 'look'
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('mtlaunch /f mtkey.com p bp.txt;lcmd.com /c copy claude.com x2.com')
+        h.k.key(ENTER, settle=False)
+        held = h.wait(lambda: pc.crash or g.get(('look', 'out'), 0) >= 1 and pc.fd_dma(), 10)
+        n['phase'] = 'hot'
+        gen = generation(h)
+        h.press(HOT)
+        came = popped(h, gen)
+        n['phase'] = None
+        out_look, dma_hot = g.get(('look', 'out'), 0), cnt('hot', 'r_hot.p')
+        check('background looks over MTKEY with a copy behind: %d looks; %d times the front task\'s call found a disk\'s '
+              'owner out (r_front), none mapped (%d page register writes)' % (looks['n'] - n0, out_look, fdw()),
+              held and looks['n'] > n0 and out_look >= 1 and cnt('look', 'r_bg.go') == 0 and fdw() == 0
+              and not pc.crash, (held, looks['n'] - n0, n, g, fdw(), pc.crash, pc.log[-3:]))
+        check('... CODE-\\ pressed then: the console came once the owner was back (%d times due in flight, %d with an '
+              'owner out, none mapped)' % (dma_hot, g.get(('hot', 'out'), 0)),
+              came and dma_hot >= 1 and g.get(('hot', 'out'), 0) >= 1
+              and cnt('hot', 'r_popup') + cnt('hot', 'r_bg.go') == 0 and fdw() == 0 and not pc.crash,
+              (came, n, g, fdw(), pc.crash))
+        if pc.crash: return
+        h.press(HOT)
+        h.wait(lambda: pc.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ENTER, settle=False)            # (MTLAUNCH's line)
+        ok = copied('X2.COM')
+        check('... the copy exact; no page register written under a transfer all the while (%d), and no page in or out '
+              '(..@r_back, the program\'s windows back: %d times) with a disk\'s owner out (%d times)'
+              % (fdw(), n.get('backs', 0), n.get('owner out', 0)),
+              ok and fdw() == 0 and not pc.crash and n.get('owner out', 0) == 0 and n.get('backs', 0) >= 1,
+              (ok, fdw(), pc.crash, n))
+        # (no task behind calls INT 16h here, so "another task's" isn't asked for: t_floppy_hot pins it, with MTKEY P
+        #  polling behind)
+        check('r_front\'s answer at every return as MT\'s bytes were (%d the front task\'s, %d with an owner out, %d '
+              'another task\'s): ZF, CF, neither; %d wrong' % (g['front'], g['out'], g['behind'], len(g['bad'])),
+              not g['bad'] and g['front'] >= 1 and g['out'] >= 1, g['bad'][:10])
+        # the transfers over: the looks and the pop-up as ever
+        h.cmd('emsuse')
+        n0 = looks['n']
+        h.run_until(lambda: False, 2)
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen)
+        h.press(HOT)
+        back = h.wait(lambda: pc.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        check('the copies over, over EMSUSE: background looks (%d in 2 s), CODE-\\ brings the console'
+              % (looks['n'] - n0), looks['n'] - n0 >= 5 and up and back and r_bgon(h) == 1
+              and 'EMSUSE: 0 keys, 0 bad' in pc.text_screen(), (looks['n'] - n0, up, back, r_bgon(h), pc.text_screen()))
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        pcemu.FD_STRICT = strict
+        if h: h.close()
+
+def mt_seg(pc):
+    """Lodestone's multitasking: its segment (the system's block named MT), or None."""
+    seg, at = pc.u16(0x60, pc.Y['first_mcb']), None
+    for _ in range(300):
+        t, own, size = pc.rd(seg, 0, 1)[0], pc.u16(seg, 1), pc.u16(seg, 3)
+        if pc.rd(seg, 8, 2) == b'MT' and own == 8: at = seg + 1
+        if t != ord('M'): return at
+        seg += size + 1
+    return at
+
+def t_floppy_hot():
+    """CODE-\\ typed while a task behind is out in a floppy transfer, the front task (MTKEY R) waiting in its read at
+    the stub's HLT and MTSPIN behind always ready: the stub takes the key, may not map the console then (r_front: a
+    disk's owner out, MT_TSR's mt_down), and tells MT so the front task's read comes back for it; the console comes
+    once the owner has run again, no other key typed (it waited for one before): the pop-up is put off, not lost.
+    Not in the transfer's result phase either, where the console's first DOS call would wait at MT's gate with
+    windows 2-3 kept for the cylinder cache.  r_front's answers checked at each return (gate_watch), the read's own
+    peek (r_int16.pf) among them, and another task's calls: MTKEY P behind polls INT 16h, so CODE-\\ pending
+    reaches r_hot.p in its calls too."""
+    floppy_hot()
+
+def t_floppy_semi():
+    """As t_floppy_hot, CODE-; (2700h, a key MTKEY R's AH=00h can't give) typed just before CODE-\\: the read's own
+    peek (r_int16.pf), with the owner out, is AH=01h still, which drops it, and the read waits at the stub's HLT.  (An
+    AH=11h peek would find it and pass the read on to MT, which would wait for a key there, the stub out of it: the
+    console would not come.)"""
+    floppy_hot(TR.SEMI)
+
+def floppy_hot(pre=None):
+    pcemu = CK.pcemu
+    strict, h = pcemu.FD_STRICT, None
+    try:
+        pcemu.FD_STRICT = True
+        more = {'A:\\' + f: open(os.path.join(HERE, f), 'rb').read() for f in ('MTKEY.COM', 'MTLAUNCH.COM', 'MTSPIN.COM')}
+        more['A:\\LODEMT.SYS'] = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
+        h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more=more, fd_wait=True, disk_model='real')
+        pc = h.m
+        h.boot()
+        Y = pc.Y
+        com = pc.fs['A:\\CLAUDE.COM']
+        fdw = lambda: getattr(pc, 'fd_ems_write', 0)
+        h.cmd('claude /r')
+        ms = mt_seg(pc)
+        # {(label, the floppy then): n}: 'dma' a transfer in flight, 'out' its owner out otherwise (its result, a
+        # seek), 'idle'; and at the console's dos_check (its first DOS call), whether the windows are its four pages
+        n = {}
+        base = h.stub() * 16
+        at = {base + h.sym[x]: x for x in ('r_hot.p', 'r_popup', 'r_bg.go', '..@r_back')}
+        dchk = 0xE0000 + h.rsym['dos_check']
+        hw = bytes(h.m.rd(h.stub(), h.sym['r_hw'], 4))
+        watch = pc.watch
+        def w(addr):
+            if addr in at:
+                st = 'dma' if pc.fd_dma() else 'out' if pc.rd(ms, Y['mt_down'], 1)[0] != 0xFF else 'idle'
+                k = (at[addr], st); n[k] = n.get(k, 0) + 1
+            elif addr == dchk and pc.r('cs') == 0xE000:
+                k = ('dos_check', bytes(pc.ems_reg) == hw); n[k] = n.get(k, 0) + 1
+            watch(addr)
+        g, pc.watch = gate_watch(h, ms, w)
+        def cnt(name, st): return n.get((name, st), 0)
+        h.k.key('cls'); h.k.key(ENTER)
+        # (and for t_floppy_hot MTKEY P behind, polling: CODE-\ taken in its calls too, r_front's "another task's")
+        h.k.key('mtlaunch /f mtkey.com r bk.txt;%smtspin.com 900 sp.txt;lcmd.com /c copy claude.com x3.com'
+                % ('' if pre else 'mtkey.com p bq.txt;'))
+        h.k.key(ENTER, settle=False)
+        def out():                              # (the copy's task out in a transfer, MTKEY in front)
+            d, f = pc.rd(ms, Y['mt_down'], 1)[0], pc.rd(ms, Y['mt_front'], 1)[0]
+            return d != 0xFF and d != f and f != 0 and pc.fd_dma()
+        got = h.wait(lambda: pc.crash or out(), 20) and out()
+        gen = generation(h)
+        if pre: h.press(pre)
+        h.press(HOT)
+        t0 = pc.us
+        came = h.wait(lambda: pc.crash or h.inpop() == 1, 30) and h.inpop() == 1
+        dt = (pc.us - t0) / 1e6
+        came = came and h.pi_wait(lambda: generation(h) not in (None, gen) and h.rv('connected') == 1, 30)
+        check(('CODE-; then ' if pre else '') +
+              'CODE-\\ typed while a task behind is out in a floppy transfer, MTKEY R waiting in its read, MTSPIN behind: '
+              'the console comes by itself once its owner is back (%.2f s; due %d times in flight, %d with the owner '
+              'out otherwise), its HELLO through; no page register written under a transfer (%d)'
+              % (dt, cnt('r_hot.p', 'dma'), cnt('r_hot.p', 'out'), fdw()),
+              got and came and cnt('r_hot.p', 'dma') >= 1 and fdw() == 0 and not pc.crash,
+              (got, came, dt, n, fdw(), pc.crash, pc.log[-3:], generation(h), gen, h.inpop(), h.rv('connected'),
+               h.rv('lstate'), h.rv('n_fail', 2), h.band()))
+        check('... the console came with no disk\'s owner out (r_popup: %s), and its first DOS call found its own four '
+              'pages in the windows (dos_check: %d of %d)' % (sorted((k[1], v) for k, v in n.items() if k[0] == 'r_popup'),
+                                                             cnt('dos_check', True), cnt('dos_check', True)
+                                                             + cnt('dos_check', False)),
+              cnt('r_popup', 'idle') >= 1 and cnt('r_popup', 'dma') + cnt('r_popup', 'out') == 0
+              and cnt('dos_check', True) >= 1 and cnt('dos_check', False) == 0, n)
+        if pc.crash: return
+        h.press(HOT)
+        h.wait(lambda: pc.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key('x', settle=False)              # (MTKEY's key; then MTLAUNCH's line)
+        h.run_until(lambda: False, 0.5)
+        h.k.key(ENTER, settle=False)
+        ok = h.wait(lambda: pc.crash or pc.fs.get('A:\\X3.COM') == com, 90) and pc.fs.get('A:\\X3.COM') == com
+        bk = pc.fs.get('A:\\BK.TXT')
+        check('... MTKEY read its key (%s), the copy exact, no page register written under a transfer (%d); the '
+              'program\'s windows put back (..@r_back) only with no disk\'s owner out (%s)'
+              % (bk, fdw(), sorted((k[1], v) for k, v in n.items() if k[0] == '..@r_back')),
+              ok and bk == b'0078' and fdw() == 0 and not pc.crash and cnt('..@r_back', 'idle') >= 1
+              and cnt('..@r_back', 'dma') + cnt('..@r_back', 'out') == 0, (ok, bk, fdw(), pc.crash, n))
+        check('... r_front\'s answer at every return as MT\'s bytes were (%d the front task\'s, %d with an owner out, %d '
+              'another task\'s); %d wrong' % (g['front'], g['out'], g['behind'], len(g['bad'])),
+              not g['bad'] and g['front'] >= 1 and g['out'] >= 1 and (pre or g['behind'] >= 1), g['bad'][:10])
+    finally:
+        pcemu.FD_STRICT = strict
+        if h: h.close()
+
+def t_floppy_nodwait():
+    """A floppy transfer whose owner MT does not switch from (mt_dcan refusing: made here by its first bytes, in
+    memory, STC / RET): the owner waits inside the BIOS with mt_down FFh, its DMA under way.  No task runs then
+    (mt_safe: inside INT 13h, the BIOS's code), so the front task's calls (MTKEY P) never come to the stub during a
+    transfer; only an interrupt's code can (T1C: INT 16h AH=01h from INT 1Ch, the timer's IRQ in service), and it
+    maps nothing (r_isr, and r_front: the running task the copy's, not the front one).  CODE-\\ pressed during a
+    transfer: the console comes after it; no page register written under a transfer."""
+    pcemu = CK.pcemu
+    strict, h = pcemu.FD_STRICT, None
+    try:
+        pcemu.FD_STRICT = True
+        more = {'A:\\' + f: open(os.path.join(HERE, f), 'rb').read() for f in ('MTKEY.COM', 'MTLAUNCH.COM')}
+        more['A:\\T1C.COM'] = open(os.path.join(CL, 'T1C.COM'), 'rb').read()
+        more['A:\\LODEMT.SYS'] = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
+        h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more=more, fd_wait=True, disk_model='real')
+        pc = h.m
+        h.boot()
+        Y = pc.Y
+        com = pc.fs['A:\\CLAUDE.COM']
+        fdw = lambda: getattr(pc, 'fd_ems_write', 0)
+        ms = mt_seg(pc)
+        dcan = bytes(pc.rd(ms, Y['mt_dcan'], 2))
+        pc.wr(ms, Y['mt_dcan'], b'\xF9\xC3')    # (STC / RET: never switched from at a floppy's wait; unicorn's
+        pc.mu.ctl_remove_cache(ms * 16 + Y['mt_dcan'], ms * 16 + Y['mt_dcan'] + 2)  # translation of it dropped)
+        h.cmd('t1c')
+        h.cmd('claude /r')
+        # {(label, in flight, an interrupt in service): n} at the stub's entry, its gates and its OUTs' paths; MT's
+        # floppy waits given away (mt_dwait.out)
+        n = {}
+        base = h.stub() * 16
+        at = {base + h.sym[x]: x for x in ('r_int16', 'r_front', 'r_isr', 'r_hot.p', 'r_popup', 'r_bg.go', 'r_feed.in')}
+        at[ms * 16 + Y['mt_dwait.out']] = 'mt_dwait.out'
+        watch = pc.watch
+        def w(addr):
+            x = at.get(addr)
+            if x:
+                dma = pc.fd_dma()
+                k = (x, dma, dma and pc.isr & 0xFF != 0); n[k] = n.get(k, 0) + 1     # (pcemu's PIC: in service)
+            watch(addr)
+        pc.watch = w
+        def cnt(name, dma=True, ins=None): return sum(v for (x, d, i), v in n.items()
+                                                      if x == name and d == dma and (ins is None or i == ins))
+        h.k.key('cls'); h.k.key(ENTER)
+        h.k.key('mtlaunch /f mtkey.com p bp.txt;lcmd.com /c copy claude.com x4.com')
+        h.k.key(ENTER, settle=False)
+        moving = h.wait(lambda: pc.crash or pc.fd_dma(), 20) and pc.fd_dma()
+        gen = generation(h)
+        h.press(HOT)
+        came = h.wait(lambda: pc.crash or h.inpop() == 1, 30) and h.inpop() == 1
+        came = came and h.pi_wait(lambda: generation(h) not in (None, gen) and h.rv('connected') == 1, 30)
+        if not pc.crash:
+            h.press(HOT)
+            h.wait(lambda: pc.mode() == 3 and h.inpop() == 0, 5)
+            h.k.key(ENTER, settle=False)        # (MTLAUNCH's line)
+        ok = h.wait(lambda: pc.crash or pc.fs.get('A:\\X4.COM') == com, 90) and pc.fs.get('A:\\X4.COM') == com
+        maps = sum(cnt(x) for x in ('r_popup', 'r_bg.go', 'r_feed.in'))
+        check('mt_dcan refusing (its first bytes were %s): no floppy wait given away (%d), a copy behind MTKEY P: the '
+              'stub entered %d times during a transfer, each with an interrupt in service (T1C), none at its gates '
+              'with none (r_front %d, r_isr %d), no page in (%d); the copy exact'
+              % (dcan.hex(), cnt('mt_dwait.out', True) + cnt('mt_dwait.out', False), cnt('r_int16'),
+                 cnt('r_front', ins=False), cnt('r_isr', ins=False), maps),
+              moving and ok and cnt('mt_dwait.out', True) + cnt('mt_dwait.out', False) == 0 and cnt('r_int16') >= 1
+              and cnt('r_int16', ins=False) == 0 and cnt('r_front', ins=False) + cnt('r_isr', ins=False) == 0
+              and maps == 0 and not pc.crash, (moving, ok, n, pc.crash, pc.log[-3:]))
+        check('... CODE-\\ pressed during a transfer: the console came after it; no page register written under a '
+              'transfer (%d)' % fdw(), came and cnt('r_hot.p', False) >= 1 and fdw() == 0 and not pc.crash,
+              (came, n, fdw(), pc.crash))
+    finally:
+        pcemu.FD_STRICT = strict
+        if h: h.close()
 
 
 def t_bg_screen():
@@ -1852,7 +2236,7 @@ def t_bg_hot():
 
 
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_replies, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen, t_bg_ksum, t_bg_hot]
+         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_floppy, t_floppy_hot, t_floppy_semi, t_floppy_nodwait, t_bg_screen, t_bg_ksum, t_bg_hot]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

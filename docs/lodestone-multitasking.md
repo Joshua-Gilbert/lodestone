@@ -2166,6 +2166,7 @@ Bisect builds agreed: a build from before M10, M10 with the waits not given away
 - **`mt_eout`** writes a page register only if its value changes. Before a change, it waits while the controller's main status (3F4h) says a command is under way (bit 4) and its result phase hasn't come (bits 7-6 not both set), for at most about one turn of the disk. `mt_load`, `mt_smap`/`mt_wrest` and `mt_pmap`/`mt_punmap` all write through it. It keeps every register and the flags: `mt_pinned` carries CF across `mt_punmap`, and a first version that didn't keep them parked tasks that should have been pinned (`t_park`).
 - **`mt_dok`:** while a floppy's owner is out, only a task whose page registers already hold its own (the held windows aside) may run, so a switch to it writes none.
 - **`mt_i67`:** another task's EMS call waits at the gate while a floppy's owner is out, as it may write a page register.
+- **Resident Claude's stub** keeps the rule too (2026-11-20, docs/lodestone-resident-claude.md): its pop-up, its background look and TYPE's keys wait until 3F4h shows the controller plainly idle (FFh, or none of bits 4-0: stricter than `mt_eout`, as the console's DOS calls must not meet a disk's owner out), and `CLAUDE /R`'s two direct writes wait the same way.
 
 The cost: while the owner is out, fewer tasks can run behind it. A task whose mapping differs from the current one waits out the transfer, as before M10. MTSPIN behind a floppy copy still counts 260,390 with the waits given away, against 23,621 without.
 

@@ -68,6 +68,7 @@ link_reset:
         mov     cx, lr_end - lr_first
         xor     al, al
         rep     stosb
+        mov     [n_resend], al          ; (beside n_failrun, which goes on)
         pop     es
         call    build_hello
         mov     al, G_HELLO
@@ -587,20 +588,29 @@ find_frame:
 .ok:    clc
         ret
 
-; a good answer at rxbuf+BX
+; a good answer at rxbuf+BX.  A NAK is one too, but each resend restarts
+; link_wait's 2 s (link_write's t_sent): a Pi that NAKs every frame of
+; ours (our frames damaged on the way, its own intact) would keep the
+; link up for ever.  So the 8th NAK in a row fails it, and only an answer
+; that is not a NAK counts as the bridge answering (n_failrun: after 3
+; failed runs, link_lost says nothing answers)
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 took_answer:
         mov     byte [lstate], LS_IDLE
         mov     ax, [now]
         mov     [t_last], ax
-        mov     byte [n_failrun], 0
         mov     al, [rxbuf+bx+1]
         and     al, 7Fh
         cmp     al, P_NAK
         jne     .ok
-        mov     byte [resend], 1        ; the Pi lost our frame: send it again
+        inc     byte [n_resend]
+        cmp     byte [n_resend], 8
+        jb      .rs
+        jmp     link_fail
+.rs:    mov     byte [resend], 1        ; the Pi lost our frame: send it again
         ret
-.ok:    call    commit_fragment         ; our frame got through
+.ok:    mov     word [n_failrun], 0     ; (and n_resend, the byte after it)
+        call    commit_fragment         ; our frame got through
         mov     al, [rxbuf+bx+2]
         cmp     byte [have_pi], 0
         je      .new
