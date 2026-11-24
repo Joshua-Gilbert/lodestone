@@ -649,12 +649,14 @@ class TermSession:
             if any(body[i] == 0x0D for i in range(0, len(body) - 1, 2)): s.start()
             return
         # A lone Esc followed by more keys in one write reads as Meta-key (or
-        # Esc Esc as Meta-Esc): give each Esc its own write and a moment.
+        # Esc Esc as Meta-Esc): give each Esc its own write and a moment. The
+        # moment is _gap's: the keys after it wait in the write queue for
+        # _read's thread, so the link's thread doesn't wait here.
         start = 0
         for i in range(0, len(body) - 1, 2):
             if body[i] == 0x1B and body[i + 1] == 0x01 and i + 2 < len(body):
                 s._write(term_keys(body[start:i + 2], s.screen.app_cursor)); s._gap()
-                time.sleep(ESC_GAP); start = i + 2
+                start = i + 2
         s._write(term_keys(body[start:], s.screen.app_cursor))
 
     MOUSE_ON = tuple(m << 5 for m in (1000, 1002, 1003))      # (pyte keeps private modes << 5)

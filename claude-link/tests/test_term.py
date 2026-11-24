@@ -549,6 +549,39 @@ def test_esc_gap_kept_when_queued():
         os.close(r); os.close(w)
 
 
+def test_keys_esc_gap_without_waiting():
+    """keys() never waits: each lone Esc followed by more keys goes in a
+    write of its own, and what follows it waits in the queue for ESC_GAP
+    (Esc a; Esc Esc a, a gap after each Esc). On a clock of the test's own."""
+    import types
+    from gridlink import term as T
+    clk, slept = [100.0], []
+    was = T.time
+    T.time = types.SimpleNamespace(monotonic=lambda: clk[0], sleep=slept.append)
+    try:
+        for body, writes in ((b'\x1b\x01a\x1e', [b'\x1b', b'a']),
+                             (b'\x1b\x01\x1b\x01a\x1e', [b'\x1b', b'\x1b', b'a'])):
+            r, w = os.pipe()
+            os.set_blocking(w, False)
+            s = bare(w); s.stats['keys'] = 0; s.pic = None; s.child = object()
+            s.screen = types.SimpleNamespace(app_cursor=False)
+            try:
+                s.keys(body)
+                assert slept == [], slept                        # the link's thread didn't wait
+                got = [os.read(r, 100)]                          # the first Esc, alone
+                for _ in writes[1:]:
+                    wl, wait = s._flush(w)                       # the Esc's gap: the rest waits
+                    assert wl == [] and abs(wait - T.ESC_GAP) < 1e-9 and s.wq, (body, wl, wait, list(s.wq))
+                    assert not select_ready(r), body
+                    clk[0] += T.ESC_GAP
+                    s._flush(w); got.append(os.read(r, 100))
+                assert got == writes and not s.wq, (body, got, list(s.wq))
+            finally:
+                os.close(r); os.close(w)
+    finally:
+        T.time = was
+
+
 def test_queue_drops_till_empty():
     """Past WQ_MAX: that write and every one after are dropped till the
     queue empties, even one that would fit; said once, then the count when
