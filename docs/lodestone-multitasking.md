@@ -2279,4 +2279,4 @@ On the 1520, a task ended from the Tasks window (CODE-D) left its window up till
 - **`mw_poll` (KMW.INC):** each time poll_once's clock goes on (about 0.5 s), in any session's wait, `mw_dead` looks for a terminal window behind whose task (MT_TOPEN's, its count) has ended: the same test `mw_tick` makes. Not while a help or form window or `mw_say`'s message waits (as `mw_got`). One found comes to the front (`mw_focus`, as a click on it), where its tick tells TERM.RUN and it closes; `mw_end` then gives the front back to the session that had it.
 - **Tests:** test_mt's new `t_termkill` (1 check): MTLINE.COM from the Executive in a terminal window (TERM.RUN and TERM.FNT on the disk), CODE-T, CODE-D on it and Return: within 1.5 s the task, its row and its window gone, Tasks in front again with its list one row. Without the change its window is still there (two sessions).
 - **Figures:** LODEMT.SYS 21,713 bytes (21,608 before: still 43 sectors). ROM 1 and ROM 2 have the room they had.
-
+- **On the 1520 (2026-11-25):** with this LODE.SYS and LODEMT.SYS on A:, MTLINE in a terminal window ended from Tasks: its window closed on its own, with no click.
