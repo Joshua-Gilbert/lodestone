@@ -749,7 +749,21 @@ mw_poll:
         pop     ax
         retf                            ; (interrupts off: the HLT's STI next)
 .lk:    mov     [cs:mw_lt], ax
-        cmp     byte [ex_mtw], 2        ; (2: the Executive's own wait)
+        call    mw_dead                 ; a terminal window behind whose task
+        jnc     .lx                     ;  ended: to the front, where its tick
+        pusha                           ;  tells it and it closes (as when
+        push    es                      ;  clicked); then the one in front
+        push    ds                      ;  before it comes back (mw_end)
+        pop     es
+        call    mw_focus
+        pop     es
+        popa
+        push    bp
+        mov     bp, sp
+        mov     word [bp+2], ui_event.on
+        pop     bp
+        retf
+.lx:    cmp     byte [ex_mtw], 2        ; (2: the Executive's own wait)
         jb      .t
         push    es
         push    di
@@ -1070,6 +1084,48 @@ mw_owns:
         cmp     dx, [cs:bp+SE_TASK]     ; (SE_TASK, SE_TGEN; equal: CF clear)
         jne     .l
 .x:     popa
+        ret
+
+; a terminal window behind (not mw_cur's) whose task (MT_TOPEN's) has
+; ended, with no help or form window or mw_say's message waiting (as
+; mw_got) -> CF, AL = its session.  Else CF clear.  AX changed, the rest kept
+mw_dead:
+        cmp     byte [cs:mw_n], 0
+        je      .no
+        cmp     byte [cs:mw_msg], 0
+        jne     .no
+        push    es
+        push    ds
+        pop     es
+        call    mw_modal
+        pop     es
+        jc      .no
+        push    bx
+        push    bp
+        xor     al, al
+.l:     call    mw_next
+        jnc     .c
+        clc                             ; (none)
+        jmp     short .n
+.c:     cmp     al, [cs:mw_cur]
+        je      .l
+        push    ax
+        mov     ax, [cs:bp+SE_TASK]     ; (SE_TASK, SE_TGEN)
+        or      al, al
+        jz      .s
+        call    mt_ent
+        cmp     ah, [cs:bx+TE_GEN]      ; (its number given again: it ended)
+        jne     .y
+        cmp     ah, [cs:bx+TE_EGEN]
+        je      .y
+.s:     pop     ax
+        jmp     .l
+.y:     pop     ax
+        stc
+.n:     pop     bp
+        pop     bx
+        ret
+.no:    clc
         ret
 
 ; AL = a session (0: from the first) -> AL = the next one used after it,

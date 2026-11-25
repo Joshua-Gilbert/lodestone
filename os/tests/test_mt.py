@@ -5724,6 +5724,33 @@ def t_tsrd():
 TERMRUN = os.path.join(GOS, 'apps', 'TERM.RUN')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERM.FNT')
 
+def t_termkill():
+    print('== a terminal window behind whose task is ended from Tasks: it closes, unfocused')
+    TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
+    k = boot('mt_tk.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, TR)
+    seg, Y = mt_seg(k), k.Y
+    T = TermView(k)
+    mb, tnum = T.mb, T.tnum
+    SE_NAME = equ('SE_NAME')
+    name = lambda n: k.pc.rd(seg, Y['mw_ses'] + n * SE_SIZE + SE_NAME, 12).split(b'\0')[0]
+    rows = lambda: [l[17:63].strip() for y, l in k.ocr() if re.match(r'\d  ', l[17:63].strip())]
+    ret(k, 'MTLINE.COM', 3.0)
+    n = tnum('MTLINE.COM')
+    w1 = mb('mw_n')
+    k.key(A.CODE['T']); k.run_for(0.5)
+    c1, r1 = mb('mw_cur'), rows()
+    k.key(ktest.DOWN); k.key(A.CODE['D']); k.run_for(0.2)
+    b1 = k.band()
+    k.key(ktest.ENTER); k.run_for(1.5)
+    c2, r2 = mb('mw_cur'), rows()
+    check('MTLINE.COM from the Executive: task %d in a terminal window (sessions %d); CODE-T: Tasks in front (%r); '
+          'CODE-D on it, Return ("%s"): within 1.5 s the task gone, its row gone, and its window closed without being '
+          'brought to the front by hand (sessions %d); Tasks in front again (%r), its list %s'
+          % (n, w1, name(c1), b1[:1], mb('mw_n'), name(c2), r2),
+          n != 7 and w1 == 1 and name(c1) == b'TASKS.RUN' and b1[:1] == ['End MTLINE.COM: Confirm to end the task']
+          and tnum('MTLINE.COM') == 7 and mb('mw_n') == 1 and name(c2) == b'TASKS.RUN' and len(r2) == 1
+          and not k.crashed, (n, w1, c1, r1, b1, c2, r2, mb('mw_n'), tstate(k)))
+
 def t_term():
     print('== terminal windows: a text program started as a task behind, shown in TERM.RUN\'s window')
     box = os.path.join(A.OUT, 'BOX.TXT'); open(box, 'wb').write(b'\xc9\xcd\xbb\r\n')
@@ -8700,7 +8727,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_parkjunk, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_clmem, t_hwait, t_dkill, t_wfall, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_parkjunk, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tsrd, t_tcore, t_term, t_termkill, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_divmt, t_tpub, t_srq, t_progs, t_nodisk, t_cwdmount, t_rdmt, t_dkeep, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_clmem, t_hwait, t_dkill, t_wfall, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

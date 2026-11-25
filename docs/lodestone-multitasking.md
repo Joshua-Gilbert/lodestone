@@ -2264,9 +2264,19 @@ Run on the 1520 from the ROM (CLAUDE /T in task 0), then from a floppy with this
 **Changed: the Tasks window after CODE-D.** Its row said "being ended" till F5. Tasks now gives the task to its window (MT_TOPEN, as TERM.RUN does), so its UI_EVENT has EV_TICK when the task's state changes or it ends, and the list is read again and drawn once it has gone. Its wait stays UI_EVENT's: code in the UI segment is switched from only at its idle HLTs, so a loop of its own (UI_POLL, a HLT between) gave the dying task no turn at all.
 
 **Left (found on the 1520, not in pcemu):**
-- **A task ended from the Tasks window ends only when brought to the front.** In pcemu it ends within 0.2 s, with the Executive idle in Tasks' UI_EVENT; on the 1520 it gets no turn there. KILL at LCMD's prompt ends one at once on the 1520 (INT 21h's way out). Not yet known: whether any task behind runs while the Executive idles there, or only a killed one is held.
+- **A task ended from the Tasks window ends only when brought to the front.** Misread: the task ended at once; its terminal window stayed till brought to the front. See "A terminal window behind closes when its task ends" below (2026-11-25).
 - **One hot restart (no beep) running PARK's batch file from A:**, the first after starting from the floppy, CLAUDE /T in front with 18 KB free (likely CLAUDE running as a task then). Not reproduced: the same steps one by one, the batch file again from A:, and in pcemu with the floppy timed and strict (no EMS page register changed under a transfer).
 
 **Tests:** test_mt's new `t_parkjunk` (3 checks): junk in INT C6h, CAh and FCh into task 1's region before its spawn and in task 2's `TX_GSN`: parked and back (it fails without the fix); a vector set into the region after the spawn: pinned; memory, files and EMS as before. `t_clmem` (1 check): `MTMEM=LCMD.COM:56`, CODE-P, CLAUDE there: the message, MT's block as before, the prompt answering. `t_tasksrun`'s CODE-D check: the row gone within 0.2 s, no F5. test_mt 706 checks.
 
 **Figures:** LODEMT.SYS 21,608 bytes (21,550 before: still 43 sectors); TASKS.RUN 1,840 (1,774); CLAUDE.COM 26,716 (26,684). ROM 1 and ROM 2 have the room they had.
+
+
+## A terminal window behind closes when its task ends (2026-11-25)
+
+On the 1520, a task ended from the Tasks window (CODE-D) left its window up till it was brought to the front, when it closed. The task itself had ended: its row went from Tasks' list at once, and a task behind runs while the Executive idles (MTSPIN 728 behind, started with `START /W /B`, counted 708,123 in 40 s with the Executive in front, about three quarters of its rate behind CLAUDE /T). With ROM 2 on the 1520, MTLINE started from the Executive runs in a terminal window; `t_tasksrun` runs it full screen, with no TERM.RUN, so no test saw it. TERM.RUN learns of its task's end at its EV_TICK (`MT_EXIT`), and only the session in front has ticks (`mw_tick`), so a window behind kept its ended task's last screen.
+
+- **`mw_poll` (KMW.INC):** each time poll_once's clock goes on (about 0.5 s), in any session's wait, `mw_dead` looks for a terminal window behind whose task (MT_TOPEN's, its count) has ended: the same test `mw_tick` makes. Not while a help or form window or `mw_say`'s message waits (as `mw_got`). One found comes to the front (`mw_focus`, as a click on it), where its tick tells TERM.RUN and it closes; `mw_end` then gives the front back to the session that had it.
+- **Tests:** test_mt's new `t_termkill` (1 check): MTLINE.COM from the Executive in a terminal window (TERM.RUN and TERM.FNT on the disk), CODE-T, CODE-D on it and Return: within 1.5 s the task, its row and its window gone, Tasks in front again with its list one row. Without the change its window is still there (two sessions).
+- **Figures:** LODEMT.SYS 21,713 bytes (21,608 before: still 43 sectors). ROM 1 and ROM 2 have the room they had.
+
