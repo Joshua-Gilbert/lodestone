@@ -3507,7 +3507,11 @@ mt_hnew:
 ; own: its TX_VEC and TX_FVEC (the running one's TX_VEC are the table's;
 ; its TX_FVEC, if it is behind), and in its TX_GSN the machine's (not a
 ; task's own: those are put back from its TX at its end).  A parked
-; task's TX through window 0 (mt_pmap), interrupts off.  All kept
+; task's TX through window 0 (mt_pmap), interrupts off.  In the table and
+; the TX_GSNs, a vector as it was at the asked one's own spawn (its
+; TX_GSN) doesn't count: it pointed there before the task was, so it
+; isn't its hook.  (The 1520's BIOS leaves junk in vectors no one uses,
+; C6h-DFh and F1h-FFh, which may point into any region.)  All kept
 mt_pinned:
         pusha
         push    es
@@ -3515,9 +3519,18 @@ mt_pinned:
         mov     bp, bx                  ; (the one asked about)
         xor     di, di
         mov     es, di
-        mov     cx, 256
-        call    .sc
-        jc      .x
+.m:     pushf                           ; the table, each with interrupts off
+        cli
+        call    mt_inr
+        jc      .mn
+        mov     si, di
+        add     si, TX_GSN
+        call    .same
+        jne     .my
+.mn:    popf
+        add     di, 4
+        cmp     di, 1024
+        jb      .m
         push    cs
         pop     es
         mov     di, mt_fv
@@ -3585,7 +3598,10 @@ mt_pinned:
 .g:     call    mt_own
         jc      .gn
         call    mt_inr
-        jnc     .gy
+        jc      .gn
+        mov     si, di
+        call    .same
+        jne     .gy
 .gn:    add     di, 4
         inc     dl
         jnz     .g
@@ -3594,6 +3610,23 @@ mt_pinned:
 .tr0:   ret
 .gy:    stc
         jmp     .tr
+.my:    popf
+        stc
+        jmp     .x
+        db      90h                     ; (a pad: what follows keeps its parity)
+; ZF if the vector at ES:DI is the asked one's at its spawn: the one at SI
+; in its TX (its TX_GSN).  All kept but the flags
+.same:  push    ax
+        push    ds
+        mov     ds, [cs:bp+TE_TX]
+        mov     ax, [es:di]
+        cmp     ax, [si]
+        jne     .sx
+        mov     ax, [es:di+2]
+        cmp     ax, [si+2]
+.sx:    pop     ds
+        pop     ax
+        ret
 ; CX vectors at ES:DI, each with interrupts off (a hook's change can't be
 ; half read) -> CF if one points there.  AX, CX, DI changed
 .sc:    pushf

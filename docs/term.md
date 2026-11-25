@@ -320,8 +320,9 @@ CLAUDE tells the Pi first (EVENT 07h), so Term keeps taking tool calls
 while the GRiD is quiet: a call rings the bridge, the saver ends, and
 the call is answered. In the emulator that took 0.08 s from the dark
 screen and 0.7 s from inside DEFRAG; on the 1520 DEFRAG may finish
-reading a stretch of the disk first, a few seconds. Not yet tried on the
-1520. If the rings go unanswered for 10 s (the GRiD reset or switched
+reading a stretch of the disk first, a few seconds. On the 1520
+(2026-11-24, SAVER=1, CLAUDE 1.17) a tool call ends both the dark
+screen and DEFRAG, and is answered. If the rings go unanswered for 10 s (the GRiD reset or switched
 off meanwhile), the Pi stops counting it as there, and the tools say it
 isn't connected again.
 

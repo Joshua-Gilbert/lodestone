@@ -11,7 +11,10 @@
 ;  it (after a question).  The list is as it was when the window opened or
 ;  at the last change: F5 looks again.  A task asked to end goes at its
 ;  next turn (this window's wait is a safe point); its row says so till
-;  the list is read again.
+;  it has gone.  Meanwhile the window shows that task (MT_TOPEN, as a
+;  terminal window does), so UI_EVENT gives EV_TICK when its state
+;  changes or it ends (about 0.5 s at most): the list is read again then,
+;  and drawn once it has gone.
 ;
 ;  As the calculator, it never sets a redraw routine and ends with exit
 ;  code 0FFFFh (the screen as it was), or 0 if the saver repainted the
@@ -33,7 +36,7 @@ HROW    equ LROW + MT_TASKS * 16 + 12   ; the keys' two lines
 start:  call    refresh
         mov     si, win
         call    UI_WOPEN
-.loop:  call    UI_EVENT
+.loop:  call    getev
         cmp     ax, EV_CLICK
         je      .click
         cmp     ax, EV_MOVED
@@ -65,6 +68,28 @@ start:  call    refresh
         jne     .loop
         call    k_front
         jmp     .next
+
+; the next event (UI_EVENT's).  EV_TICK (for the task asked to end, which
+; MT_TOPEN gave this window) isn't one: once that task has gone, the list
+; again, drawn (UI_DISPATCH would take EV_TICK's 12h as Ctrl-R)
+getev:  call    UI_EVENT
+        cmp     ax, EV_TICK
+        jne     .r
+        mov     bl, [ending]
+        cmp     bl, 0FFh
+        je      getev
+        mov     ax, 0F000h + MT_EXIT
+        stc
+        int     21h
+        jc      .g
+        cmp     ah, [endgen]            ; (its number given again: gone too)
+        jne     .g
+        cmp     al, TS_FREE
+        jne     getev
+.g:     mov     byte [ending], 0FFh     ; gone: the list again, drawn
+        call    redo
+        jmp     getev
+.r:     ret
 
 ; the tasks again (MT_LIST), each one's SPF_BG and SPF_FREEZE (MT_FLAGS)
         times ($ - $$) & 1 db 90h       ; (hot: what follows even, EVEN.INC)
@@ -213,6 +238,11 @@ k_end:  call    sel_task
         stc
         int     21h
         mov     [endgen], ah
+        jc      redo                    ; (gone already)
+        mov     cl, ah                  ; this window shows it (EV_TICK at its
+        mov     ax, 0F000h + MT_TOPEN   ;  changes and its end; a refusal, it
+        stc                             ;  has gone meanwhile: nothing)
+        int     21h
         jmp     redo
 .x:     ret
 
@@ -226,6 +256,7 @@ fail:   mov     si, e_tnot
         mov     si, e_notask
 .m:     call    UI_MSG
         jmp     redo
+        times ($ + 1 - $$) & 1 db 90h   ; (what follows odd, EVEN.INC)
 
 ; the name of the record at SI (12 at most) at DI
 put_name:

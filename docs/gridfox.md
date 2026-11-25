@@ -515,21 +515,15 @@ between calls. Also fixed:
    summary shows, and Return opens it.
 
 ## Not yet tried
-- **A real Firefox.** Firefox could not be downloaded in the build
-  workspace, so the scripts have only run under jsdom.
-  - jsdom lays nothing out, so `extract.js` falls back to tag names there.
-    In Firefox it uses computed styles, the better path but untested.
-  - Untried in particular: the named sandbox with React-style value
-    setting, ElementClick, `Marionette:Quit`, and downloads.
-- **The first check on the Pi** should drive the page, not only show it:
-  1. `~/gridlink/venv/bin/python -m gridfox --console https://example.com`
-     in an 80x24 terminal, run from `~/gridlink`;
-  2. Tab to a link and Return;
-  3. Back;
-  4. a form field (fill it in, send it).
-
-  Those paths depend on the sandbox and element references, which jsdom
-  can't prove. gridfox's log is `~/.cache/gridfox/gridfox.log`.
+- **A real Firefox: tried on the Pi 5** (Firefox 157, 2026-11-24), with
+  `~/gridlink/venv/bin/python -m gridfox --console https://example.com`
+  in an 80x24 terminal: Tab to a link and Return (ElementClick, no
+  fallback to a script click in the log), Back, and httpbin.org's
+  `/forms/post`: three text fields, a radio button and a check box set,
+  Submit, and the posted form came back as filled in. Ctrl-Q ended
+  Firefox (`Marionette:Quit`). gridfox's log is
+  `~/.cache/gridfox/gridfox.log`.
+  - Still untried: downloads.
 - **DuckDuckGo's HTML page sometimes serves a bot check** to headless
   browsers. If the first search shows a near-empty page, that is why;
   `--search` takes another search address (`%s` for the words).
