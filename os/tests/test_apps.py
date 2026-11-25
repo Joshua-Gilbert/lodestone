@@ -333,7 +333,7 @@ def t_core():
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
     # INT 16h AH=10h; pcemu now models that
     k.key(K_CODE_HELP)
-    check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 1.1 Help'), screen(k))
+    check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 1.2 Help'), screen(k))
     check('... its lines (HT, 25 in place of the spaces, API 10) as they were, and its window as wide (57: its longest line, '
           '51, and 6)', has(k, 'CODE-D                   Delete (a file or subject)') and has(k, 'Return or click again    open it / next item')
           and has(k, 'CODE is the Alt key.  Any key closes.') and geo[0][2] == 57, (geo, screen(k)))
@@ -579,7 +579,7 @@ def t_system():
     shot(k, 'system_gpib')
     check('GPIB scan finds the instruments on the simulated bus (6, 14, 29)', re.search(r'Instruments at\s+6, 14, 29', screen(k)), screen(k))
     k.key('A')
-    check('About', has(k, 'Lodestone 1.1') and has(k, '3.30 compatible'), screen(k))
+    check('About', has(k, 'Lodestone 1.2') and has(k, '3.30 compatible'), screen(k))
     check('... ROM 1\'s programs: "Programs: the Executive, System, Write, Calc, Tasks"',
           has(k, 'Programs: the Executive, System, Write, Calc, Tasks'), screen(k))
     k.key(ktest.UP); k.key(ktest.UP)
