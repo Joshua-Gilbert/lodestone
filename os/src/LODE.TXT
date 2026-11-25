@@ -1,4 +1,4 @@
-Lodestone 1.1 - boot floppy and ROM
+Lodestone 1.2 - boot floppy and ROM
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\LODEBOOT and answer Y. It adds the Lodestone loader to this disk
@@ -459,6 +459,27 @@ pairs files as MS-DOS's does, names with a space inside work in COPY,
 REN, XCOPY, CHKDSK and the Executive, and batch files are read a line
 at a time, as COMMAND reads them.  2.4-2.5 KB less for DOS programs
 (578.3 KB with EMS, 562.2 KB without).
+
+1.2: the pen plotter from the GRiD: PLOT.COM sends it HP-GL, and
+HEADCLN, PLOT and TERM.RUN are on ROM 2.  A divide error ends the
+program with "Divide overflow", as MS-DOS does.  Multitasking:
+parking a task works on the 1520 (it failed with error 5, on the
+BIOS's junk vectors), a task killed while another is out on a disk no
+longer halts the machine, CLAUDE in a terminal window too small
+for it says "Not enough memory for CLAUDE." instead of freezing, and
+the window of a task ended from Tasks closes even when it is behind.
+Resident Claude (CLAUDE 1.19) no longer resets the machine by popping
+up or looking during a floppy transfer.  EXEC of an .EXE of 1 MB or
+more no longer hangs, the floppy boot sector's load stops at 576 KB,
+and SAVER=30 can't be missed.  LCMD's PROMPT=, EXIT in a batch file
+run by LCMD /C and redirections that fail are fixed; HEADCLN C: no
+longer cleans A:; CHKDSK /F works when the first FAT can't be read;
+FIND, SORT and MORE say a failed read or write, ATTRIB and TREE a
+directory they can't read, and ATTRIB and XCOPY refuse a name with a
+second dot.  The start-up picture is a terrella, the bold terminal
+font is TERMBOLD.FNT, and Lodestone is free software under the GPL,
+version 3 or later.
+578.4 KB for DOS programs with EMS, 562.3 KB without.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
